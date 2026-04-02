@@ -3,6 +3,7 @@
 export enum InstructionFormat {
   VOP1 = 'VOP1',
   VOP2 = 'VOP2',
+  VOP3 = 'VOP3',
   SOP1 = 'SOP1',
 }
 
@@ -19,6 +20,8 @@ export interface Operand {
   type: OperandType;
   value: number;       // Register index or constant value
   encoded: number;     // 9-bit encoded value for SRC0, or 8-bit for VSRC1/VDST
+  abs?: boolean;       // |src| — clear sign bit before operation
+  neg?: boolean;       // -src — flip sign bit before operation
 }
 
 export interface ParsedInstruction {
@@ -38,6 +41,11 @@ export interface DecodedInstruction {
   src1?: number;       // 8-bit VGPR index (VOP2 only)
   literal?: number;    // 32-bit literal if SRC0 == 255
   address: number;     // Word offset in the binary
+  // Source modifiers (applied before the operation)
+  src0Abs?: boolean;
+  src0Neg?: boolean;
+  src1Abs?: boolean;
+  src1Neg?: boolean;
 }
 
 export type SemanticFn = (a: number, b?: number) => number;

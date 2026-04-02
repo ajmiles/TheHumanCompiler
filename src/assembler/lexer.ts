@@ -7,6 +7,10 @@ export enum TokenType {
   COMMA = 'COMMA',
   NEWLINE = 'NEWLINE',
   COMMENT = 'COMMENT',
+  MODIFIER = 'MODIFIER',  // abs, neg
+  LPAREN = 'LPAREN',
+  RPAREN = 'RPAREN',
+  PIPE = 'PIPE',           // | for |src| abs syntax
   EOF = 'EOF',
 }
 
@@ -19,6 +23,7 @@ export interface Token {
 
 const REGISTER_RE = /^[vs]\d+$/;
 const SPECIAL_REGS = new Set(['exec', 'exec_lo', 'exec_hi', 'vcc', 'vcc_lo', 'vcc_hi', 'm0', 'null']);
+const MODIFIERS = new Set(['abs', 'neg']);
 const MNEMONIC_RE = /^[a-z_][a-z0-9_]*$/;
 
 export function tokenize(source: string): Token[] {
@@ -48,6 +53,25 @@ export function tokenize(source: string): Token[] {
       // Comma
       if (ch === ',') {
         tokens.push({ type: TokenType.COMMA, value: ',', line: lineNum, column: col + 1 });
+        col++;
+        continue;
+      }
+
+      // Parentheses
+      if (ch === '(') {
+        tokens.push({ type: TokenType.LPAREN, value: '(', line: lineNum, column: col + 1 });
+        col++;
+        continue;
+      }
+      if (ch === ')') {
+        tokens.push({ type: TokenType.RPAREN, value: ')', line: lineNum, column: col + 1 });
+        col++;
+        continue;
+      }
+
+      // Pipe for |src| abs syntax
+      if (ch === '|') {
+        tokens.push({ type: TokenType.PIPE, value: '|', line: lineNum, column: col + 1 });
         col++;
         continue;
       }
@@ -85,6 +109,8 @@ export function tokenize(source: string): Token[] {
           tokens.push({ type: TokenType.REGISTER, value: lower, line: lineNum, column: start + 1 });
         } else if (SPECIAL_REGS.has(lower)) {
           tokens.push({ type: TokenType.REGISTER, value: lower, line: lineNum, column: start + 1 });
+        } else if (MODIFIERS.has(lower)) {
+          tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
         } else if (MNEMONIC_RE.test(lower)) {
           tokens.push({ type: TokenType.MNEMONIC, value: lower, line: lineNum, column: start + 1 });
         }

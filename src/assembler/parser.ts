@@ -79,30 +79,87 @@ export function parse(tokens: Token[]): ParseResult {
       continue;
     }
 
-    // Collect operand tokens
-    const operandTokens: Token[] = [];
+    // Collect operand groups (handling modifiers like abs(v0), |v0|)
+    interface OperandGroup {
+      token: Token;
+      abs: boolean;
+      neg: boolean;
+    }
+    const operandGroups: OperandGroup[] = [];
+
+    // Collect all non-comma, non-newline tokens for this instruction
+    const rawTokens: Token[] = [];
     while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
       const t = peek();
       if (t.type === TokenType.COMMA) {
         advance();
         continue;
       }
-      if (t.type === TokenType.REGISTER || t.type === TokenType.NUMBER) {
-        operandTokens.push(advance());
+      rawTokens.push(advance());
+    }
+
+    // Parse raw tokens into operand groups with modifier flags
+    let ri = 0;
+    while (ri < rawTokens.length) {
+      let abs = false;
+      let neg = false;
+      let expectClose: TokenType | null = null;
+
+      // Check for abs( or neg( modifier
+      while (ri < rawTokens.length && rawTokens[ri].type === TokenType.MODIFIER) {
+        if (rawTokens[ri].value === 'abs') abs = true;
+        if (rawTokens[ri].value === 'neg') neg = true;
+        ri++;
+        // Skip opening paren
+        if (ri < rawTokens.length && rawTokens[ri].type === TokenType.LPAREN) {
+          expectClose = TokenType.RPAREN;
+          ri++;
+        }
+      }
+
+      // Check for | abs syntax
+      if (ri < rawTokens.length && rawTokens[ri].type === TokenType.PIPE) {
+        abs = true;
+        expectClose = TokenType.PIPE;
+        ri++;
+      }
+
+      // The actual operand token
+      if (ri < rawTokens.length && (rawTokens[ri].type === TokenType.REGISTER || rawTokens[ri].type === TokenType.NUMBER)) {
+        operandGroups.push({ token: rawTokens[ri], abs, neg });
+        ri++;
       } else {
-        // Skip unexpected token
-        advance();
+        ri++;
+        continue;
+      }
+
+      // Skip closing ) or | only if we opened one
+      if (expectClose !== null && ri < rawTokens.length && rawTokens[ri].type === expectClose) {
+        ri++;
       }
     }
 
-    if (operandTokens.length !== info.operandCount) {
-      errors.push(wrongOperandCount(info.operandCount, operandTokens.length, mnemonicToken.line, mnemonicToken.column));
+    if (operandGroups.length !== info.operandCount) {
+      errors.push(wrongOperandCount(info.operandCount, operandGroups.length, mnemonicToken.line, mnemonicToken.column));
       continue;
     }
 
     // Parse operands based on instruction format
-    const parsed = parseOperands(info.format, info.operandCount, operandTokens, errors);
+    const parsed = parseOperands(info.format, info.operandCount,
+      operandGroups.map(g => g.token),
+      errors,
+    );
     if (!parsed) continue;
+
+    // Apply modifiers to source operands
+    if (operandGroups.length >= 2) {
+      if (operandGroups[1].abs) parsed.src0.abs = true;
+      if (operandGroups[1].neg) parsed.src0.neg = true;
+    }
+    if (operandGroups.length >= 3 && parsed.src1) {
+      if (operandGroups[2].abs) parsed.src1.abs = true;
+      if (operandGroups[2].neg) parsed.src1.neg = true;
+    }
 
     instructions.push({
       mnemonic: mnemonicToken.value,

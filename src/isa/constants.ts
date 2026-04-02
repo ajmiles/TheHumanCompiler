@@ -83,6 +83,33 @@ export const SOP1_OP_SHIFT = 8;
 export const SOP1_OP_MASK = 0xFF;       // 8 bits
 export const SOP1_SSRC0_MASK = 0xFF;    // 8 bits
 
+// VOP3A encoding (64-bit, two dwords):
+// Dword 0: [31:26]=0x34 prefix, [25:16]=OP(10), [11]=CLAMP, [10:8]=ABS(3), [7:0]=VDST(8)
+// Dword 1: [31:29]=NEG(3), [28:27]=OMOD(2), [26:18]=SRC2(9), [17:9]=SRC1(9), [8:0]=SRC0(9)
+export const VOP3_ENCODING_PREFIX = 0x34; // 6 bits
+export const VOP3_PREFIX_SHIFT = 26;
+export const VOP3_PREFIX_MASK = 0x3F;    // 6 bits
+export const VOP3_OP_SHIFT = 16;
+export const VOP3_OP_MASK = 0x3FF;       // 10 bits
+export const VOP3_CLAMP_BIT = 11;
+export const VOP3_ABS_SHIFT = 8;
+export const VOP3_ABS_MASK = 0x7;        // 3 bits (src0=bit0, src1=bit1, src2=bit2)
+export const VOP3_VDST_MASK = 0xFF;      // 8 bits
+
+// Dword 1 bit positions (relative to dword 1)
+export const VOP3_SRC0_MASK = 0x1FF;     // 9 bits [8:0]
+export const VOP3_SRC1_SHIFT = 9;
+export const VOP3_SRC1_MASK = 0x1FF;     // 9 bits [17:9]
+export const VOP3_SRC2_SHIFT = 18;
+export const VOP3_SRC2_MASK = 0x1FF;     // 9 bits [26:18]
+export const VOP3_OMOD_SHIFT = 27;
+export const VOP3_OMOD_MASK = 0x3;       // 2 bits [28:27]
+export const VOP3_NEG_SHIFT = 29;
+export const VOP3_NEG_MASK = 0x7;        // 3 bits [31:29]
+
+// VOP1→VOP3 opcode offset: VOP3_opcode = VOP1_opcode + 0x100
+export const VOP3_VOP1_OFFSET = 0x100;
+
 /**
  * Decode a 9-bit source operand encoding to its float/int value.
  * Returns the value the operand represents.

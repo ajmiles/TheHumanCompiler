@@ -12,8 +12,8 @@ export interface ResolvedInstruction {
 
 /**
  * Decode a binary program into resolved instructions.
- * Each instruction pairs its decoded fields with the matching opcode info
- * (mnemonic, format, and semantic execute function).
+ * VOP3-encoded instructions are decoded back to their base format (VOP1/VOP2)
+ * with abs/neg modifier flags preserved on the DecodedInstruction.
  */
 export function decodeProgram(binary: Uint32Array): ResolvedInstruction[] {
   const decoded = decodeBinary(binary);

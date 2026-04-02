@@ -92,12 +92,16 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
   for (let lane = 0; lane < WAVE_WIDTH; lane++) {
     if (((exec >>> lane) & 1) === 0) continue;
 
-    const src0Val = resolveSrc0(state, decoded.src0Encoded, decoded.literal, lane);
+    let src0Val = resolveSrc0(state, decoded.src0Encoded, decoded.literal, lane);
+    if (decoded.src0Abs) src0Val = Math.abs(src0Val);
+    if (decoded.src0Neg) src0Val = -src0Val;
 
     let result: number;
 
     if (decoded.format === InstructionFormat.VOP2) {
-      const src1Val = state.readVGPR(decoded.src1!, lane);
+      let src1Val = state.readVGPR(decoded.src1!, lane);
+      if (decoded.src1Abs) src1Val = Math.abs(src1Val);
+      if (decoded.src1Neg) src1Val = -src1Val;
       result = opcodeInfo.execute(src0Val, src1Val);
     } else {
       result = opcodeInfo.execute(src0Val);

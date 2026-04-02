@@ -1,0 +1,372 @@
+{
+  "hash": "017a1c4e",
+  "configHash": "4d3de91c",
+  "lockfileHash": "85103f27",
+  "browserHash": "51957626",
+  "optimized": {
+    "monaco-editor": {
+      "src": "../../node_modules/monaco-editor/esm/vs/editor/editor.main.js",
+      "file": "monaco-editor.js",
+      "fileHash": "1bd8b741",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "abap-m8s-volL": {
+      "file": "abap-m8s-volL.js",
+      "isDynamicEntry": true
+    },
+    "apex-vaqZO4Uy": {
+      "file": "apex-vaqZO4Uy.js",
+      "isDynamicEntry": true
+    },
+    "azcli-C_hYBeAg": {
+      "file": "azcli-C_hYBeAg.js",
+      "isDynamicEntry": true
+    },
+    "bat-Bl3QcM5w": {
+      "file": "bat-Bl3QcM5w.js",
+      "isDynamicEntry": true
+    },
+    "bicep-B-_Z-8r7": {
+      "file": "bicep-B-_Z-8r7.js",
+      "isDynamicEntry": true
+    },
+    "cameligo-Dvitk-at": {
+      "file": "cameligo-Dvitk-at.js",
+      "isDynamicEntry": true
+    },
+    "clojure-CYOTnFle": {
+      "file": "clojure-CYOTnFle.js",
+      "isDynamicEntry": true
+    },
+    "coffee-ButXtRJ5": {
+      "file": "coffee-ButXtRJ5.js",
+      "isDynamicEntry": true
+    },
+    "cpp-B69BjmGD": {
+      "file": "cpp-B69BjmGD.js",
+      "isDynamicEntry": true
+    },
+    "csharp-BvOIVTde": {
+      "file": "csharp-BvOIVTde.js",
+      "isDynamicEntry": true
+    },
+    "csp-MtlyoEjz": {
+      "file": "csp-MtlyoEjz.js",
+      "isDynamicEntry": true
+    },
+    "css-9J1x1VKb": {
+      "file": "css-9J1x1VKb.js",
+      "isDynamicEntry": true
+    },
+    "cssMode-B84OWhcd": {
+      "file": "cssMode-B84OWhcd.js",
+      "isDynamicEntry": true
+    },
+    "cypher-DhwUiEdG": {
+      "file": "cypher-DhwUiEdG.js",
+      "isDynamicEntry": true
+    },
+    "dart-ftXKJLmU": {
+      "file": "dart-ftXKJLmU.js",
+      "isDynamicEntry": true
+    },
+    "dockerfile-BT3Ska6h": {
+      "file": "dockerfile-BT3Ska6h.js",
+      "isDynamicEntry": true
+    },
+    "ecl-zKtXLDoK": {
+      "file": "ecl-zKtXLDoK.js",
+      "isDynamicEntry": true
+    },
+    "editor.api2-C4idDwRp": {
+      "file": "editor.api2-C4idDwRp.js",
+      "isDynamicEntry": false
+    },
+    "elixir-BfWcYP-m": {
+      "file": "elixir-BfWcYP-m.js",
+      "isDynamicEntry": true
+    },
+    "flow9-CP-LEQHI": {
+      "file": "flow9-CP-LEQHI.js",
+      "isDynamicEntry": true
+    },
+    "freemarker2-DjLQPBS_": {
+      "file": "freemarker2-DjLQPBS_.js",
+      "isDynamicEntry": true
+    },
+    "fsharp-BPMGJaMz": {
+      "file": "fsharp-BPMGJaMz.js",
+      "isDynamicEntry": true
+    },
+    "go-CSCjGkxI": {
+      "file": "go-CSCjGkxI.js",
+      "isDynamicEntry": true
+    },
+    "graphql-BQ3iWzdz": {
+      "file": "graphql-BQ3iWzdz.js",
+      "isDynamicEntry": true
+    },
+    "handlebars-DXZr5A5L": {
+      "file": "handlebars-DXZr5A5L.js",
+      "isDynamicEntry": true
+    },
+    "hcl-Ddnxewen": {
+      "file": "hcl-Ddnxewen.js",
+      "isDynamicEntry": true
+    },
+    "html-CIOxUODi": {
+      "file": "html-CIOxUODi.js",
+      "isDynamicEntry": true
+    },
+    "htmlMode-BYRdapCj": {
+      "file": "htmlMode-BYRdapCj.js",
+      "isDynamicEntry": true
+    },
+    "ini-GdYSyN9V": {
+      "file": "ini-GdYSyN9V.js",
+      "isDynamicEntry": true
+    },
+    "java-Dy7oOCl1": {
+      "file": "java-Dy7oOCl1.js",
+      "isDynamicEntry": true
+    },
+    "javascript-Cv1Ktonx": {
+      "file": "javascript-Cv1Ktonx.js",
+      "isDynamicEntry": true
+    },
+    "jsonMode-Cwz-crxQ": {
+      "file": "jsonMode-Cwz-crxQ.js",
+      "isDynamicEntry": true
+    },
+    "julia-C7gFE-Ln": {
+      "file": "julia-C7gFE-Ln.js",
+      "isDynamicEntry": true
+    },
+    "kotlin-tj59g5Fz": {
+      "file": "kotlin-tj59g5Fz.js",
+      "isDynamicEntry": true
+    },
+    "less-BIEN9_UX": {
+      "file": "less-BIEN9_UX.js",
+      "isDynamicEntry": true
+    },
+    "lexon-CzKOgbKJ": {
+      "file": "lexon-CzKOgbKJ.js",
+      "isDynamicEntry": true
+    },
+    "liquid-B4JTvEF4": {
+      "file": "liquid-B4JTvEF4.js",
+      "isDynamicEntry": true
+    },
+    "lspLanguageFeatures-wnbkRbea": {
+      "file": "lspLanguageFeatures-wnbkRbea.js",
+      "isDynamicEntry": false
+    },
+    "lua-tUqfhfvI": {
+      "file": "lua-tUqfhfvI.js",
+      "isDynamicEntry": true
+    },
+    "m3-45oxwrmA": {
+      "file": "m3-45oxwrmA.js",
+      "isDynamicEntry": true
+    },
+    "markdown-So_N6i0Z": {
+      "file": "markdown-So_N6i0Z.js",
+      "isDynamicEntry": true
+    },
+    "mdx-DrEeNdKQ": {
+      "file": "mdx-DrEeNdKQ.js",
+      "isDynamicEntry": true
+    },
+    "mips-IawqwGqA": {
+      "file": "mips-IawqwGqA.js",
+      "isDynamicEntry": true
+    },
+    "monaco.contribution-akyeGXpt": {
+      "file": "monaco.contribution-akyeGXpt.js",
+      "isDynamicEntry": false
+    },
+    "msdax-CDSxEbBp": {
+      "file": "msdax-CDSxEbBp.js",
+      "isDynamicEntry": true
+    },
+    "mysql-DMsRmxad": {
+      "file": "mysql-DMsRmxad.js",
+      "isDynamicEntry": true
+    },
+    "objective-c-CNHFvRjE": {
+      "file": "objective-c-CNHFvRjE.js",
+      "isDynamicEntry": true
+    },
+    "pascal-Dt1qMiU0": {
+      "file": "pascal-Dt1qMiU0.js",
+      "isDynamicEntry": true
+    },
+    "pascaligo-B7Cj5EeO": {
+      "file": "pascaligo-B7Cj5EeO.js",
+      "isDynamicEntry": true
+    },
+    "perl-CZmO2r3f": {
+      "file": "perl-CZmO2r3f.js",
+      "isDynamicEntry": true
+    },
+    "pgsql-Cbt_u8sx": {
+      "file": "pgsql-Cbt_u8sx.js",
+      "isDynamicEntry": true
+    },
+    "php-Bbtae880": {
+      "file": "php-Bbtae880.js",
+      "isDynamicEntry": true
+    },
+    "pla-DatnBBAC": {
+      "file": "pla-DatnBBAC.js",
+      "isDynamicEntry": true
+    },
+    "postiats-BLkY1Vv9": {
+      "file": "postiats-BLkY1Vv9.js",
+      "isDynamicEntry": true
+    },
+    "powerquery-CD2aW9Wu": {
+      "file": "powerquery-CD2aW9Wu.js",
+      "isDynamicEntry": true
+    },
+    "powershell-DBqSbid8": {
+      "file": "powershell-DBqSbid8.js",
+      "isDynamicEntry": true
+    },
+    "protobuf-DD3UDWj1": {
+      "file": "protobuf-DD3UDWj1.js",
+      "isDynamicEntry": true
+    },
+    "pug-B-Lz_2Oc": {
+      "file": "pug-B-Lz_2Oc.js",
+      "isDynamicEntry": true
+    },
+    "python-DMqU048g": {
+      "file": "python-DMqU048g.js",
+      "isDynamicEntry": true
+    },
+    "qsharp-DTKHM7Hh": {
+      "file": "qsharp-DTKHM7Hh.js",
+      "isDynamicEntry": true
+    },
+    "r-C-iadtL_": {
+      "file": "r-C-iadtL_.js",
+      "isDynamicEntry": true
+    },
+    "razor-DnRdHa3b": {
+      "file": "razor-DnRdHa3b.js",
+      "isDynamicEntry": true
+    },
+    "redis-DVz3vl4p": {
+      "file": "redis-DVz3vl4p.js",
+      "isDynamicEntry": true
+    },
+    "redshift-Dvsw4jjQ": {
+      "file": "redshift-Dvsw4jjQ.js",
+      "isDynamicEntry": true
+    },
+    "restructuredtext-OGb6rNBH": {
+      "file": "restructuredtext-OGb6rNBH.js",
+      "isDynamicEntry": true
+    },
+    "ruby-BqiQPWH2": {
+      "file": "ruby-BqiQPWH2.js",
+      "isDynamicEntry": true
+    },
+    "rust-QCqlLuDV": {
+      "file": "rust-QCqlLuDV.js",
+      "isDynamicEntry": true
+    },
+    "sb-CaOrW5lX": {
+      "file": "sb-CaOrW5lX.js",
+      "isDynamicEntry": true
+    },
+    "scala-RNuVCVMx": {
+      "file": "scala-RNuVCVMx.js",
+      "isDynamicEntry": true
+    },
+    "scheme-Bih5itNB": {
+      "file": "scheme-Bih5itNB.js",
+      "isDynamicEntry": true
+    },
+    "scss-SBZcEGSY": {
+      "file": "scss-SBZcEGSY.js",
+      "isDynamicEntry": true
+    },
+    "shell-Djj62HuO": {
+      "file": "shell-Djj62HuO.js",
+      "isDynamicEntry": true
+    },
+    "solidity-DgPI4XEE": {
+      "file": "solidity-DgPI4XEE.js",
+      "isDynamicEntry": true
+    },
+    "sophia--QS2lJXF": {
+      "file": "sophia--QS2lJXF.js",
+      "isDynamicEntry": true
+    },
+    "sparql-DCoPSQES": {
+      "file": "sparql-DCoPSQES.js",
+      "isDynamicEntry": true
+    },
+    "sql-C5wDa9iu": {
+      "file": "sql-C5wDa9iu.js",
+      "isDynamicEntry": true
+    },
+    "st-Cgn1v1HV": {
+      "file": "st-Cgn1v1HV.js",
+      "isDynamicEntry": true
+    },
+    "swift-DESZUalg": {
+      "file": "swift-DESZUalg.js",
+      "isDynamicEntry": true
+    },
+    "systemverilog-lrL0Z8Qg": {
+      "file": "systemverilog-lrL0Z8Qg.js",
+      "isDynamicEntry": true
+    },
+    "tcl-FgMr4Sw2": {
+      "file": "tcl-FgMr4Sw2.js",
+      "isDynamicEntry": true
+    },
+    "tsMode-DCFyhv04": {
+      "file": "tsMode-DCFyhv04.js",
+      "isDynamicEntry": true
+    },
+    "twig-BnhgBfBq": {
+      "file": "twig-BnhgBfBq.js",
+      "isDynamicEntry": true
+    },
+    "typescript-DgR6vhTC": {
+      "file": "typescript-DgR6vhTC.js",
+      "isDynamicEntry": true
+    },
+    "typespec-C-HdsK8z": {
+      "file": "typespec-C-HdsK8z.js",
+      "isDynamicEntry": true
+    },
+    "vb-pAjcXzHR": {
+      "file": "vb-pAjcXzHR.js",
+      "isDynamicEntry": true
+    },
+    "wgsl-BsGaJkRL": {
+      "file": "wgsl-BsGaJkRL.js",
+      "isDynamicEntry": true
+    },
+    "workers-Qq8Z-bnL": {
+      "file": "workers-Qq8Z-bnL.js",
+      "isDynamicEntry": false
+    },
+    "xml-CaJNTkYl": {
+      "file": "xml-CaJNTkYl.js",
+      "isDynamicEntry": true
+    },
+    "yaml-EO0mHGHc": {
+      "file": "yaml-EO0mHGHc.js",
+      "isDynamicEntry": true
+    }
+  }
+}

@@ -32,16 +32,39 @@ import {
   SOP1_OP_SHIFT,
   SOP1_OP_MASK,
   SOP1_SSRC0_MASK,
+  VOP3_ENCODING_PREFIX,
+  VOP3_PREFIX_SHIFT,
+  VOP3_PREFIX_MASK,
+  VOP3_OP_SHIFT,
+  VOP3_OP_MASK,
+  VOP3_ABS_SHIFT,
+  VOP3_VDST_MASK,
+  VOP3_SRC0_MASK,
+  VOP3_SRC1_SHIFT,
+  VOP3_SRC1_MASK,
+  VOP3_NEG_SHIFT,
+  VOP3_NEG_MASK,
+  VOP3_ABS_MASK,
+  VOP3_VOP1_OFFSET,
 } from './constants';
 import { lookupByMnemonic } from './opcodes';
 
+/** Check if an instruction needs VOP3 promotion (has source modifiers). */
+function needsVOP3(instr: ParsedInstruction): boolean {
+  return !!(instr.src0.abs || instr.src0.neg || instr.src1?.abs || instr.src1?.neg);
+}
+
 /**
- * Encode a single parsed instruction into one or two 32-bit words.
- * Returns the words (1 word normally, 2 if a literal constant is used).
+ * Encode a single parsed instruction into 1-2 32-bit words (or 2 for VOP3).
  */
 export function encodeInstruction(instr: ParsedInstruction): number[] {
   const info = lookupByMnemonic(instr.mnemonic);
   if (!info) throw new Error(`Unknown mnemonic: ${instr.mnemonic}`);
+
+  // Auto-promote to VOP3 if modifiers are present
+  if ((info.format === InstructionFormat.VOP1 || info.format === InstructionFormat.VOP2) && needsVOP3(instr)) {
+    return encodeVOP3(info.format, info.opcode, instr);
+  }
 
   if (info.format === InstructionFormat.VOP2) {
     return encodeVOP2(info.opcode, instr);
@@ -114,6 +137,44 @@ function encodeSOP1(opcode: number, instr: ParsedInstruction): number[] {
   return words;
 }
 
+function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: ParsedInstruction): number[] {
+  // Compute VOP3 opcode: VOP2 stays same, VOP1 gets +0x100 offset
+  const vop3Opcode = baseFormat === InstructionFormat.VOP1
+    ? baseOpcode + VOP3_VOP1_OFFSET
+    : baseOpcode;
+
+  const vdst = instr.dst.encoded & VOP3_VDST_MASK;
+
+  // ABS bits: bit0=src0, bit1=src1, bit2=src2
+  let absBits = 0;
+  if (instr.src0.abs) absBits |= 1;
+  if (instr.src1?.abs) absBits |= 2;
+
+  // NEG bits: bit0=src0, bit1=src1, bit2=src2
+  let negBits = 0;
+  if (instr.src0.neg) negBits |= 1;
+  if (instr.src1?.neg) negBits |= 2;
+
+  // Dword 0: [31:26]=prefix, [25:16]=OP, [10:8]=ABS, [7:0]=VDST
+  const dword0 = (VOP3_ENCODING_PREFIX << VOP3_PREFIX_SHIFT)
+    | ((vop3Opcode & VOP3_OP_MASK) << VOP3_OP_SHIFT)
+    | ((absBits & VOP3_ABS_MASK) << VOP3_ABS_SHIFT)
+    | (vdst & VOP3_VDST_MASK);
+
+  // Source operands (all 9-bit in VOP3)
+  const src0 = encodeSrc0(instr.src0);
+  const src1Encoded = instr.src1
+    ? encodeVGPR(instr.src1.value) // in VOP3, src1 is also 9-bit
+    : 0;
+
+  // Dword 1: [31:29]=NEG, [17:9]=SRC1, [8:0]=SRC0
+  const dword1 = ((negBits & VOP3_NEG_MASK) << VOP3_NEG_SHIFT)
+    | ((src1Encoded & VOP3_SRC1_MASK) << VOP3_SRC1_SHIFT)
+    | (src0.encoded & VOP3_SRC0_MASK);
+
+  return [(dword0 >>> 0), (dword1 >>> 0)];
+}
+
 interface Src0Encoding {
   encoded: number;     // 9-bit value for the SRC0 field
   literal?: number;    // Optional 32-bit literal word
@@ -169,7 +230,10 @@ export function assembleToBinary(instructions: ParsedInstruction[]): Uint32Array
  * Detect instruction format from a 32-bit word.
  */
 export function detectFormat(word: number): InstructionFormat {
-  // Check SOP1 first: bits [31:23] = 0x17D (101111101)
+  // Check VOP3 first: bits [31:26] = 0x34 (110100)
+  const prefix6 = (word >>> VOP3_PREFIX_SHIFT) & VOP3_PREFIX_MASK;
+  if (prefix6 === VOP3_ENCODING_PREFIX) return InstructionFormat.VOP3;
+  // Check SOP1: bits [31:23] = 0x17D (101111101)
   const prefix9 = (word >>> SOP1_PREFIX_SHIFT) & SOP1_PREFIX_MASK;
   if (prefix9 === SOP1_ENCODING_PREFIX) return InstructionFormat.SOP1;
   // VOP1: bits [31:25] = 0x3F (0111111)
@@ -191,7 +255,47 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
     const format = detectFormat(word);
     const address = i;
 
-    if (format === InstructionFormat.SOP1) {
+    if (format === InstructionFormat.VOP3) {
+      // VOP3 is always 2 dwords
+      if (i + 1 >= binary.length) break;
+      const dword0 = word;
+      const dword1 = binary[i + 1];
+
+      const vop3Opcode = (dword0 >>> VOP3_OP_SHIFT) & VOP3_OP_MASK;
+      const vdst = dword0 & VOP3_VDST_MASK;
+      const absBits = (dword0 >>> VOP3_ABS_SHIFT) & VOP3_ABS_MASK;
+
+      const src0 = dword1 & VOP3_SRC0_MASK;
+      const src1 = (dword1 >>> VOP3_SRC1_SHIFT) & VOP3_SRC1_MASK;
+      const negBits = (dword1 >>> VOP3_NEG_SHIFT) & VOP3_NEG_MASK;
+
+      // Determine original format and base opcode
+      let baseOpcode: number;
+      let origFormat: InstructionFormat;
+      if (vop3Opcode >= VOP3_VOP1_OFFSET) {
+        origFormat = InstructionFormat.VOP1;
+        baseOpcode = vop3Opcode - VOP3_VOP1_OFFSET;
+      } else {
+        origFormat = InstructionFormat.VOP2;
+        baseOpcode = vop3Opcode;
+      }
+
+      const decoded: DecodedInstruction = {
+        format: origFormat, // store as original format for opcode lookup
+        opcode: baseOpcode,
+        dst: vdst,
+        src0Encoded: src0,
+        src1: origFormat === InstructionFormat.VOP2 ? (src1 & 0xFF) : undefined,
+        address,
+        src0Abs: !!(absBits & 1),
+        src0Neg: !!(negBits & 1),
+        src1Abs: !!(absBits & 2),
+        src1Neg: !!(negBits & 2),
+      };
+
+      i += 2;
+      instructions.push(decoded);
+    } else if (format === InstructionFormat.SOP1) {
       const sdst = (word >>> SOP1_SDST_SHIFT) & SOP1_SDST_MASK;
       const opcode = (word >>> SOP1_OP_SHIFT) & SOP1_OP_MASK;
       const ssrc0 = word & SOP1_SSRC0_MASK;
@@ -282,10 +386,14 @@ export function disassemble(
   }
 
   const dst = `v${decoded.dst}`;
-  const src0 = formatSrc0(decoded.src0Encoded, decoded.literal);
+  let src0 = formatSrc0(decoded.src0Encoded, decoded.literal);
+  if (decoded.src0Abs) src0 = `abs(${src0})`;
+  if (decoded.src0Neg) src0 = `-${src0}`;
 
   if (decoded.format === InstructionFormat.VOP2) {
-    const src1 = `v${decoded.src1}`;
+    let src1 = `v${decoded.src1}`;
+    if (decoded.src1Abs) src1 = `abs(${src1})`;
+    if (decoded.src1Neg) src1 = `-${src1}`;
     return `${mnemonic} ${dst}, ${src0}, ${src1}`;
   } else {
     return `${mnemonic} ${dst}, ${src0}`;
