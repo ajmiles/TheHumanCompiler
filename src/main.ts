@@ -5,6 +5,7 @@ import './styles/registers.css';
 import './styles/editor.css';
 import './styles/puzzle.css';
 import './styles/leaderboard.css';
+import './styles/encyclopedia.css';
 import { App } from './ui/app';
 
 const root = document.getElementById('app')!;
