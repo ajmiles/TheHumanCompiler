@@ -9,6 +9,9 @@ import {
 } from './types';
 import {
   VOP1_ENCODING_PREFIX,
+  VOPC_ENCODING_PREFIX,
+  VOPC_OP_SHIFT,
+  VOPC_OP_MASK,
   VOP2_OP_SHIFT,
   VDST_SHIFT,
   VSRC1_SHIFT,
@@ -66,7 +69,9 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
     return encodeVOP3(info.format, info.opcode, instr);
   }
 
-  if (info.format === InstructionFormat.VOP2) {
+  if (info.format === InstructionFormat.VOPC) {
+    return encodeVOPC(info.opcode, instr);
+  } else if (info.format === InstructionFormat.VOP2) {
     return encodeVOP2(info.opcode, instr);
   } else if (info.format === InstructionFormat.SOP1) {
     return encodeSOP1(info.opcode, instr);
@@ -84,6 +89,27 @@ function encodeVOP2(opcode: number, instr: ParsedInstruction): number[] {
   const word = (0 << 31)
     | ((opcode & VOP2_OP_MASK) << VOP2_OP_SHIFT)
     | ((vdst & VDST_MASK) << VDST_SHIFT)
+    | ((vsrc1 & VSRC1_MASK) << VSRC1_SHIFT)
+    | (src0Result.encoded & SRC0_MASK);
+
+  const words = [(word >>> 0)];
+  if (src0Result.literal !== undefined) {
+    words.push(src0Result.literal >>> 0);
+  }
+  return words;
+}
+
+function encodeVOPC(opcode: number, instr: ParsedInstruction): number[] {
+  // VOPC: [31:25]=0x3E, [24:17]=OP, [16:9]=VSRC1, [8:0]=SRC0
+  // VOPC has no destination — src0 and src1 are the two operands
+  // In our parser: dst = src0 (first operand), src0 = src1 (second operand)
+  // Wait — for VOPC, operandCount=2, parser puts them as dst and src0.
+  // But VOPC doesn't have a dest, it has two sources. Let me use dst as src0, src0 as src1.
+  const src0Result = encodeSrc0(instr.dst); // first compare operand
+  const vsrc1 = instr.src0.encoded & 0xFF;  // second compare operand (VGPR)
+
+  const word = (VOPC_ENCODING_PREFIX << VOP1_PREFIX_SHIFT)
+    | ((opcode & VOPC_OP_MASK) << VOPC_OP_SHIFT)
     | ((vsrc1 & VSRC1_MASK) << VSRC1_SHIFT)
     | (src0Result.encoded & SRC0_MASK);
 
@@ -239,6 +265,8 @@ export function detectFormat(word: number): InstructionFormat {
   // VOP1: bits [31:25] = 0x3F (0111111)
   const prefix7 = (word >>> VOP1_PREFIX_SHIFT) & VOP1_PREFIX_MASK;
   if (prefix7 === VOP1_ENCODING_PREFIX) return InstructionFormat.VOP1;
+  // VOPC: bits [31:25] = 0x3E (0111110)
+  if (prefix7 === VOPC_ENCODING_PREFIX) return InstructionFormat.VOPC;
   // Bit 31 = 0 → VOP2
   return InstructionFormat.VOP2;
 }
@@ -294,6 +322,28 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       };
 
       i += 2;
+      instructions.push(decoded);
+    } else if (format === InstructionFormat.VOPC) {
+      const opcode = (word >>> VOPC_OP_SHIFT) & VOPC_OP_MASK;
+      const vsrc1 = (word >>> VSRC1_SHIFT) & VSRC1_MASK;
+      const src0 = word & SRC0_MASK;
+
+      const decoded: DecodedInstruction = {
+        format,
+        opcode,
+        dst: 0,  // VOPC has no dest; result goes to VCC
+        src0Encoded: src0,
+        src1: vsrc1,
+        address,
+      };
+
+      i++;
+
+      if (src0 === LITERAL_CONST && i < binary.length) {
+        decoded.literal = binary[i];
+        i++;
+      }
+
       instructions.push(decoded);
     } else if (format === InstructionFormat.SOP1) {
       const sdst = (word >>> SOP1_SDST_SHIFT) & SOP1_SDST_MASK;
@@ -383,6 +433,12 @@ export function disassemble(
     const dst = formatSpecialOrSgpr(decoded.dst);
     const src0 = formatSsrc0(decoded.src0Encoded, decoded.literal);
     return `${mnemonic} ${dst}, ${src0}`;
+  }
+
+  if (decoded.format === InstructionFormat.VOPC) {
+    const src0 = formatSrc0(decoded.src0Encoded, decoded.literal);
+    const src1 = `v${decoded.src1}`;
+    return `${mnemonic} vcc, ${src0}, ${src1}`;
   }
 
   const dst = `v${decoded.dst}`;

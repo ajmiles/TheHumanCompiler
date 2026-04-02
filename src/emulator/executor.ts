@@ -87,6 +87,26 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
+  // VOPC: comparison instructions — write result to VCC
+  if (decoded.format === InstructionFormat.VOPC) {
+    let vcc = 0;
+    const exec = state.exec;
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+
+      const src0Val = resolveSrc0(state, decoded.src0Encoded, decoded.literal, lane);
+      const src1Val = state.readVGPR(decoded.src1!, lane);
+      const cmpResult = opcodeInfo.execute(src0Val, src1Val);
+
+      if (cmpResult) {
+        vcc |= (1 << lane);
+      }
+    }
+    state.vcc = vcc >>> 0;
+    state.modifiedRegs.add('VCC');
+    return;
+  }
+
   // Vector instructions: execute per active lane
   const exec = state.exec;
   for (let lane = 0; lane < WAVE_WIDTH; lane++) {
@@ -102,7 +122,14 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       let src1Val = state.readVGPR(decoded.src1!, lane);
       if (decoded.src1Abs) src1Val = Math.abs(src1Val);
       if (decoded.src1Neg) src1Val = -src1Val;
-      result = opcodeInfo.execute(src0Val, src1Val);
+
+      // v_cndmask_b32: select based on VCC
+      if (opcodeInfo.readsVCC) {
+        const vccBit = (state.vcc >>> lane) & 1;
+        result = vccBit ? src1Val : src0Val;
+      } else {
+        result = opcodeInfo.execute(src0Val, src1Val);
+      }
     } else {
       result = opcodeInfo.execute(src0Val);
     }

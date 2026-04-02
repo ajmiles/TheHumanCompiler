@@ -139,26 +139,40 @@ export function parse(tokens: Token[]): ParseResult {
       }
     }
 
-    if (operandGroups.length !== info.operandCount) {
-      errors.push(wrongOperandCount(info.operandCount, operandGroups.length, mnemonicToken.line, mnemonicToken.column));
+    // VOPC special handling: accept 2 or 3 operands (optional vcc dest)
+    let expectedCount = info.operandCount;
+    if (info.format === InstructionFormat.VOPC) {
+      // Strip leading "vcc" operand if present (it's implicit)
+      if (operandGroups.length === 3 && operandGroups[0].token.value === 'vcc') {
+        operandGroups.shift();
+      }
+      expectedCount = 2; // always 2 source operands
+    }
+
+    if (operandGroups.length !== expectedCount) {
+      errors.push(wrongOperandCount(expectedCount, operandGroups.length, mnemonicToken.line, mnemonicToken.column));
       continue;
     }
 
     // Parse operands based on instruction format
-    const parsed = parseOperands(info.format, info.operandCount,
+    const parsed = parseOperands(info.format, expectedCount,
       operandGroups.map(g => g.token),
       errors,
     );
     if (!parsed) continue;
 
     // Apply modifiers to source operands
-    if (operandGroups.length >= 2) {
-      if (operandGroups[1].abs) parsed.src0.abs = true;
-      if (operandGroups[1].neg) parsed.src0.neg = true;
+    // For VOPC: both operands are sources (stored in dst/src0 of OperandSet)
+    const src0Group = info.format === InstructionFormat.VOPC ? 0 : 1;
+    const src1Group = info.format === InstructionFormat.VOPC ? 1 : 2;
+
+    if (operandGroups.length > src0Group) {
+      if (operandGroups[src0Group].abs) parsed.src0.abs = true;
+      if (operandGroups[src0Group].neg) parsed.src0.neg = true;
     }
-    if (operandGroups.length >= 3 && parsed.src1) {
-      if (operandGroups[2].abs) parsed.src1.abs = true;
-      if (operandGroups[2].neg) parsed.src1.neg = true;
+    if (operandGroups.length > src1Group && parsed.src1) {
+      if (operandGroups[src1Group].abs) parsed.src1.abs = true;
+      if (operandGroups[src1Group].neg) parsed.src1.neg = true;
     }
 
     instructions.push({
@@ -186,6 +200,16 @@ function parseOperands(
   tokens: Token[],
   errors: AssemblyError[],
 ): OperandSet | null {
+  if (format === InstructionFormat.VOPC) {
+    // VOPC: src0, vsrc1 (no destination — result to VCC)
+    const src0 = parseSrc0Operand(tokens[0], errors);
+    if (!src0) return null;
+    const vsrc1 = parseVsrc1Operand(tokens[1], errors);
+    if (!vsrc1) return null;
+    // Store src0 as "dst" and vsrc1 as "src0" for the encoding to pick up
+    return { dst: src0, src0: vsrc1 };
+  }
+
   if (format === InstructionFormat.SOP1) {
     // SOP1: sdst, ssrc0
     const dst = parseSgprDestOperand(tokens[0], errors);

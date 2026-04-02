@@ -58,6 +58,12 @@ export const WAVE_WIDTH = 32;
 // VOP1 encoding marker: bits [31:25] = 0b0111111 = 0x3F
 export const VOP1_ENCODING_PREFIX = 0x3F;
 
+// VOPC encoding marker: bits [31:25] = 0b0111110 = 0x3E
+// [24:17] = OP (8 bits), [16:9] = VSRC1 (8 bits), [8:0] = SRC0 (9 bits)
+export const VOPC_ENCODING_PREFIX = 0x3E;
+export const VOPC_OP_SHIFT = 17;
+export const VOPC_OP_MASK = 0xFF;    // 8 bits
+
 // Encoding bit positions
 export const VOP2_OP_SHIFT = 25;
 export const VOP2_OP_MASK = 0x3F;   // 6 bits

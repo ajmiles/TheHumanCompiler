@@ -4,6 +4,7 @@ export enum InstructionFormat {
   VOP1 = 'VOP1',
   VOP2 = 'VOP2',
   VOP3 = 'VOP3',
+  VOPC = 'VOPC',
   SOP1 = 'SOP1',
 }
 
@@ -54,10 +55,12 @@ export interface OpcodeInfo {
   mnemonic: string;
   format: InstructionFormat;
   opcode: number;
-  operandCount: number; // 2 for VOP1 (dst, src0), 3 for VOP2 (dst, src0, vsrc1)
+  operandCount: number; // 2 for VOP1/VOPC, 3 for VOP2
   execute: SemanticFn;
-  description: string;  // Human-readable tooltip
-  syntax: string;       // e.g. "v_add_f32 vdst, src0, vsrc1"
+  description: string;
+  syntax: string;
+  readsVCC?: boolean;   // v_cndmask_b32: uses VCC to select
+  writesVCC?: boolean;  // VOPC: writes comparison result to VCC
 }
 
 export interface AssemblyError {

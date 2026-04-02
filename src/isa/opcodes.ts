@@ -22,6 +22,16 @@ function asFloat(v: number): number {
 
 const VOP2_OPCODES: OpcodeInfo[] = [
   {
+    mnemonic: 'v_cndmask_b32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x01,
+    operandCount: 3,
+    execute: (a, b) => b ?? a, // actual selection done in executor using VCC
+    description: 'Conditional mask: select src0 or vsrc1 per lane based on VCC.\nvdst = VCC[lane] ? vsrc1 : src0',
+    syntax: 'v_cndmask_b32 vdst, src0, vsrc1',
+    readsVCC: true,
+  },
+  {
     mnemonic: 'v_add_f32',
     format: InstructionFormat.VOP2,
     opcode: 0x03,
@@ -172,6 +182,71 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   },
 ];
 
+// ── VOPC Instructions (comparisons, write to VCC) ──
+
+const VOPC_OPCODES: OpcodeInfo[] = [
+  {
+    mnemonic: 'v_cmp_lt_f32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x01,
+    operandCount: 2,
+    execute: (a, b) => (a < (b ?? 0)) ? 1 : 0,
+    description: 'Compare two 32-bit floats: set VCC bit if src0 < vsrc1.\nVCC[lane] = (src0 < vsrc1)',
+    syntax: 'v_cmp_lt_f32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_eq_f32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x02,
+    operandCount: 2,
+    execute: (a, b) => (a === (b ?? 0)) ? 1 : 0,
+    description: 'Compare two 32-bit floats: set VCC bit if src0 == vsrc1.\nVCC[lane] = (src0 == vsrc1)',
+    syntax: 'v_cmp_eq_f32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_le_f32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x03,
+    operandCount: 2,
+    execute: (a, b) => (a <= (b ?? 0)) ? 1 : 0,
+    description: 'Compare two 32-bit floats: set VCC bit if src0 ≤ vsrc1.\nVCC[lane] = (src0 <= vsrc1)',
+    syntax: 'v_cmp_le_f32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_gt_f32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x04,
+    operandCount: 2,
+    execute: (a, b) => (a > (b ?? 0)) ? 1 : 0,
+    description: 'Compare two 32-bit floats: set VCC bit if src0 > vsrc1.\nVCC[lane] = (src0 > vsrc1)',
+    syntax: 'v_cmp_gt_f32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_lg_f32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x05,
+    operandCount: 2,
+    execute: (a, b) => (a !== (b ?? 0)) ? 1 : 0,
+    description: 'Compare two 32-bit floats: set VCC bit if src0 ≠ vsrc1 (ordered).\nVCC[lane] = (src0 != vsrc1)',
+    syntax: 'v_cmp_lg_f32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_ge_f32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x06,
+    operandCount: 2,
+    execute: (a, b) => (a >= (b ?? 0)) ? 1 : 0,
+    description: 'Compare two 32-bit floats: set VCC bit if src0 ≥ vsrc1.\nVCC[lane] = (src0 >= vsrc1)',
+    syntax: 'v_cmp_ge_f32 src0, vsrc1',
+    writesVCC: true,
+  },
+];
+
 // ── SOP1 Instructions (scalar, 1-source) ──
 
 const SOP1_OPCODES: OpcodeInfo[] = [
@@ -200,6 +275,7 @@ function register(opcodes: OpcodeInfo[]) {
 
 register(VOP2_OPCODES);
 register(VOP1_OPCODES);
+register(VOPC_OPCODES);
 register(SOP1_OPCODES);
 
 export function lookupByMnemonic(mnemonic: string): OpcodeInfo | undefined {
