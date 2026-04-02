@@ -1,0 +1,219 @@
+// ── RDNA2 Opcode Table ──
+// Maps mnemonic → opcode info with encoding format and semantic function
+
+import { InstructionFormat, OpcodeInfo } from './types';
+
+// IEEE 754 helpers for bit-exact float operations
+const f32 = new Float32Array(1);
+const u32 = new Uint32Array(f32.buffer);
+
+function toU32(val: number): number {
+  f32[0] = val;
+  return u32[0];
+}
+
+function asFloat(v: number): number {
+  // Reinterpret a value through f32 to match GPU precision
+  f32[0] = v;
+  return f32[0];
+}
+
+// ── VOP2 Instructions (2-source) ──
+
+const VOP2_OPCODES: OpcodeInfo[] = [
+  {
+    mnemonic: 'v_add_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x03,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a + (b ?? 0)),
+    description: 'Add two 32-bit floats per lane.\nvdst = src0 + vsrc1',
+    syntax: 'v_add_f32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_sub_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x04,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a - (b ?? 0)),
+    description: 'Subtract two 32-bit floats per lane.\nvdst = src0 - vsrc1',
+    syntax: 'v_sub_f32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_subrev_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x05,
+    operandCount: 3,
+    execute: (a, b) => asFloat((b ?? 0) - a),
+    description: 'Reverse subtract: subtract src0 from vsrc1.\nvdst = vsrc1 - src0',
+    syntax: 'v_subrev_f32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_mul_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x08,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Multiply two 32-bit floats per lane.\nvdst = src0 × vsrc1',
+    syntax: 'v_mul_f32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_min_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x0F,
+    operandCount: 3,
+    execute: (a, b) => Math.min(a, b ?? 0),
+    description: 'Return the minimum of two 32-bit floats per lane.\nvdst = min(src0, vsrc1)',
+    syntax: 'v_min_f32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_max_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x10,
+    operandCount: 3,
+    execute: (a, b) => Math.max(a, b ?? 0),
+    description: 'Return the maximum of two 32-bit floats per lane.\nvdst = max(src0, vsrc1)',
+    syntax: 'v_max_f32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_and_b32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x1C,
+    operandCount: 3,
+    execute: (a, b) => ((toU32(a) & toU32(b ?? 0)) >>> 0),
+    description: 'Bitwise AND of two 32-bit values per lane.\nvdst = src0 & vsrc1',
+    syntax: 'v_and_b32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_or_b32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x1D,
+    operandCount: 3,
+    execute: (a, b) => ((toU32(a) | toU32(b ?? 0)) >>> 0),
+    description: 'Bitwise OR of two 32-bit values per lane.\nvdst = src0 | vsrc1',
+    syntax: 'v_or_b32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_xor_b32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x1E,
+    operandCount: 3,
+    execute: (a, b) => ((toU32(a) ^ toU32(b ?? 0)) >>> 0),
+    description: 'Bitwise XOR of two 32-bit values per lane.\nvdst = src0 ^ vsrc1',
+    syntax: 'v_xor_b32 vdst, src0, vsrc1',
+  },
+];
+
+// ── VOP1 Instructions (1-source) ──
+
+const VOP1_OPCODES: OpcodeInfo[] = [
+  {
+    mnemonic: 'v_mov_b32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x01,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Copy a 32-bit value into the destination per lane.\nvdst = src0',
+    syntax: 'v_mov_b32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_cvt_f32_i32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x05,
+    operandCount: 2,
+    execute: (a) => asFloat(a | 0),
+    description: 'Convert a signed 32-bit integer to a 32-bit float.\nvdst = (float)src0',
+    syntax: 'v_cvt_f32_i32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_cvt_i32_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x11,
+    operandCount: 2,
+    execute: (a) => Math.trunc(a) | 0,
+    description: 'Convert a 32-bit float to a signed 32-bit integer (truncate toward zero).\nvdst = (int)src0',
+    syntax: 'v_cvt_i32_f32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_rcp_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x2B,
+    operandCount: 2,
+    execute: (a) => asFloat(1.0 / a),
+    description: 'Compute the reciprocal (1/x) of a 32-bit float.\nvdst = 1.0 / src0',
+    syntax: 'v_rcp_f32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_sqrt_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x33,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.sqrt(a)),
+    description: 'Compute the square root of a 32-bit float.\nvdst = √src0',
+    syntax: 'v_sqrt_f32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_floor_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x24,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.floor(a)),
+    description: 'Round a 32-bit float down to the nearest integer.\nvdst = floor(src0)',
+    syntax: 'v_floor_f32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_ceil_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x25,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.ceil(a)),
+    description: 'Round a 32-bit float up to the nearest integer.\nvdst = ceil(src0)',
+    syntax: 'v_ceil_f32 vdst, src0',
+  },
+];
+
+// ── SOP1 Instructions (scalar, 1-source) ──
+
+const SOP1_OPCODES: OpcodeInfo[] = [
+  {
+    mnemonic: 's_mov_b32',
+    format: InstructionFormat.SOP1,
+    opcode: 0x03,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Copy a 32-bit scalar value into the destination SGPR.\nsdst = ssrc0',
+    syntax: 's_mov_b32 sdst, ssrc0',
+  },
+];
+
+// ── Lookup Tables ──
+
+const byMnemonic = new Map<string, OpcodeInfo>();
+const byFormatAndOpcode = new Map<string, OpcodeInfo>();
+
+function register(opcodes: OpcodeInfo[]) {
+  for (const info of opcodes) {
+    byMnemonic.set(info.mnemonic, info);
+    byFormatAndOpcode.set(`${info.format}:${info.opcode}`, info);
+  }
+}
+
+register(VOP2_OPCODES);
+register(VOP1_OPCODES);
+register(SOP1_OPCODES);
+
+export function lookupByMnemonic(mnemonic: string): OpcodeInfo | undefined {
+  return byMnemonic.get(mnemonic.toLowerCase());
+}
+
+export function lookupByOpcode(format: InstructionFormat, opcode: number): OpcodeInfo | undefined {
+  return byFormatAndOpcode.get(`${format}:${opcode}`);
+}
+
+export function getAllMnemonics(): string[] {
+  return Array.from(byMnemonic.keys());
+}
+
+export function getAllOpcodes(): OpcodeInfo[] {
+  return Array.from(byMnemonic.values());
+}

@@ -1,0 +1,331 @@
+// ── AMD Assembly Parser ──
+
+import { Token, TokenType } from './lexer';
+import {
+  ParsedInstruction,
+  Operand,
+  OperandType,
+  AssemblyError,
+  InstructionFormat,
+} from '../isa/types';
+import { lookupByMnemonic } from '../isa/opcodes';
+import {
+  tryEncodeInline,
+  encodeVGPR,
+  LITERAL_CONST,
+  NUM_VGPRS,
+  NUM_SGPRS,
+  VCC_LO,
+  VCC_HI,
+  M0_REG,
+  NULL_REG,
+  EXEC_LO,
+  EXEC_HI,
+} from '../isa/constants';
+import {
+  unknownMnemonic,
+  invalidRegister,
+  wrongOperandCount,
+  invalidLiteral,
+  src0Constraint,
+} from './errors';
+
+export interface ParseResult {
+  instructions: ParsedInstruction[];
+  errors: AssemblyError[];
+}
+
+export function parse(tokens: Token[]): ParseResult {
+  const instructions: ParsedInstruction[] = [];
+  const errors: AssemblyError[] = [];
+  let pos = 0;
+
+  function peek(): Token {
+    return tokens[pos];
+  }
+
+  function advance(): Token {
+    return tokens[pos++];
+  }
+
+  function skipNewlines(): void {
+    while (pos < tokens.length && peek().type === TokenType.NEWLINE) {
+      advance();
+    }
+  }
+
+  while (pos < tokens.length) {
+    skipNewlines();
+    if (pos >= tokens.length || peek().type === TokenType.EOF) break;
+
+    const tok = peek();
+
+    if (tok.type !== TokenType.MNEMONIC) {
+      // Skip unexpected tokens until next newline
+      while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
+        advance();
+      }
+      continue;
+    }
+
+    const mnemonicToken = advance();
+    const info = lookupByMnemonic(mnemonicToken.value);
+
+    if (!info) {
+      errors.push(unknownMnemonic(mnemonicToken.value, mnemonicToken.line, mnemonicToken.column));
+      while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
+        advance();
+      }
+      continue;
+    }
+
+    // Collect operand tokens
+    const operandTokens: Token[] = [];
+    while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
+      const t = peek();
+      if (t.type === TokenType.COMMA) {
+        advance();
+        continue;
+      }
+      if (t.type === TokenType.REGISTER || t.type === TokenType.NUMBER) {
+        operandTokens.push(advance());
+      } else {
+        // Skip unexpected token
+        advance();
+      }
+    }
+
+    if (operandTokens.length !== info.operandCount) {
+      errors.push(wrongOperandCount(info.operandCount, operandTokens.length, mnemonicToken.line, mnemonicToken.column));
+      continue;
+    }
+
+    // Parse operands based on instruction format
+    const parsed = parseOperands(info.format, info.operandCount, operandTokens, errors);
+    if (!parsed) continue;
+
+    instructions.push({
+      mnemonic: mnemonicToken.value,
+      dst: parsed.dst,
+      src0: parsed.src0,
+      src1: parsed.src1,
+      line: mnemonicToken.line,
+      column: mnemonicToken.column,
+    });
+  }
+
+  return { instructions, errors };
+}
+
+interface OperandSet {
+  dst: Operand;
+  src0: Operand;
+  src1?: Operand;
+}
+
+function parseOperands(
+  format: InstructionFormat,
+  _operandCount: number,
+  tokens: Token[],
+  errors: AssemblyError[],
+): OperandSet | null {
+  if (format === InstructionFormat.SOP1) {
+    // SOP1: sdst, ssrc0
+    const dst = parseSgprDestOperand(tokens[0], errors);
+    if (!dst) return null;
+    const src0 = parseSsrc0Operand(tokens[1], errors);
+    if (!src0) return null;
+    return { dst, src0 };
+  }
+
+  if (format === InstructionFormat.VOP1) {
+    // VOP1: dst, src0
+    const dst = parseDestOperand(tokens[0], errors);
+    if (!dst) return null;
+    const src0 = parseSrc0Operand(tokens[1], errors);
+    if (!src0) return null;
+    return { dst, src0 };
+  }
+
+  // VOP2: dst, src0, vsrc1
+  const dst = parseDestOperand(tokens[0], errors);
+  if (!dst) return null;
+  const src0 = parseSrc0Operand(tokens[1], errors);
+  if (!src0) return null;
+  const vsrc1 = parseVsrc1Operand(tokens[2], errors);
+  if (!vsrc1) return null;
+
+  return { dst, src0, src1: vsrc1 };
+}
+
+// VDST: must be VGPR, encoded as plain 8-bit index
+function parseDestOperand(token: Token, errors: AssemblyError[]): Operand | null {
+  if (token.type === TokenType.REGISTER) {
+    const reg = parseRegister(token);
+    if (!reg) {
+      errors.push(invalidRegister(token.value, token.line, token.column));
+      return null;
+    }
+    if (reg.type !== OperandType.VGPR) {
+      errors.push(invalidRegister(token.value, token.line, token.column));
+      return null;
+    }
+    // VDST encoded as plain VGPR index
+    return { type: OperandType.VGPR, value: reg.index, encoded: reg.index };
+  }
+  errors.push(invalidRegister(token.value, token.line, token.column));
+  return null;
+}
+
+// SRC0: 9-bit encoded, can be VGPR, SGPR, inline constant, or literal
+function parseSrc0Operand(token: Token, errors: AssemblyError[]): Operand | null {
+  if (token.type === TokenType.REGISTER) {
+    const reg = parseRegister(token);
+    if (!reg) {
+      errors.push(invalidRegister(token.value, token.line, token.column));
+      return null;
+    }
+    if (reg.type === OperandType.VGPR) {
+      // 9-bit: VGPR uses 256+index
+      return { type: OperandType.VGPR, value: reg.index, encoded: encodeVGPR(reg.index) };
+    }
+    // SGPR: encoded directly as index
+    return { type: OperandType.SGPR, value: reg.index, encoded: reg.index };
+  }
+
+  if (token.type === TokenType.NUMBER) {
+    return parseNumericOperand(token, errors);
+  }
+
+  errors.push(invalidLiteral(token.value, token.line, token.column));
+  return null;
+}
+
+// VSRC1: must be VGPR, encoded as plain 8-bit index
+function parseVsrc1Operand(token: Token, errors: AssemblyError[]): Operand | null {
+  if (token.type === TokenType.REGISTER) {
+    const reg = parseRegister(token);
+    if (!reg) {
+      errors.push(invalidRegister(token.value, token.line, token.column));
+      return null;
+    }
+    if (reg.type !== OperandType.VGPR) {
+      errors.push(src0Constraint(token.line, token.column));
+      return null;
+    }
+    // VSRC1 encoded as plain VGPR index
+    return { type: OperandType.VGPR, value: reg.index, encoded: reg.index };
+  }
+
+  // VSRC1 must be VGPR
+  errors.push(src0Constraint(token.line, token.column));
+  return null;
+}
+
+// SDST: must be SGPR or special register, encoded as 7-bit index
+function parseSgprDestOperand(token: Token, errors: AssemblyError[]): Operand | null {
+  if (token.type === TokenType.REGISTER) {
+    const reg = parseRegister(token);
+    if (!reg) {
+      errors.push(invalidRegister(token.value, token.line, token.column));
+      return null;
+    }
+    if (reg.type === OperandType.SGPR || reg.type === OperandType.SPECIAL) {
+      return { type: reg.type, value: reg.index, encoded: reg.index };
+    }
+    errors.push(invalidRegister(token.value, token.line, token.column));
+    return null;
+  }
+  errors.push(invalidRegister(token.value, token.line, token.column));
+  return null;
+}
+
+// SSRC0: 8-bit, can be SGPR, special register, or inline constant (not VGPR)
+function parseSsrc0Operand(token: Token, errors: AssemblyError[]): Operand | null {
+  if (token.type === TokenType.REGISTER) {
+    const reg = parseRegister(token);
+    if (!reg) {
+      errors.push(invalidRegister(token.value, token.line, token.column));
+      return null;
+    }
+    if (reg.type === OperandType.SGPR || reg.type === OperandType.SPECIAL) {
+      return { type: reg.type, value: reg.index, encoded: reg.index };
+    }
+    errors.push(invalidRegister(token.value, token.line, token.column));
+    return null;
+  }
+  if (token.type === TokenType.NUMBER) {
+    return parseNumericOperand(token, errors);
+  }
+  errors.push(invalidLiteral(token.value, token.line, token.column));
+  return null;
+}
+
+interface RegisterInfo {
+  type: OperandType.VGPR | OperandType.SGPR | OperandType.SPECIAL;
+  index: number;
+}
+
+const SPECIAL_REG_MAP: Record<string, number> = {
+  'vcc_lo': VCC_LO,
+  'vcc_hi': VCC_HI,
+  'vcc': VCC_LO,
+  'exec_lo': EXEC_LO,
+  'exec_hi': EXEC_HI,
+  'exec': EXEC_LO,
+  'm0': M0_REG,
+  'null': NULL_REG,
+};
+
+function parseRegister(token: Token): RegisterInfo | null {
+  const val = token.value.toLowerCase();
+
+  // Special registers
+  if (val in SPECIAL_REG_MAP) {
+    return { type: OperandType.SPECIAL, index: SPECIAL_REG_MAP[val] };
+  }
+
+  if (val.startsWith('v')) {
+    const idx = parseInt(val.slice(1), 10);
+    if (isNaN(idx) || idx < 0 || idx >= NUM_VGPRS) return null;
+    return { type: OperandType.VGPR, index: idx };
+  }
+  if (val.startsWith('s')) {
+    const idx = parseInt(val.slice(1), 10);
+    if (isNaN(idx) || idx < 0 || idx >= NUM_SGPRS) return null;
+    return { type: OperandType.SGPR, index: idx };
+  }
+  return null;
+}
+
+function parseNumericOperand(token: Token, errors: AssemblyError[]): Operand | null {
+  const text = token.value;
+  let value: number;
+
+  if (text.startsWith('0x') || text.startsWith('0X') || text.startsWith('-0x') || text.startsWith('-0X')) {
+    value = Number(text);
+  } else if (text.includes('.')) {
+    value = parseFloat(text);
+  } else {
+    value = parseInt(text, 10);
+  }
+
+  if (isNaN(value)) {
+    errors.push(invalidLiteral(text, token.line, token.column));
+    return null;
+  }
+
+  // Try inline constant encoding first
+  const inlineEncoded = tryEncodeInline(value);
+  if (inlineEncoded !== null) {
+    const isFloat = text.includes('.');
+    return {
+      type: isFloat ? OperandType.INLINE_FLOAT : OperandType.INLINE_INT,
+      value,
+      encoded: inlineEncoded,
+    };
+  }
+
+  // Fall back to 32-bit literal
+  return { type: OperandType.LITERAL, value, encoded: LITERAL_CONST };
+}

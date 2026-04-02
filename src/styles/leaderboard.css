@@ -1,0 +1,215 @@
+/* ── Leaderboard Overlay ── */
+
+.leaderboard-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  padding: 28px 32px;
+  max-width: 720px;
+  width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.leaderboard-modal::-webkit-scrollbar {
+  width: 6px;
+}
+
+.leaderboard-modal::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+}
+
+.leaderboard-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.leaderboard-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent-green);
+  margin: 0 0 4px 0;
+}
+
+.leaderboard-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+/* ── Your Stats ── */
+
+.leaderboard-stats {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.leaderboard-stat {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 12px 20px;
+  text-align: center;
+  flex: 1;
+  max-width: 160px;
+}
+
+.leaderboard-stat__icon {
+  display: block;
+  font-size: 20px;
+  margin-bottom: 4px;
+}
+
+.leaderboard-stat__value {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.leaderboard-stat__label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+/* ── Name Input ── */
+
+.leaderboard-submit {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.leaderboard-name-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  width: 200px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.leaderboard-name-input:focus {
+  border-color: var(--accent-cyan);
+}
+
+.leaderboard-name-input--error {
+  border-color: var(--accent-red) !important;
+  animation: shake 0.3s ease;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.leaderboard-submitted {
+  text-align: center;
+  color: var(--accent-green);
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+/* ── Tables ── */
+
+.leaderboard-tables {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.leaderboard-table-section {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.leaderboard-table-title {
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.leaderboard-table th {
+  padding: 5px 8px;
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.leaderboard-table th:last-child {
+  text-align: right;
+}
+
+.leaderboard-table td {
+  padding: 4px 8px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.leaderboard-table td:last-child {
+  text-align: right;
+  font-weight: 600;
+  color: var(--accent-yellow);
+}
+
+.leaderboard-table td:first-child {
+  width: 28px;
+  text-align: center;
+}
+
+.leaderboard-row--highlight td {
+  background: rgba(57, 211, 83, 0.1);
+  color: var(--accent-green);
+}
+
+.leaderboard-empty {
+  text-align: center !important;
+  color: var(--text-muted) !important;
+  font-style: italic;
+  padding: 12px 8px !important;
+}
+
+/* ── Footer ── */
+
+.leaderboard-footer {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.leaderboard-close-btn {
+  min-width: 80px;
+}

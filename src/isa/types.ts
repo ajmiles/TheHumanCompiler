@@ -1,0 +1,65 @@
+// ── RDNA2 ISA Core Types ──
+
+export enum InstructionFormat {
+  VOP1 = 'VOP1',
+  VOP2 = 'VOP2',
+  SOP1 = 'SOP1',
+}
+
+export enum OperandType {
+  VGPR = 'VGPR',
+  SGPR = 'SGPR',
+  INLINE_INT = 'INLINE_INT',
+  INLINE_FLOAT = 'INLINE_FLOAT',
+  LITERAL = 'LITERAL',
+  SPECIAL = 'SPECIAL',
+}
+
+export interface Operand {
+  type: OperandType;
+  value: number;       // Register index or constant value
+  encoded: number;     // 9-bit encoded value for SRC0, or 8-bit for VSRC1/VDST
+}
+
+export interface ParsedInstruction {
+  mnemonic: string;
+  dst: Operand;
+  src0: Operand;
+  src1?: Operand;      // Only for VOP2
+  line: number;
+  column: number;
+}
+
+export interface DecodedInstruction {
+  format: InstructionFormat;
+  opcode: number;
+  dst: number;         // VGPR index (0-255)
+  src0Encoded: number; // 9-bit encoded source
+  src1?: number;       // 8-bit VGPR index (VOP2 only)
+  literal?: number;    // 32-bit literal if SRC0 == 255
+  address: number;     // Word offset in the binary
+}
+
+export type SemanticFn = (a: number, b?: number) => number;
+
+export interface OpcodeInfo {
+  mnemonic: string;
+  format: InstructionFormat;
+  opcode: number;
+  operandCount: number; // 2 for VOP1 (dst, src0), 3 for VOP2 (dst, src0, vsrc1)
+  execute: SemanticFn;
+  description: string;  // Human-readable tooltip
+  syntax: string;       // e.g. "v_add_f32 vdst, src0, vsrc1"
+}
+
+export interface AssemblyError {
+  message: string;
+  line: number;
+  column: number;
+}
+
+export interface AssemblyResult {
+  binary: Uint32Array;
+  errors: AssemblyError[];
+  instructions: ParsedInstruction[];
+}
