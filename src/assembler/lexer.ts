@@ -77,6 +77,16 @@ export function tokenize(source: string): Token[] {
       }
 
       // Number: hex, float, or integer (may start with - for negative)
+      // But '-' before a register (v/s) is a neg modifier, not a negative number
+      if (ch === '-' && col + 1 < lineText.length) {
+        const nextCh = lineText[col + 1];
+        if (nextCh === 'v' || nextCh === 's' || nextCh === '|') {
+          // Neg modifier before register or |abs|
+          tokens.push({ type: TokenType.MODIFIER, value: 'neg', line: lineNum, column: col + 1 });
+          col++;
+          continue;
+        }
+      }
       if (isDigit(ch) || (ch === '-' && col + 1 < lineText.length && isDigitOrDot(lineText[col + 1]))) {
         const start = col;
         if (ch === '-') col++;
