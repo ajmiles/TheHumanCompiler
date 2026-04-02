@@ -50,6 +50,11 @@ export class App {
   // Debounce
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Revision tabs
+  private revisionBar!: HTMLElement;
+  private revisions: string[] = [];
+  private activeRevision = 0;
+
   // Completed puzzle tracking
   private completedIds: Set<string>;
 
@@ -109,13 +114,16 @@ export class App {
     const centerPanel = document.createElement('div');
     centerPanel.className = 'panel editor-panel';
 
+    this.revisionBar = document.createElement('div');
+    this.revisionBar.className = 'revision-bar';
+
     const editorContainer = document.createElement('div');
     editorContainer.className = 'editor-container';
 
     const binaryContainer = document.createElement('div');
     binaryContainer.style.flexShrink = '0';
 
-    centerPanel.append(editorContainer, binaryContainer);
+    centerPanel.append(this.revisionBar, editorContainer, binaryContainer);
 
     // Right column: I/O panel
     const rightPanel = document.createElement('div');
@@ -445,20 +453,20 @@ export class App {
     // Set up emulator with placeholder program
     this.emulator.reset();
 
-    // Restore saved solution or provide starter template
+    // Restore saved revisions or create initial one with starter template
     const saved = this.loadSolution(puzzle.id);
     if (saved) {
-      this.editor.setSource(saved);
+      this.revisions = saved.revisions;
+      this.activeRevision = saved.activeIndex;
     } else {
       const inputNames = puzzle.inputs.map(i => `; ${i.name} in v${i.register}`).join('\n');
       const outputNames = puzzle.outputs.map(o => `; ${o.name} to v${o.register}`).join('\n');
-      this.editor.setSource(
-        `; ${puzzle.title}\n` +
-        `${inputNames}\n` +
-        `${outputNames}\n` +
-        `; Write your solution below:\n\n`,
-      );
+      const template = `; ${puzzle.title}\n${inputNames}\n${outputNames}\n; Write your solution below:\n\n`;
+      this.revisions = [template];
+      this.activeRevision = 0;
     }
+    this.editor.setSource(this.revisions[this.activeRevision]);
+    this.renderRevisionTabs();
 
     // Try to assemble and load
     this.doAssemble();
@@ -585,19 +593,75 @@ export class App {
 
   private saveSolution(): void {
     if (!this.currentPuzzle) return;
+    // Update current revision content
+    this.revisions[this.activeRevision] = this.editor.getSource();
     try {
-      const solutions = JSON.parse(localStorage.getItem(SOLUTIONS_KEY) ?? '{}');
-      solutions[this.currentPuzzle.id] = this.editor.getSource();
-      localStorage.setItem(SOLUTIONS_KEY, JSON.stringify(solutions));
+      const all = JSON.parse(localStorage.getItem(SOLUTIONS_KEY) ?? '{}');
+      all[this.currentPuzzle.id] = {
+        revisions: this.revisions,
+        activeIndex: this.activeRevision,
+      };
+      localStorage.setItem(SOLUTIONS_KEY, JSON.stringify(all));
     } catch { /* ignore */ }
   }
 
-  private loadSolution(puzzleId: string): string | null {
+  private loadSolution(puzzleId: string): { revisions: string[]; activeIndex: number } | null {
     try {
-      const solutions = JSON.parse(localStorage.getItem(SOLUTIONS_KEY) ?? '{}');
-      return solutions[puzzleId] ?? null;
+      const all = JSON.parse(localStorage.getItem(SOLUTIONS_KEY) ?? '{}');
+      const entry = all[puzzleId];
+      if (!entry) return null;
+      // Handle legacy format (plain string)
+      if (typeof entry === 'string') {
+        return { revisions: [entry], activeIndex: 0 };
+      }
+      if (entry.revisions && entry.revisions.length > 0) {
+        return entry;
+      }
+      return null;
     } catch {
       return null;
     }
+  }
+
+  private renderRevisionTabs(): void {
+    this.revisionBar.innerHTML = '';
+
+    for (let i = 0; i < this.revisions.length; i++) {
+      const tab = document.createElement('button');
+      tab.className = 'revision-tab' + (i === this.activeRevision ? ' revision-tab--active' : '');
+      tab.textContent = `Rev ${i + 1}`;
+      tab.title = `Revision ${i + 1}`;
+      const idx = i;
+      tab.onclick = () => this.switchRevision(idx);
+      this.revisionBar.appendChild(tab);
+    }
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'revision-tab revision-tab--add';
+    addBtn.textContent = '+';
+    addBtn.title = 'New revision (copies current code)';
+    addBtn.onclick = () => this.addRevision();
+    this.revisionBar.appendChild(addBtn);
+  }
+
+  private switchRevision(index: number): void {
+    if (index === this.activeRevision) return;
+    // Save current content to current revision
+    this.revisions[this.activeRevision] = this.editor.getSource();
+    this.activeRevision = index;
+    this.editor.setSource(this.revisions[index] ?? '');
+    this.renderRevisionTabs();
+    this.doAssemble();
+    this.saveSolution();
+  }
+
+  private addRevision(): void {
+    // Save current first
+    this.revisions[this.activeRevision] = this.editor.getSource();
+    // New revision starts as a copy of current
+    this.revisions.push(this.editor.getSource());
+    this.activeRevision = this.revisions.length - 1;
+    this.renderRevisionTabs();
+    this.saveSolution();
   }
 }

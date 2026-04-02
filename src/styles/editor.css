@@ -1,3 +1,50 @@
+/* ── Revision Tabs ── */
+
+.revision-bar {
+  display: flex;
+  gap: 1px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+  padding: 0 4px;
+  overflow-x: auto;
+}
+
+.revision-tab {
+  background: var(--bg-tertiary);
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.revision-tab:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.revision-tab--active {
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  border-bottom-color: var(--accent-cyan);
+}
+
+.revision-tab--add {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 5px 10px;
+}
+
+.revision-tab--add:hover {
+  color: var(--accent-green);
+}
+
 /* ── Editor Panel ── */
 
 .editor-panel {
