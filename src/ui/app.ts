@@ -19,6 +19,7 @@ import { WAVE_WIDTH } from '../isa/constants';
 import { AssemblyResult, OperandType } from '../isa/types';
 
 const STORAGE_KEY = 'humancompiler_completed';
+const SOLUTIONS_KEY = 'humancompiler_solutions';
 const DEBOUNCE_MS = 500;
 
 export class App {
@@ -173,10 +174,13 @@ export class App {
   }
 
   private wireEvents(): void {
-    // Auto-assemble on content change with debounce
+    // Auto-assemble on content change with debounce, and save solution
     this.editor.onContentChange(() => {
       if (this.debounceTimer) clearTimeout(this.debounceTimer);
-      this.debounceTimer = setTimeout(() => this.doAssemble(), DEBOUNCE_MS);
+      this.debounceTimer = setTimeout(() => {
+        this.doAssemble();
+        this.saveSolution();
+      }, DEBOUNCE_MS);
     });
 
     // Controls
@@ -441,15 +445,20 @@ export class App {
     // Set up emulator with placeholder program
     this.emulator.reset();
 
-    // Provide starter template
-    const inputNames = puzzle.inputs.map(i => `; ${i.name} in v${i.register}`).join('\n');
-    const outputNames = puzzle.outputs.map(o => `; ${o.name} to v${o.register}`).join('\n');
-    this.editor.setSource(
-      `; ${puzzle.title}\n` +
-      `${inputNames}\n` +
-      `${outputNames}\n` +
-      `; Write your solution below:\n\n`,
-    );
+    // Restore saved solution or provide starter template
+    const saved = this.loadSolution(puzzle.id);
+    if (saved) {
+      this.editor.setSource(saved);
+    } else {
+      const inputNames = puzzle.inputs.map(i => `; ${i.name} in v${i.register}`).join('\n');
+      const outputNames = puzzle.outputs.map(o => `; ${o.name} to v${o.register}`).join('\n');
+      this.editor.setSource(
+        `; ${puzzle.title}\n` +
+        `${inputNames}\n` +
+        `${outputNames}\n` +
+        `; Write your solution below:\n\n`,
+      );
+    }
 
     // Try to assemble and load
     this.doAssemble();
@@ -572,5 +581,23 @@ export class App {
 
   private saveCompleted(): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([...this.completedIds]));
+  }
+
+  private saveSolution(): void {
+    if (!this.currentPuzzle) return;
+    try {
+      const solutions = JSON.parse(localStorage.getItem(SOLUTIONS_KEY) ?? '{}');
+      solutions[this.currentPuzzle.id] = this.editor.getSource();
+      localStorage.setItem(SOLUTIONS_KEY, JSON.stringify(solutions));
+    } catch { /* ignore */ }
+  }
+
+  private loadSolution(puzzleId: string): string | null {
+    try {
+      const solutions = JSON.parse(localStorage.getItem(SOLUTIONS_KEY) ?? '{}');
+      return solutions[puzzleId] ?? null;
+    } catch {
+      return null;
+    }
   }
 }
