@@ -56,6 +56,7 @@ function resolveSrc0(state: GPUState, src0Encoded: number, literal: number | und
   // Inline constant — decodeInlineConstant returns the numeric value directly.
   // For inline floats (0.5, 1.0, etc.) it returns the float.
   // For inline integers (0-64, -1 to -16) it returns the integer.
+  // The execute function decides how to interpret the value (float vs int).
   return decodeInlineConstant(src0Encoded);
 }
 

@@ -112,6 +112,15 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     description: 'Bitwise XOR of two 32-bit values per lane.\nvdst = src0 ^ vsrc1',
     syntax: 'v_xor_b32 vdst, src0, vsrc1',
   },
+  {
+    mnemonic: 'v_add_nc_u32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x2A,
+    operandCount: 3,
+    execute: (a, b) => ((a + (b ?? 0)) >>> 0),
+    description: 'Add two unsigned 32-bit integers per lane (no carry out).\nvdst = src0 + vsrc1',
+    syntax: 'v_add_nc_u32 vdst, src0, vsrc1',
+  },
 ];
 
 // ── VOP1 Instructions (1-source) ──
@@ -193,6 +202,30 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
     description: 'Fused multiply-add: computes src0 × src1 + src2 with a single rounding.\nvdst = src0 × src1 + src2',
     syntax: 'v_fma_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_add_lshl_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x147,
+    operandCount: 4,
+    execute: (a, b, c) => (((a + (b ?? 0)) << ((c ?? 0) & 31)) >>> 0),
+    description: 'Add two unsigned 32-bit integers, then left-shift the result.\nvdst = (src0 + src1) << src2',
+    syntax: 'v_add_lshl_u32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_bfe_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x148,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const data = a >>> 0;
+      const offset = (b ?? 0) & 31;
+      const width = (c ?? 0) & 31;
+      if (width === 0) return 0;
+      return ((data >>> offset) & ((1 << width) - 1)) >>> 0;
+    },
+    description: 'Bitfield extract (unsigned): extract a field of bits from src0.\nvdst = (src0 >> src1) & ((1 << src2) - 1)\nsrc1 = bit offset, src2 = field width',
+    syntax: 'v_bfe_u32 vdst, src0, src1, src2',
   },
 ];
 
