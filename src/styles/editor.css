@@ -110,7 +110,9 @@
 
 .binary-entry__hex {
   color: var(--accent-yellow);
-  min-width: 80px;
+  width: 220px;
+  min-width: 220px;
+  text-align: right;
   font-weight: 600;
 }
 
