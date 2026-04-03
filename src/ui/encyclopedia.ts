@@ -127,6 +127,23 @@ const FORMATS: FormatSpec[] = [
       'Scalar instructions are not per-lane — they execute once for the whole wavefront',
     ],
   },
+  {
+    name: 'SOPP',
+    fullName: 'Scalar Program Control (32-bit)',
+    totalBits: 32,
+    words: 1,
+    fields: [[
+      { name: '0x17F', bits: 9, color: '#f85149', description: 'Encoding prefix — 101111111 identifies SOPP' },
+      { name: 'OP', bits: 7, color: '#58a6ff', description: 'Opcode — selects the operation (e.g. 0x01 = s_endpgm)' },
+      { name: 'SIMM16', bits: 16, color: '#bc8cff', description: '16-bit signed immediate — used for branch offsets (unused by s_endpgm)' },
+    ]],
+    description: 'Scalar program control instructions — no register operands. Used for program termination (s_endpgm), branches, barriers, and other control flow. The 16-bit SIMM16 field provides a branch offset for jump instructions.',
+    operandRules: [
+      'No register operands — instruction is fully encoded in 32 bits',
+      'SIMM16: signed 16-bit immediate, used as branch offset in dwords',
+      's_endpgm: terminates the shader program (SIMM16 = 0)',
+    ],
+  },
 ];
 
 const SRC0_ENCODING_TABLE = [
