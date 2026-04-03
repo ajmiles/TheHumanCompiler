@@ -128,7 +128,9 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       if (decoded.src2Neg) src2Val = -src2Val;
       result = opcodeInfo.execute(src0Val, src1Val, src2Val);
     } else if (decoded.format === InstructionFormat.VOP2 || decoded.src1 !== undefined) {
-      let src1Val = decoded.format === InstructionFormat.VOP2
+      const hasVop3Mods = decoded.src0Abs || decoded.src0Neg || decoded.src1Abs ||
+        decoded.src1Neg || decoded.omod || decoded.clamp;
+      let src1Val = (decoded.format === InstructionFormat.VOP2 && !hasVop3Mods)
         ? state.readVGPR(decoded.src1!, lane)
         : resolveSrc0(state, decoded.src1!, decoded.literal, lane);
       if (decoded.src1Abs) src1Val = Math.abs(src1Val);

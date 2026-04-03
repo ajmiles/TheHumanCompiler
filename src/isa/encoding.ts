@@ -497,7 +497,9 @@ export function disassemble(
     if (decoded.src2Neg) src2 = `-${src2}`;
     return `${mnemonic} ${dst}, ${src0}, ${src1}, ${src2}${suffix}`;
   } else if (decoded.format === InstructionFormat.VOP2 || decoded.src1 !== undefined) {
-    let src1 = decoded.format === InstructionFormat.VOP2
+    const hasVop3Mods = decoded.src0Abs || decoded.src0Neg || decoded.src1Abs ||
+      decoded.src1Neg || decoded.omod || decoded.clamp;
+    let src1 = (decoded.format === InstructionFormat.VOP2 && !hasVop3Mods)
       ? `v${decoded.src1}` : formatSrc0(decoded.src1!, decoded.literal);
     if (decoded.src1Abs) src1 = `abs(${src1})`;
     if (decoded.src1Neg) src1 = `-${src1}`;
