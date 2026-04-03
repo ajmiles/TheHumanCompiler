@@ -562,7 +562,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_fma_f32',
     format: InstructionFormat.VOP3,
-    opcode: 0x13B,
+    opcode: 0x14B,
     operandCount: 4, // dst, src0, src1, src2
     execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
     description: 'Fused multiply-add: computes src0 × src1 + src2 with a single rounding.\nvdst = src0 × src1 + src2',
@@ -571,7 +571,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_add_lshl_u32',
     format: InstructionFormat.VOP3,
-    opcode: 0x147,
+    opcode: 0x347,
     operandCount: 4,
     execute: (a, b, c) => (((a + (b ?? 0)) << ((c ?? 0) & 31)) >>> 0),
     description: 'Add two unsigned 32-bit integers, then left-shift the result.\nvdst = (src0 + src1) << src2',

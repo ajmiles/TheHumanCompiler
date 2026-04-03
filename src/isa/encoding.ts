@@ -190,13 +190,14 @@ function encodeSOPP(opcode: number): number[] {
 
 function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: ParsedInstruction): number[] {
   // Compute VOP3 opcode
+  // Real RDNA2: VOP2 promoted = base + 256, VOP1 promoted = base + 256
+  // Native VOP3 instructions use their own opcode directly
   let vop3Opcode: number;
   if (baseFormat === InstructionFormat.VOP3) {
     vop3Opcode = baseOpcode; // native VOP3 opcode
-  } else if (baseFormat === InstructionFormat.VOP1) {
-    vop3Opcode = baseOpcode + VOP3_VOP1_OFFSET;
   } else {
-    vop3Opcode = baseOpcode;
+    // Both VOP1 and VOP2 are promoted by adding 256
+    vop3Opcode = baseOpcode + VOP3_VOP1_OFFSET;
   }
 
   const vdst = instr.dst.encoded & VOP3_VDST_MASK;
@@ -342,22 +343,23 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       const clampBit = (dword0 >>> VOP3_CLAMP_BIT) & 1;
 
       // Determine original format and base opcode
-      // Try each possible interpretation and see which has a registered opcode
       let baseOpcode: number;
       let origFormat: InstructionFormat;
 
-      // First try as native VOP3 (e.g. v_fma_f32 = 0x13B)
+      // First try as native VOP3 (e.g. v_fma_f32 = 0x14B)
       if (lookupByOpcode(InstructionFormat.VOP3, vop3Opcode)) {
         origFormat = InstructionFormat.VOP3;
         baseOpcode = vop3Opcode;
-      } else if (vop3Opcode >= VOP3_VOP1_OFFSET) {
-        // Promoted VOP1
-        origFormat = InstructionFormat.VOP1;
-        baseOpcode = vop3Opcode - VOP3_VOP1_OFFSET;
       } else {
-        // Promoted VOP2
-        origFormat = InstructionFormat.VOP2;
-        baseOpcode = vop3Opcode;
+        // Promoted from VOP1 or VOP2: subtract 256 and try both
+        const demoted = vop3Opcode - VOP3_VOP1_OFFSET;
+        if (lookupByOpcode(InstructionFormat.VOP1, demoted)) {
+          origFormat = InstructionFormat.VOP1;
+          baseOpcode = demoted;
+        } else {
+          origFormat = InstructionFormat.VOP2;
+          baseOpcode = demoted;
+        }
       }
 
       const decoded: DecodedInstruction = {
