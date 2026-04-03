@@ -61,7 +61,7 @@ const VOP2_FIELDS: BitFieldDef[][] = [[
   { name: 'OP', bits: 6, color: '#58a6ff',
     extract: (_w, _i, info) => info.mnemonic },
   { name: 'VDST', bits: 8, color: '#39d353',
-    extract: (_w, instr) => `v${instr.dst.value}` },
+    extract: (_w, instr) => `v${instr.dst.value} (${hexVal(instr.dst.encoded)})` },
   { name: 'VSRC1', bits: 8, color: '#d29922',
     extract: (_w, instr) => instr.src1 ? formatOperandShort(instr.src1) : '—' },
   { name: 'SRC0', bits: 9, color: '#bc8cff',
@@ -72,7 +72,7 @@ const VOP2_FIELDS: BitFieldDef[][] = [[
 const VOP1_FIELDS: BitFieldDef[][] = [[
   { name: '0x3F', bits: 7, color: '#f85149', extract: () => '0x3F' },
   { name: 'VDST', bits: 8, color: '#39d353',
-    extract: (_w, instr) => `v${instr.dst.value}` },
+    extract: (_w, instr) => `v${instr.dst.value} (${hexVal(instr.dst.encoded)})` },
   { name: 'OP', bits: 8, color: '#58a6ff',
     extract: (_w, _i, info) => info.mnemonic },
   { name: 'SRC0', bits: 9, color: '#bc8cff',
@@ -94,7 +94,7 @@ const VOPC_FIELDS: BitFieldDef[][] = [[
 const SOP1_FIELDS: BitFieldDef[][] = [[
   { name: '0x17D', bits: 9, color: '#f85149', extract: () => '0x17D' },
   { name: 'SDST', bits: 7, color: '#39d353',
-    extract: (_w, instr) => formatOperandShort(instr.dst) },
+    extract: (_w, instr) => `${formatOperandShort(instr.dst)} (${hexVal(instr.dst.encoded)})` },
   { name: 'OP', bits: 8, color: '#58a6ff',
     extract: (_w, _i, info) => info.mnemonic },
   { name: 'SSRC0', bits: 8, color: '#bc8cff',
@@ -128,7 +128,7 @@ const VOP3_FIELDS: BitFieldDef[][] = [
         return v.toString(2).padStart(3, '0');
       } },
     { name: 'VDST', bits: 8, color: '#39d353',
-      extract: (_w, instr) => `v${instr.dst.value}` },
+      extract: (_w, instr) => `v${instr.dst.value} (${hexVal(instr.dst.encoded)})` },
   ],
   [
     { name: 'NEG', bits: 3, color: '#f0883e',
