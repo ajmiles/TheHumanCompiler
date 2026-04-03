@@ -39,7 +39,6 @@ import {
   SOP1_SSRC0_MASK,
   VOP3_ENCODING_PREFIX,
   VOP3_PREFIX_SHIFT,
-  VOP3_PREFIX_MASK,
   VOP3_OP_SHIFT,
   VOP3_OP_MASK,
   VOP3_ABS_SHIFT,
@@ -55,7 +54,33 @@ import {
   VOP3_OMOD_SHIFT,
   VOP3_OMOD_MASK,
   VOP3_CLAMP_BIT,
+  VOP3_VOP2_OFFSET,
   VOP3_VOP1_OFFSET,
+  SOPC_OP_SHIFT,
+  SOPC_OP_MASK,
+  SOP2_OP_SHIFT,
+  SOP2_OP_MASK,
+  SOP2_SDST_SHIFT,
+  SOP2_SDST_MASK,
+  SOP2_SSRC1_SHIFT,
+  SOP2_SSRC1_MASK,
+  SOP2_SSRC0_MASK,
+  SOPK_OP_SHIFT,
+  SOPK_OP_MASK,
+  SOPK_SDST_SHIFT,
+  SOPK_SDST_MASK,
+  SOPK_SIMM16_MASK,
+  SMEM_OP_SHIFT,
+  SMEM_OP_MASK,
+  SMEM_SDATA_SHIFT,
+  SMEM_SDATA_MASK,
+  SMEM_SBASE_MASK,
+  SMEM_OFFSET_MASK,
+  MUBUF_OP_SHIFT,
+  MUBUF_OP_MASK,
+  MUBUF_OFFSET_MASK,
+  MIMG_OP_SHIFT,
+  MIMG_OP_MASK,
 } from './constants';
 import { lookupByMnemonic, lookupByOpcode } from './opcodes';
 
@@ -195,9 +220,11 @@ function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: Pa
   let vop3Opcode: number;
   if (baseFormat === InstructionFormat.VOP3) {
     vop3Opcode = baseOpcode; // native VOP3 opcode
-  } else {
-    // Both VOP1 and VOP2 are promoted by adding 256
+  } else if (baseFormat === InstructionFormat.VOP1) {
     vop3Opcode = baseOpcode + VOP3_VOP1_OFFSET;
+  } else {
+    // VOP2 promotion
+    vop3Opcode = baseOpcode + VOP3_VOP2_OFFSET;
   }
 
   const vdst = instr.dst.encoded & VOP3_VDST_MASK;
@@ -297,19 +324,34 @@ export function assembleToBinary(instructions: ParsedInstruction[]): Uint32Array
  * Detect instruction format from a 32-bit word.
  */
 export function detectFormat(word: number): InstructionFormat {
-  // Check VOP3 first: bits [31:26] = 0x34 (110100)
-  const prefix6 = (word >>> VOP3_PREFIX_SHIFT) & VOP3_PREFIX_MASK;
-  if (prefix6 === VOP3_ENCODING_PREFIX) return InstructionFormat.VOP3;
-  // Check SOP1/SOPP: bits [31:23] — 9-bit prefix
+  const prefix6 = (word >>> 26) & 0x3F;
+
+  // 6-bit prefix checks (bits [31:26])
+  if (prefix6 === 0x3D) return InstructionFormat.SMEM;
+  if (prefix6 === 0x3C) return InstructionFormat.MIMG;
+  if (prefix6 === 0x3A) return InstructionFormat.MTBUF;
+  if (prefix6 === 0x38) return InstructionFormat.MUBUF;
+  if (prefix6 === VOP3_ENCODING_PREFIX) return InstructionFormat.VOP3;   // 0x34
+  if (prefix6 === 0x35) return InstructionFormat.VOP3;  // VOP3P — treat as VOP3 for decoding
+
+  // 9-bit prefix checks (bits [31:23])
   const prefix9 = (word >>> SOP1_PREFIX_SHIFT) & SOP1_PREFIX_MASK;
-  if (prefix9 === SOPP_ENCODING_PREFIX) return InstructionFormat.SOPP;
-  if (prefix9 === SOP1_ENCODING_PREFIX) return InstructionFormat.SOP1;
-  // VOP1: bits [31:25] = 0x3F (0111111)
+  if (prefix9 === SOPP_ENCODING_PREFIX) return InstructionFormat.SOPP;   // 0x17F
+  if (prefix9 === 0x17E) return InstructionFormat.SOPC;                  // SOPC
+  if (prefix9 === SOP1_ENCODING_PREFIX) return InstructionFormat.SOP1;   // 0x17D
+
+  // 7-bit prefix checks (bits [31:25])
   const prefix7 = (word >>> VOP1_PREFIX_SHIFT) & VOP1_PREFIX_MASK;
-  if (prefix7 === VOP1_ENCODING_PREFIX) return InstructionFormat.VOP1;
-  // VOPC: bits [31:25] = 0x3E (0111110)
-  if (prefix7 === VOPC_ENCODING_PREFIX) return InstructionFormat.VOPC;
-  // Bit 31 = 0 → VOP2
+  if (prefix7 === VOP1_ENCODING_PREFIX) return InstructionFormat.VOP1;   // 0x3F
+  if (prefix7 === VOPC_ENCODING_PREFIX) return InstructionFormat.VOPC;   // 0x3E
+
+  // SOPK: bits [31:28] = 0xB (1011)
+  if (((word >>> 28) & 0xF) === 0xB) return InstructionFormat.SOPK;
+
+  // SOP2: bits [31:30] = 0b10 (after excluding SOP1/SOPC/SOPP/SOPK)
+  if (((word >>> 30) & 0x3) === 0x2) return InstructionFormat.SOP2;
+
+  // Bit 31 = 0 → VOP2 (fallback)
   return InstructionFormat.VOP2;
 }
 
@@ -346,19 +388,35 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       let baseOpcode: number;
       let origFormat: InstructionFormat;
 
+      // Check for v_nop_xbox_data (VOP3B prefix 0x35 with VOP1 v_nop promoted)
+      const isVop3b = ((dword0 >>> VOP3_PREFIX_SHIFT) & 0x3F) === 0x35;
+      const isXboxNop = isVop3b && vop3Opcode === VOP3_VOP1_OFFSET; // 0x180 = v_nop promoted
+
       // First try as native VOP3 (e.g. v_fma_f32 = 0x14B)
       if (lookupByOpcode(InstructionFormat.VOP3, vop3Opcode)) {
         origFormat = InstructionFormat.VOP3;
         baseOpcode = vop3Opcode;
+      } else if (lookupByOpcode(InstructionFormat.VOPC, vop3Opcode)) {
+        // VOPC promoted to VOP3 (no offset)
+        origFormat = InstructionFormat.VOPC;
+        baseOpcode = vop3Opcode;
       } else {
-        // Promoted from VOP1 or VOP2: subtract 256 and try both
-        const demoted = vop3Opcode - VOP3_VOP1_OFFSET;
-        if (lookupByOpcode(InstructionFormat.VOP1, demoted)) {
-          origFormat = InstructionFormat.VOP1;
-          baseOpcode = demoted;
-        } else {
+        // Try VOP2 promotion (subtract 0x100)
+        const demotedVop2 = vop3Opcode - VOP3_VOP2_OFFSET;
+        // Try VOP1 promotion (subtract 0x180)
+        const demotedVop1 = vop3Opcode - VOP3_VOP1_OFFSET;
+        if (demotedVop2 >= 0 && lookupByOpcode(InstructionFormat.VOP2, demotedVop2)) {
           origFormat = InstructionFormat.VOP2;
-          baseOpcode = demoted;
+          baseOpcode = demotedVop2;
+        } else if (demotedVop1 >= 0 && lookupByOpcode(InstructionFormat.VOP1, demotedVop1)) {
+          origFormat = InstructionFormat.VOP1;
+          baseOpcode = demotedVop1;
+        } else if (demotedVop2 >= 0) {
+          origFormat = InstructionFormat.VOP2;
+          baseOpcode = demotedVop2;
+        } else {
+          origFormat = InstructionFormat.VOP3;
+          baseOpcode = vop3Opcode;
         }
       }
 
@@ -382,8 +440,13 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
 
       i += 2;
 
+      // v_nop_xbox_data: VOP3B-encoded v_nop with an extra data dword
+      if (isXboxNop && i < binary.length) {
+        decoded.literal = binary[i];
+        i++;
+      }
       // Check for literal constant (any source field == 255)
-      if ((src0 === LITERAL_CONST || src1 === LITERAL_CONST || src2 === LITERAL_CONST) && i < binary.length) {
+      else if ((src0 === LITERAL_CONST || src1 === LITERAL_CONST || src2 === LITERAL_CONST) && i < binary.length) {
         decoded.literal = binary[i];
         i++;
       }
@@ -412,12 +475,14 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       instructions.push(decoded);
     } else if (format === InstructionFormat.SOPP) {
       const opcode = (word >>> SOPP_OP_SHIFT) & SOPP_OP_MASK;
+      const simm16 = word & 0xFFFF;
 
       instructions.push({
         format,
         opcode,
         dst: 0,
         src0Encoded: 0,
+        simm16,
         address,
       });
 
@@ -458,13 +523,168 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
 
       i++;
 
-      // Check for literal constant
-      if (src0 === LITERAL_CONST && i < binary.length) {
+      // Check for literal constant or DPP/SDWA data
+      if ((src0 === LITERAL_CONST || src0 === 0xE9 || src0 === 0xF9 || src0 === 0xFA) && i < binary.length) {
         decoded.literal = binary[i];
         i++;
       }
 
       instructions.push(decoded);
+    } else if (format === InstructionFormat.SOPC) {
+      // SOPC: bits[31:23]=0x17E, [22:16]=OP(7), [15:8]=SSRC1(8), [7:0]=SSRC0(8)
+      const opcode = (word >>> SOPC_OP_SHIFT) & SOPC_OP_MASK;
+      const ssrc1 = (word >>> SOP2_SSRC1_SHIFT) & SOP2_SSRC1_MASK;
+      const ssrc0 = word & SOP2_SSRC0_MASK;
+
+      instructions.push({
+        format,
+        opcode,
+        dst: 0,
+        src0Encoded: ssrc0,
+        src1: ssrc1,
+        address,
+      });
+
+      i++;
+    } else if (format === InstructionFormat.SOP2) {
+      // SOP2: bits[31:30]=10, [29:23]=OP(7), [22:16]=SDST(7), [15:8]=SSRC1(8), [7:0]=SSRC0(8)
+      const opcode = (word >>> SOP2_OP_SHIFT) & SOP2_OP_MASK;
+      const sdst = (word >>> SOP2_SDST_SHIFT) & SOP2_SDST_MASK;
+      const ssrc1 = (word >>> SOP2_SSRC1_SHIFT) & SOP2_SSRC1_MASK;
+      const ssrc0 = word & SOP2_SSRC0_MASK;
+
+      const decoded: DecodedInstruction = {
+        format,
+        opcode,
+        dst: sdst,
+        src0Encoded: ssrc0,
+        src1: ssrc1,
+        address,
+      };
+
+      i++;
+
+      // SOP2 supports literal when SSRC0 or SSRC1 == 0xFF
+      if ((ssrc0 === 0xFF || ssrc1 === 0xFF) && i < binary.length) {
+        decoded.literal = binary[i];
+        i++;
+      }
+
+      instructions.push(decoded);
+    } else if (format === InstructionFormat.SOPK) {
+      // SOPK: bits[31:28]=0b1011, [27:23]=OP(5), [22:16]=SDST(7), [15:0]=SIMM16(16)
+      const opcode = (word >>> SOPK_OP_SHIFT) & SOPK_OP_MASK;
+      const sdst = (word >>> SOPK_SDST_SHIFT) & SOPK_SDST_MASK;
+      const simm16 = word & SOPK_SIMM16_MASK;
+
+      const decoded: DecodedInstruction = {
+        format,
+        opcode,
+        dst: sdst,
+        src0Encoded: 0,
+        simm16,
+        address,
+      };
+
+      i++;
+
+      // s_setreg_imm32_b32 (opcode 0x15) has a 32-bit literal following
+      if (opcode === 0x15 && i < binary.length) {
+        decoded.literal = binary[i];
+        i++;
+      }
+
+      instructions.push(decoded);
+    } else if (format === InstructionFormat.SMEM) {
+      // SMEM: 2 dwords
+      if (i + 1 >= binary.length) break;
+      const dword0 = word;
+      const dword1 = binary[i + 1];
+
+      const opcode = (dword0 >>> SMEM_OP_SHIFT) & SMEM_OP_MASK;
+      const sdata = (dword0 >>> SMEM_SDATA_SHIFT) & SMEM_SDATA_MASK;
+      const sbase = dword0 & SMEM_SBASE_MASK;
+      const offset = dword1 & SMEM_OFFSET_MASK;
+
+      instructions.push({
+        format,
+        opcode,
+        dst: sdata,
+        src0Encoded: 0,
+        sbase,
+        offset,
+        address,
+      });
+
+      i += 2;
+    } else if (format === InstructionFormat.MUBUF) {
+      // MUBUF: 2 dwords
+      if (i + 1 >= binary.length) break;
+      const dword0 = word;
+      const dword1 = binary[i + 1];
+
+      const opcode = (dword0 >>> MUBUF_OP_SHIFT) & MUBUF_OP_MASK;
+      const mubufOffset = dword0 & MUBUF_OFFSET_MASK;
+      const glc = (dword0 >>> 14) & 1;
+      const idxen = (dword0 >>> 13) & 1;
+      const offen = (dword0 >>> 12) & 1;
+
+      const vaddr = dword1 & 0xFF;
+      const vdata = (dword1 >>> 8) & 0xFF;
+      const srsrcQuad = (dword1 >>> 16) & 0x1F;
+
+      instructions.push({
+        format,
+        opcode,
+        dst: vdata,
+        src0Encoded: vaddr,
+        srsrc: srsrcQuad,
+        offset: mubufOffset,
+        flags: (glc << 2) | (idxen << 1) | offen,
+        address,
+      });
+
+      i += 2;
+    } else if (format === InstructionFormat.MIMG) {
+      // MIMG: 2-3 dwords depending on NSA
+      if (i + 1 >= binary.length) break;
+      const dword0 = word;
+      const dword1 = binary[i + 1];
+
+      const opcode = (dword0 >>> MIMG_OP_SHIFT) & MIMG_OP_MASK;
+      const dmask = (dword0 >>> 14) & 0xF;
+      const nsa = dword0 & 0x7;
+
+      const vaddr = dword1 & 0xFF;
+      const vdata = (dword1 >>> 8) & 0xFF;
+      const srsrcQuad = (dword1 >>> 16) & 0x1F;
+      const ssampQuad = (dword1 >>> 21) & 0x1F;
+
+      instructions.push({
+        format,
+        opcode,
+        dst: vdata,
+        src0Encoded: vaddr,
+        srsrc: srsrcQuad,
+        ssamp: ssampQuad,
+        dmask,
+        address,
+      });
+
+      // Consume extra dwords for NSA mode
+      const extraDwords = nsa > 0 ? Math.ceil(nsa / 4) : 0;
+      i += 2 + extraDwords;
+    } else if (format === InstructionFormat.MTBUF) {
+      // MTBUF: 2 dwords, just skip
+      if (i + 1 >= binary.length) break;
+      instructions.push({
+        format,
+        opcode: 0,
+        dst: 0,
+        src0Encoded: 0,
+        address,
+      });
+      i += 2;
     } else {
       // VOP2
       const opcode = (word >>> VOP2_OP_SHIFT) & VOP2_OP_MASK;
@@ -483,7 +703,8 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
 
       i++;
 
-      if (src0 === LITERAL_CONST && i < binary.length) {
+      // DPP8 (SRC0=0xE9), SDWA (SRC0=0xF9), DPP16 (SRC0=0xFA), or literal constant (SRC0=0xFF)
+      if ((src0 === 0xE9 || src0 === 0xF9 || src0 === 0xFA || src0 === LITERAL_CONST) && i < binary.length) {
         decoded.literal = binary[i];
         i++;
       }
@@ -507,7 +728,10 @@ export function disassemble(
   const mnemonic = info ? info.mnemonic : `v_unknown_${decoded.format.toLowerCase()}_0x${decoded.opcode.toString(16)}`;
 
   if (decoded.format === InstructionFormat.SOPP) {
-    return mnemonic; // no operands
+    if (decoded.simm16 !== undefined && decoded.simm16 !== 0) {
+      return `${mnemonic} 0x${decoded.simm16.toString(16).padStart(4, '0')}`;
+    }
+    return mnemonic;
   }
 
   if (decoded.format === InstructionFormat.SOP1) {
@@ -516,10 +740,68 @@ export function disassemble(
     return `${mnemonic} ${dst}, ${src0}`;
   }
 
+  if (decoded.format === InstructionFormat.SOP2) {
+    const dst = formatSpecialOrSgpr(decoded.dst);
+    const src0 = formatSsrc0(decoded.src0Encoded, decoded.literal);
+    const src1 = formatSsrc0(decoded.src1 ?? 0, decoded.literal);
+    return `${mnemonic} ${dst}, ${src0}, ${src1}`;
+  }
+
+  if (decoded.format === InstructionFormat.SOPC) {
+    const src0 = formatSsrc0(decoded.src0Encoded, decoded.literal);
+    const src1 = formatSsrc0(decoded.src1 ?? 0, decoded.literal);
+    return `${mnemonic} ${src0}, ${src1}`;
+  }
+
+  if (decoded.format === InstructionFormat.SOPK) {
+    const dst = formatSpecialOrSgpr(decoded.dst);
+    if (decoded.literal !== undefined) {
+      return `${mnemonic} ${dst}, 0x${decoded.simm16?.toString(16).padStart(4, '0') ?? '0000'}, 0x${(decoded.literal >>> 0).toString(16).padStart(8, '0')}`;
+    }
+    return `${mnemonic} ${dst}, 0x${decoded.simm16?.toString(16).padStart(4, '0') ?? '0000'}`;
+  }
+
+  if (decoded.format === InstructionFormat.SMEM) {
+    const sdata = `s${decoded.dst}`;
+    const sbase = `s[${(decoded.sbase ?? 0) * 2}:${(decoded.sbase ?? 0) * 2 + 1}]`;
+    const off = decoded.offset ?? 0;
+    return `${mnemonic} ${sdata}, ${sbase}, 0x${off.toString(16).padStart(4, '0')}`;
+  }
+
+  if (decoded.format === InstructionFormat.MUBUF) {
+    const vdata = `v${decoded.dst}`;
+    const vaddr = `v${decoded.src0Encoded}`;
+    const srsrcIdx = (decoded.srsrc ?? 0) * 4;
+    const srsrc = `s[${srsrcIdx}:${srsrcIdx + 3}]`;
+    const parts = [mnemonic, `${vdata},`, `${vaddr},`, `${srsrc},`, '0'];
+    const flagBits = decoded.flags ?? 0;
+    if (flagBits & 2) parts.push('idxen');
+    if (flagBits & 4) parts.push('glc');
+    if ((decoded.offset ?? 0) > 0) parts.push(`offset:${decoded.offset}`);
+    return parts.join(' ');
+  }
+
+  if (decoded.format === InstructionFormat.MIMG) {
+    const vdata = `v${decoded.dst}`;
+    const vaddr = `v${decoded.src0Encoded}`;
+    const srsrcIdx = (decoded.srsrc ?? 0) * 4;
+    const srsrc = `s[${srsrcIdx}:${srsrcIdx + 7}]`;
+    const ssampIdx = (decoded.ssamp ?? 0) * 4;
+    const ssamp = `s[${ssampIdx}:${ssampIdx + 3}]`;
+    return `${mnemonic} ${vdata}, ${vaddr}, ${srsrc}, ${ssamp}`;
+  }
+
+  if (decoded.format === InstructionFormat.MTBUF) {
+    return `mtbuf_unknown_0x${decoded.opcode.toString(16)}`;
+  }
+
   if (decoded.format === InstructionFormat.VOPC) {
     const src0 = formatSrc0(decoded.src0Encoded, decoded.literal);
     const src1 = formatSrc0(decoded.src1!, decoded.literal);
-    return `${mnemonic} vcc, ${src0}, ${src1}`;
+    // v_cmpx_* writes to EXEC, v_cmp_* writes to VCC (or SGPR pair in VOP3)
+    const isCmpx = mnemonic.startsWith('v_cmpx_');
+    const dest = isCmpx ? 'exec' : 'vcc';
+    return `${mnemonic} ${dest}, ${src0}, ${src1}`;
   }
 
   const dst = `v${decoded.dst}`;

@@ -119,8 +119,61 @@ export const VOP3_OMOD_MASK = 0x3;       // 2 bits [28:27]
 export const VOP3_NEG_SHIFT = 29;
 export const VOP3_NEG_MASK = 0x7;        // 3 bits [31:29]
 
-// VOP1→VOP3 opcode offset: VOP3_opcode = VOP1_opcode + 0x100
-export const VOP3_VOP1_OFFSET = 0x100;
+// VOP2→VOP3 opcode offset: VOP3_opcode = VOP2_opcode + 0x100
+export const VOP3_VOP2_OFFSET = 0x100;
+// VOP1→VOP3 opcode offset: VOP3_opcode = VOP1_opcode + 0x180
+export const VOP3_VOP1_OFFSET = 0x180;
+// Keep the old name for backward compat (used in encoder for VOP2 promotion)
+/** @deprecated Use VOP3_VOP2_OFFSET or VOP3_VOP1_OFFSET */
+export { VOP3_VOP2_OFFSET as VOP3_VOP1_OFFSET_LEGACY };
+
+// SOP2 encoding: bits[31:30]=10, [29:23]=OP(7), [22:16]=SDST(7), [15:8]=SSRC1(8), [7:0]=SSRC0(8)
+export const SOP2_OP_SHIFT = 23;
+export const SOP2_OP_MASK = 0x7F;
+export const SOP2_SDST_SHIFT = 16;
+export const SOP2_SDST_MASK = 0x7F;
+export const SOP2_SSRC1_SHIFT = 8;
+export const SOP2_SSRC1_MASK = 0xFF;
+export const SOP2_SSRC0_MASK = 0xFF;
+
+// SOPC encoding: bits[31:23]=0x17E, [22:16]=OP(7), [15:8]=SSRC1(8), [7:0]=SSRC0(8)
+export const SOPC_ENCODING_PREFIX = 0x17E;
+export const SOPC_OP_SHIFT = 16;
+export const SOPC_OP_MASK = 0x7F;
+
+// SOPK encoding: bits[31:28]=0b1011, [27:23]=OP(5), [22:16]=SDST(7), [15:0]=SIMM16(16)
+export const SOPK_PREFIX = 0xB;
+export const SOPK_OP_SHIFT = 23;
+export const SOPK_OP_MASK = 0x1F;
+export const SOPK_SDST_SHIFT = 16;
+export const SOPK_SDST_MASK = 0x7F;
+export const SOPK_SIMM16_MASK = 0xFFFF;
+
+// SMEM encoding (2 dwords):
+// Dword 0: [31:26]=0x3D, [25:18]=OP(8), [17]=GLC, [16]=DLC, [12:6]=SDATA(7), [5:0]=SBASE(6)
+// Dword 1: [31:25]=SOFFSET(7), [20:0]=OFFSET(21)
+export const SMEM_ENCODING_PREFIX = 0x3D;
+export const SMEM_OP_SHIFT = 18;
+export const SMEM_OP_MASK = 0xFF;
+export const SMEM_SDATA_SHIFT = 6;
+export const SMEM_SDATA_MASK = 0x7F;
+export const SMEM_SBASE_MASK = 0x3F;
+export const SMEM_OFFSET_MASK = 0x1FFFFF;
+
+// MUBUF encoding (2 dwords):
+// Dword 0: [31:26]=0x38, [25:18]=OP(8), [14]=GLC, [13]=IDXEN, [12]=OFFEN, [11:0]=OFFSET(12)
+// Dword 1: [31:24]=SOFFSET(8), [20:16]=SRSRC(5), [15:8]=VDATA(8), [7:0]=VADDR(8)
+export const MUBUF_ENCODING_PREFIX = 0x38;
+export const MUBUF_OP_SHIFT = 18;
+export const MUBUF_OP_MASK = 0xFF;
+export const MUBUF_OFFSET_MASK = 0xFFF;
+
+// MIMG encoding (2-3 dwords):
+// Dword 0: [31:26]=0x3C, [25:18]=OP(8), [17:14]=DMASK(4), [13:11]=DIM(3), [2:0]=NSA
+// Dword 1: [25:21]=SSAMP(5), [20:16]=SRSRC(5), [15:8]=VDATA(8), [7:0]=VADDR(8)
+export const MIMG_ENCODING_PREFIX = 0x3C;
+export const MIMG_OP_SHIFT = 18;
+export const MIMG_OP_MASK = 0xFF;
 
 /**
  * Decode a 9-bit source operand encoding to its float/int value.

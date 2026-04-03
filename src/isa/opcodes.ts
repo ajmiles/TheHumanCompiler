@@ -289,11 +289,41 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     description: 'Fused multiply-accumulate: vdst = src0 × vsrc1 + vdst.\nNote: vdst is also an implicit source (accumulated).',
     syntax: 'v_fmac_f32 vdst, src0, vsrc1',
   },
+  {
+    mnemonic: 'v_mul_legacy_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x07,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Legacy multiply: 0 * anything = 0 (no NaN from 0*Inf).\nvdst = src0 × vsrc1 (legacy)',
+    syntax: 'v_mul_legacy_f32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_add_co_ci_u32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x28,
+    operandCount: 3,
+    execute: (a, b) => ((a + (b ?? 0)) >>> 0),
+    description: 'Add with carry-in from VCC and carry-out to VCC.\nvdst = src0 + vsrc1 + VCC[lane]',
+    syntax: 'v_add_co_ci_u32 vdst, src0, vsrc1',
+    readsVCC: true,
+    writesVCC: true,
+    isIntegerOp: true,
+  },
 ];
 
 // ── VOP1 Instructions (1-source) ──
 
 const VOP1_OPCODES: OpcodeInfo[] = [
+  {
+    mnemonic: 'v_nop',
+    format: InstructionFormat.VOP1,
+    opcode: 0x00,
+    operandCount: 0,
+    execute: (a) => a,
+    description: 'No operation.',
+    syntax: 'v_nop',
+  },
   {
     mnemonic: 'v_mov_b32',
     format: InstructionFormat.VOP1,
@@ -563,6 +593,20 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     isIntegerOp: true,
   },
   {
+    mnemonic: 'v_ffbh_i32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x3B,
+    operandCount: 2,
+    execute: (a) => {
+      const v = a | 0;
+      if (v === 0 || v === -1) return 0xFFFFFFFF;
+      return Math.clz32(v >= 0 ? v : ~v) - 1;
+    },
+    description: 'Find first bit high for signed integer (position of most significant bit that differs from sign).',
+    syntax: 'v_ffbh_i32 vdst, src0',
+    isIntegerOp: true,
+  },
+  {
     mnemonic: 'v_swap_b32',
     format: InstructionFormat.VOP1,
     opcode: 0x65,
@@ -610,6 +654,74 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     },
     description: 'Bitfield extract (unsigned): extract a field of bits from src0.\nvdst = (src0 >> src1) & ((1 << src2) - 1)\nsrc1 = bit offset, src2 = field width',
     syntax: 'v_bfe_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_min3_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x151,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(Math.min(a, b ?? 0, c ?? 0)),
+    description: 'Return the minimum of three 32-bit floats.\nvdst = min(src0, src1, src2)',
+    syntax: 'v_min3_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_max3_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x154,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(Math.max(a, b ?? 0, c ?? 0)),
+    description: 'Return the maximum of three 32-bit floats.\nvdst = max(src0, src1, src2)',
+    syntax: 'v_max3_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_lshl_add_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x346,
+    operandCount: 4,
+    execute: (a, b, c) => (((a << ((b ?? 0) & 31)) + (c ?? 0)) >>> 0),
+    description: 'Left shift src0 by src1 bits, then add src2.\nvdst = (src0 << src1) + src2',
+    syntax: 'v_lshl_add_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_readlane_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x360,
+    operandCount: 3,
+    execute: (a) => a,
+    description: 'Read a single lane from a VGPR.\nsdst = src0[src1]',
+    syntax: 'v_readlane_b32 sdst, vsrc0, ssrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mbcnt_lo_u32_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x365,
+    operandCount: 3,
+    execute: (a) => a,
+    description: 'Count mask bits below current lane (low 32 of exec).\nvdst = countBits(src0 & ((1 << laneId) - 1)) + src1',
+    syntax: 'v_mbcnt_lo_u32_b32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mbcnt_hi_u32_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x366,
+    operandCount: 3,
+    execute: (a) => a,
+    description: 'Count mask bits below current lane (high 32 of exec).\nvdst = countBits(src0 & ((1 << (laneId-32)) - 1)) + src1',
+    syntax: 'v_mbcnt_hi_u32_b32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_permlanex16_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x378,
+    operandCount: 4,
+    execute: (a) => a,
+    description: 'Cross-lane permutation across groups of 16 lanes.',
+    syntax: 'v_permlanex16_b32 vdst, vsrc0, ssrc1, ssrc2',
     isIntegerOp: true,
   },
 ];
@@ -677,6 +789,97 @@ const VOPC_OPCODES: OpcodeInfo[] = [
     syntax: 'v_cmp_ge_f32 src0, vsrc1',
     writesVCC: true,
   },
+  {
+    mnemonic: 'v_cmp_nge_f32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x09,
+    operandCount: 2,
+    execute: (a, b) => (!(a >= (b ?? 0))) ? 1 : 0,
+    description: 'Compare two 32-bit floats: set VCC if NOT (src0 >= vsrc1).\nVCC[lane] = !(src0 >= vsrc1) (unordered)',
+    syntax: 'v_cmp_nge_f32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_nle_f32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x0C,
+    operandCount: 2,
+    execute: (a, b) => (!(a <= (b ?? 0))) ? 1 : 0,
+    description: 'Compare two 32-bit floats: set VCC if NOT (src0 <= vsrc1).\nVCC[lane] = !(src0 <= vsrc1) (unordered)',
+    syntax: 'v_cmp_nle_f32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_lt_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x81,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) < ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare two signed 32-bit integers: set VCC if src0 < vsrc1.',
+    syntax: 'v_cmp_lt_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_eq_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xC2,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) === ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare two unsigned 32-bit integers: set VCC if src0 == vsrc1.',
+    syntax: 'v_cmp_eq_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_ne_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xC5,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) !== ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare two unsigned 32-bit integers: set VCC if src0 != vsrc1.',
+    syntax: 'v_cmp_ne_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  // v_cmpx_* — write to EXEC instead of VCC
+  {
+    mnemonic: 'v_cmpx_eq_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x92,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) === ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare signed ints and write to EXEC mask.',
+    syntax: 'v_cmpx_eq_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_eq_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xD2,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) === ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare unsigned ints and write to EXEC mask.',
+    syntax: 'v_cmpx_eq_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_gt_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xD4,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) > ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare unsigned ints (greater than) and write to EXEC mask.',
+    syntax: 'v_cmpx_gt_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_ne_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xD5,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) !== ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare unsigned ints (not equal) and write to EXEC mask.',
+    syntax: 'v_cmpx_ne_u32 src0, vsrc1',
+    writesVCC: true,
+  },
 ];
 
 // ── SOP1 Instructions (scalar, 1-source) ──
@@ -691,11 +894,65 @@ const SOP1_OPCODES: OpcodeInfo[] = [
     description: 'Copy a 32-bit scalar value into the destination SGPR.\nsdst = ssrc0',
     syntax: 's_mov_b32 sdst, ssrc0',
   },
+  {
+    mnemonic: 's_mov_b64',
+    format: InstructionFormat.SOP1,
+    opcode: 0x04,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Copy a 64-bit scalar value.\nsdst = ssrc0 (64-bit)',
+    syntax: 's_mov_b64 sdst, ssrc0',
+  },
+  {
+    mnemonic: 's_ff1_i32_b64',
+    format: InstructionFormat.SOP1,
+    opcode: 0x14,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Find first one in a 64-bit value.\nsdst = findFirstOne(ssrc0)',
+    syntax: 's_ff1_i32_b64 sdst, ssrc0',
+  },
+  {
+    mnemonic: 's_flbit_i32_b32',
+    format: InstructionFormat.SOP1,
+    opcode: 0x15,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Find last bit (count leading zeros/ones) of a signed 32-bit integer.',
+    syntax: 's_flbit_i32_b32 sdst, ssrc0',
+  },
+  {
+    mnemonic: 's_and_saveexec_b64',
+    format: InstructionFormat.SOP1,
+    opcode: 0x24,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Save EXEC to sdst, then AND ssrc0 into EXEC.\nsdst = EXEC; EXEC &= ssrc0',
+    syntax: 's_and_saveexec_b64 sdst, ssrc0',
+  },
+  {
+    mnemonic: 's_or_saveexec_b64',
+    format: InstructionFormat.SOP1,
+    opcode: 0x25,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Save EXEC to sdst, then OR ssrc0 into EXEC.\nsdst = EXEC; EXEC |= ssrc0',
+    syntax: 's_or_saveexec_b64 sdst, ssrc0',
+  },
 ];
 
 // ── SOPP Instructions (scalar, no operands / immediate only) ──
 
 const SOPP_OPCODES: OpcodeInfo[] = [
+  {
+    mnemonic: 's_nop',
+    format: InstructionFormat.SOPP,
+    opcode: 0x00,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'No operation (scalar). Can encode a count in SIMM16.',
+    syntax: 's_nop simm16',
+  },
   {
     mnemonic: 's_endpgm',
     format: InstructionFormat.SOPP,
@@ -706,6 +963,108 @@ const SOPP_OPCODES: OpcodeInfo[] = [
     syntax: 's_endpgm',
     halts: true,
   },
+  {
+    mnemonic: 's_branch',
+    format: InstructionFormat.SOPP,
+    opcode: 0x02,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'Unconditional branch to PC + SIMM16 × 4.',
+    syntax: 's_branch simm16',
+  },
+  {
+    mnemonic: 's_cbranch_scc1',
+    format: InstructionFormat.SOPP,
+    opcode: 0x05,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'Conditional branch if SCC == 1.',
+    syntax: 's_cbranch_scc1 simm16',
+  },
+  {
+    mnemonic: 's_cbranch_execz',
+    format: InstructionFormat.SOPP,
+    opcode: 0x08,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'Conditional branch if EXEC == 0.',
+    syntax: 's_cbranch_execz simm16',
+  },
+  {
+    mnemonic: 's_waitcnt',
+    format: InstructionFormat.SOPP,
+    opcode: 0x0C,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'Wait for outstanding memory operations to complete.',
+    syntax: 's_waitcnt simm16',
+  },
+  {
+    mnemonic: 's_inst_prefetch',
+    format: InstructionFormat.SOPP,
+    opcode: 0x20,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'Instruction prefetch hint.',
+    syntax: 's_inst_prefetch simm16',
+  },
+];
+
+// ── SOP2 Instructions (scalar, 2-source) ──
+
+const SOP2_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 's_add_i32', format: InstructionFormat.SOP2, opcode: 0x02, operandCount: 3, execute: (a) => a, description: 'Scalar add signed 32-bit.', syntax: 's_add_i32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_cselect_b32', format: InstructionFormat.SOP2, opcode: 0x0A, operandCount: 3, execute: (a) => a, description: 'Scalar conditional select based on SCC.', syntax: 's_cselect_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_and_b32', format: InstructionFormat.SOP2, opcode: 0x0E, operandCount: 3, execute: (a) => a, description: 'Scalar bitwise AND (32-bit).', syntax: 's_and_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_and_b64', format: InstructionFormat.SOP2, opcode: 0x0F, operandCount: 3, execute: (a) => a, description: 'Scalar bitwise AND (64-bit).', syntax: 's_and_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_or_b64', format: InstructionFormat.SOP2, opcode: 0x11, operandCount: 3, execute: (a) => a, description: 'Scalar bitwise OR (64-bit).', syntax: 's_or_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_xor_b64', format: InstructionFormat.SOP2, opcode: 0x13, operandCount: 3, execute: (a) => a, description: 'Scalar bitwise XOR (64-bit).', syntax: 's_xor_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_andn2_b64', format: InstructionFormat.SOP2, opcode: 0x15, operandCount: 3, execute: (a) => a, description: 'Scalar AND-NOT2 (64-bit): sdst = ssrc0 & ~ssrc1.', syntax: 's_andn2_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_lshl_b32', format: InstructionFormat.SOP2, opcode: 0x1E, operandCount: 3, execute: (a) => a, description: 'Scalar left shift (32-bit).', syntax: 's_lshl_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_mul_i32', format: InstructionFormat.SOP2, opcode: 0x26, operandCount: 3, execute: (a) => a, description: 'Scalar multiply signed 32-bit.', syntax: 's_mul_i32 sdst, ssrc0, ssrc1' },
+];
+
+// ── SOPC Instructions (scalar compare) ──
+
+const SOPC_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 's_cmp_eq_u32', format: InstructionFormat.SOPC, opcode: 0x06, operandCount: 2, execute: (a) => a, description: 'Scalar compare equal unsigned 32-bit. Sets SCC.', syntax: 's_cmp_eq_u32 ssrc0, ssrc1' },
+  { mnemonic: 's_cmp_lg_u32', format: InstructionFormat.SOPC, opcode: 0x07, operandCount: 2, execute: (a) => a, description: 'Scalar compare not-equal unsigned 32-bit. Sets SCC.', syntax: 's_cmp_lg_u32 ssrc0, ssrc1' },
+];
+
+// ── SOPK Instructions (scalar with inline constant) ──
+
+const SOPK_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 's_setreg_imm32_b32', format: InstructionFormat.SOPK, opcode: 0x15, operandCount: 2, execute: (a) => a, description: 'Set hardware register from 32-bit immediate.', syntax: 's_setreg_imm32_b32 hwreg, imm32' },
+];
+
+// ── SMEM Instructions (scalar memory) ──
+
+const SMEM_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 's_load_dword', format: InstructionFormat.SMEM, opcode: 0x00, operandCount: 3, execute: (a) => a, description: 'Scalar load 1 dword.', syntax: 's_load_dword sdst, sbase, offset' },
+  { mnemonic: 's_load_dwordx2', format: InstructionFormat.SMEM, opcode: 0x01, operandCount: 3, execute: (a) => a, description: 'Scalar load 2 dwords.', syntax: 's_load_dwordx2 sdst, sbase, offset' },
+  { mnemonic: 's_load_dwordx4', format: InstructionFormat.SMEM, opcode: 0x02, operandCount: 3, execute: (a) => a, description: 'Scalar load 4 dwords.', syntax: 's_load_dwordx4 sdst, sbase, offset' },
+  { mnemonic: 's_load_dwordx8', format: InstructionFormat.SMEM, opcode: 0x03, operandCount: 3, execute: (a) => a, description: 'Scalar load 8 dwords.', syntax: 's_load_dwordx8 sdst, sbase, offset' },
+  { mnemonic: 's_buffer_load_dword', format: InstructionFormat.SMEM, opcode: 0x08, operandCount: 3, execute: (a) => a, description: 'Scalar buffer load 1 dword.', syntax: 's_buffer_load_dword sdst, sbase, offset' },
+  { mnemonic: 's_buffer_load_dwordx2', format: InstructionFormat.SMEM, opcode: 0x09, operandCount: 3, execute: (a) => a, description: 'Scalar buffer load 2 dwords.', syntax: 's_buffer_load_dwordx2 sdst, sbase, offset' },
+  { mnemonic: 's_buffer_load_dwordx4', format: InstructionFormat.SMEM, opcode: 0x0A, operandCount: 3, execute: (a) => a, description: 'Scalar buffer load 4 dwords.', syntax: 's_buffer_load_dwordx4 sdst, sbase, offset' },
+];
+
+// ── MUBUF Instructions (buffer memory) ──
+
+const MUBUF_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 'buffer_load_format_x', format: InstructionFormat.MUBUF, opcode: 0x00, operandCount: 3, execute: (a) => a, description: 'Typed buffer load (x component).', syntax: 'buffer_load_format_x vdata, vaddr, srsrc' },
+  { mnemonic: 'buffer_load_dword', format: InstructionFormat.MUBUF, opcode: 0x0C, operandCount: 3, execute: (a) => a, description: 'Buffer load 1 dword.', syntax: 'buffer_load_dword vdata, vaddr, srsrc' },
+  { mnemonic: 'buffer_load_dwordx2', format: InstructionFormat.MUBUF, opcode: 0x0D, operandCount: 3, execute: (a) => a, description: 'Buffer load 2 dwords.', syntax: 'buffer_load_dwordx2 vdata, vaddr, srsrc' },
+  { mnemonic: 'buffer_load_dwordx4', format: InstructionFormat.MUBUF, opcode: 0x0E, operandCount: 3, execute: (a) => a, description: 'Buffer load 4 dwords.', syntax: 'buffer_load_dwordx4 vdata, vaddr, srsrc' },
+  { mnemonic: 'buffer_load_dwordx3', format: InstructionFormat.MUBUF, opcode: 0x0F, operandCount: 3, execute: (a) => a, description: 'Buffer load 3 dwords.', syntax: 'buffer_load_dwordx3 vdata, vaddr, srsrc' },
+  { mnemonic: 'buffer_store_dword', format: InstructionFormat.MUBUF, opcode: 0x1C, operandCount: 3, execute: (a) => a, description: 'Buffer store 1 dword.', syntax: 'buffer_store_dword vdata, vaddr, srsrc' },
+  { mnemonic: 'buffer_atomic_add', format: InstructionFormat.MUBUF, opcode: 0x32, operandCount: 3, execute: (a) => a, description: 'Atomic add to buffer.', syntax: 'buffer_atomic_add vdata, vaddr, srsrc' },
+];
+
+// ── MIMG Instructions (image memory) ──
+
+const MIMG_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 'image_gather4_l', format: InstructionFormat.MIMG, opcode: 0x44, operandCount: 3, execute: (a) => a, description: 'Gather 4 texels with explicit LOD.', syntax: 'image_gather4_l vdata, vaddr, srsrc, ssamp' },
 ];
 
 // ── Lookup Tables ──
@@ -726,6 +1085,12 @@ register(VOP3_ONLY_OPCODES);
 register(VOPC_OPCODES);
 register(SOP1_OPCODES);
 register(SOPP_OPCODES);
+register(SOP2_OPCODES);
+register(SOPC_OPCODES);
+register(SOPK_OPCODES);
+register(SMEM_OPCODES);
+register(MUBUF_OPCODES);
+register(MIMG_OPCODES);
 
 export function lookupByMnemonic(mnemonic: string): OpcodeInfo | undefined {
   return byMnemonic.get(mnemonic.toLowerCase());

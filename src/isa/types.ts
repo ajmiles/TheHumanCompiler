@@ -6,7 +6,14 @@ export enum InstructionFormat {
   VOP3 = 'VOP3',
   VOPC = 'VOPC',
   SOP1 = 'SOP1',
+  SOP2 = 'SOP2',
+  SOPC = 'SOPC',
   SOPP = 'SOPP',
+  SOPK = 'SOPK',
+  SMEM = 'SMEM',
+  MUBUF = 'MUBUF',
+  MTBUF = 'MTBUF',
+  MIMG = 'MIMG',
 }
 
 export enum OperandType {
@@ -47,6 +54,14 @@ export interface DecodedInstruction {
   src2?: number;       // 9-bit (VOP3 3-source only)
   literal?: number;    // 32-bit literal if SRC0 == 255
   address: number;     // Word offset in the binary
+  // Extra fields for memory/scalar instructions
+  simm16?: number;     // 16-bit immediate (SOPP, SOPK)
+  offset?: number;     // Memory offset (MUBUF, SMEM)
+  srsrc?: number;      // Resource descriptor SGPR quad index (MUBUF, MIMG)
+  ssamp?: number;      // Sampler SGPR quad index (MIMG)
+  sbase?: number;      // SMEM base SGPR pair index
+  dmask?: number;      // MIMG data mask
+  flags?: number;      // Raw flags (idxen, glc, etc.)
   // Source modifiers (applied before the operation)
   src0Abs?: boolean;
   src0Neg?: boolean;
