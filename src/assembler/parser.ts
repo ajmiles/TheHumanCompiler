@@ -211,8 +211,9 @@ export function parse(tokens: Token[]): ParseResult {
     // VOPC special handling: accept 2 or 3 operands (optional vcc dest)
     let expectedCount = info.operandCount;
     if (info.format === InstructionFormat.VOPC) {
-      // Strip leading "vcc" operand if present (it's implicit)
-      if (operandGroups.length === 3 && operandGroups[0].token.value === 'vcc') {
+      // Strip leading "vcc" or "exec" operand if present (it's implicit)
+      if (operandGroups.length === 3 &&
+          (operandGroups[0].token.value === 'vcc' || operandGroups[0].token.value === 'exec')) {
         operandGroups.shift();
       }
       expectedCount = 2; // always 2 source operands
