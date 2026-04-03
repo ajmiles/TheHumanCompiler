@@ -3,8 +3,7 @@
 .instr-info-panel {
   border-top: 1px solid var(--border-default);
   flex-shrink: 0;
-  max-height: 260px;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .instr-info-body {

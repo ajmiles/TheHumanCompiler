@@ -30,7 +30,12 @@ function formatOperandShort(op: { type: OperandType; value: number; encoded: num
     case OperandType.SGPR: return `s${op.value}`;
     case OperandType.INLINE_INT: return `${op.value}`;
     case OperandType.INLINE_FLOAT: return `${op.value}`;
-    case OperandType.LITERAL: return Number.isInteger(op.value) ? `${op.value}` : `${op.value}`;
+    case OperandType.LITERAL: {
+      if (Number.isInteger(op.value) && (op.value < 0 || op.value > 64)) {
+        return `0x${(op.value >>> 0).toString(16).toUpperCase()}`;
+      }
+      return `${op.value}`;
+    }
     case OperandType.SPECIAL: {
       const names: Record<number, string> = { 106: 'vcc', 107: 'vcc_hi', 124: 'm0', 125: 'null', 126: 'exec', 127: 'exec_hi' };
       return names[op.encoded] ?? `spr${op.encoded}`;
@@ -45,7 +50,7 @@ function src0EncodedStr(op: { type: OperandType; value: number; encoded: number 
   // Show encoded value in parentheses when it's not obvious
   if (op.type === OperandType.VGPR) return `${name} (${hexVal(enc, 3)})`;
   if (op.type === OperandType.SGPR) return name;
-  if (op.type === OperandType.LITERAL) return `${name} (lit)`;
+  if (op.type === OperandType.LITERAL) return `${formatOperandShort(op)} (lit)`;
   return name;
 }
 
