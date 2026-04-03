@@ -513,7 +513,11 @@ export class App {
       for (let lane = 0; lane < WAVE_WIDTH; lane++) {
         const idx = start + lane;
         const value = idx < input.values.length ? input.values[idx] : 0;
-        this.emulator.state.writeVGPR(input.register, lane, value);
+        if (input.isInteger) {
+          this.emulator.state.writeVGPR_u32(input.register, lane, value >>> 0);
+        } else {
+          this.emulator.state.writeVGPR(input.register, lane, value);
+        }
       }
     }
 
@@ -542,7 +546,9 @@ export class App {
       for (let lane = 0; lane < WAVE_WIDTH; lane++) {
         const idx = start + lane;
         if (idx < output.values.length) {
-          collected[idx] = this.emulator.state.readVGPR(output.register, lane);
+          collected[idx] = output.isInteger
+            ? this.emulator.state.readVGPR_u32(output.register, lane)
+            : this.emulator.state.readVGPR(output.register, lane);
         }
       }
     }

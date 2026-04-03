@@ -305,6 +305,92 @@ const REFLECT_VECTOR: Puzzle = {
   optimalInstructions: 8,
 };
 
+// ── Puzzle 7: Dot Product 3D ──
+// Compute dot(A, B) = Ax*Bx + Ay*By + Az*Bz
+// With v_fma_f32: mul, fma, fma = 3 instructions optimal
+// Without: mul, mul, mul, add, add = 5 instructions
+
+const dot3Ax = seededValues(1001, 64, -3, 3);
+const dot3Ay = seededValues(1002, 64, -3, 3);
+const dot3Az = seededValues(1003, 64, -3, 3);
+const dot3Bx = seededValues(1004, 64, -3, 3);
+const dot3By = seededValues(1005, 64, -3, 3);
+const dot3Bz = seededValues(1006, 64, -3, 3);
+const dot3Expected = dot3Ax.map((ax, i) => {
+  const f = new Float32Array(1);
+  f[0] = ax * dot3Bx[i];
+  const t1 = f[0];
+  f[0] = dot3Ay[i] * dot3By[i] + t1;
+  const t2 = f[0];
+  f[0] = dot3Az[i] * dot3Bz[i] + t2;
+  return f[0];
+});
+
+const DOT_PRODUCT_3D: Puzzle = {
+  id: 'dot-product-3d',
+  title: 'Dot Product 3D',
+  description:
+    'Compute the 3D dot product of two vectors A and B: ' +
+    'result = Ax·Bx + Ay·By + Az·Bz. This is one of the most fundamental ' +
+    'operations in computer graphics — used for lighting, projections, and more.',
+  inputs: [
+    { name: 'Ax', register: 0, values: dot3Ax },
+    { name: 'Ay', register: 1, values: dot3Ay },
+    { name: 'Az', register: 2, values: dot3Az },
+    { name: 'Bx', register: 3, values: dot3Bx },
+    { name: 'By', register: 4, values: dot3By },
+    { name: 'Bz', register: 5, values: dot3Bz },
+  ],
+  outputs: [
+    { name: 'Dot', register: 6, values: dot3Expected },
+  ],
+  hints: [
+    'The dot product is: Ax*Bx + Ay*By + Az*Bz.',
+    'v_fma_f32 computes a*b+c in one instruction — perfect for accumulating.',
+    'Start with v_mul_f32 for the first pair, then v_fma_f32 to accumulate the rest.',
+    'Optimal solution: 3 instructions using v_fma_f32!',
+  ],
+  optimalInstructions: 3,
+};
+
+// ── Puzzle 8: Byte Shuffle (RGBA → BGRA) ──
+// Input: packed 32-bit RGBA color (R in byte 0, G in byte 1, B in byte 2, A in byte 3)
+// Output: reordered to BGRA (B in byte 0, G in byte 1, R in byte 2, A in byte 3)
+// This is a real GPU task — converting texture formats!
+
+const rgbaInput = seededValues(2001, 64, 0, 0xFFFFFFFF).map(v => Math.abs(Math.round(v)) >>> 0);
+const bgraExpected = rgbaInput.map(rgba => {
+  const r = rgba & 0xFF;
+  const g = (rgba >>> 8) & 0xFF;
+  const b = (rgba >>> 16) & 0xFF;
+  const a = (rgba >>> 24) & 0xFF;
+  return ((a << 24) | (r << 16) | (g << 8) | b) >>> 0;
+});
+
+const BYTE_SHUFFLE: Puzzle = {
+  id: 'byte-shuffle',
+  title: 'Byte Shuffle (RGBA→BGRA)',
+  description:
+    'Convert a packed 32-bit RGBA color to BGRA format. ' +
+    'Swap the R and B bytes while keeping G and A in place. ' +
+    'Input: [R₇₋₀, G₁₅₋₈, B₂₃₋₁₆, A₃₁₋₂₄] → Output: [B₇₋₀, G₁₅₋₈, R₂₃₋₁₆, A₃₁₋₂₄]. ' +
+    'This is a real GPU task for converting texture formats!',
+  inputs: [
+    { name: 'RGBA', register: 0, values: rgbaInput, isInteger: true },
+  ],
+  outputs: [
+    { name: 'BGRA', register: 1, values: bgraExpected, isInteger: true },
+  ],
+  hints: [
+    'You need to extract individual bytes and reassemble them.',
+    'v_bfe_u32 extracts a bitfield: v_bfe_u32 vdst, src, offset, width.',
+    'v_lshlrev_b32 shifts left, v_and_b32 masks bits, v_or_b32 combines.',
+    'The G and A bytes stay in the same position — you can mask and keep them.',
+    'Think about which bytes need to move: R (byte 0→byte 2) and B (byte 2→byte 0).',
+  ],
+  optimalInstructions: 7,
+};
+
 // ── All Puzzles ──
 
 export const ALL_PUZZLES: Puzzle[] = [
@@ -314,6 +400,8 @@ export const ALL_PUZZLES: Puzzle[] = [
   EUCLIDEAN_DISTANCE,
   SMOOTH_CLAMP,
   REFLECT_VECTOR,
+  DOT_PRODUCT_3D,
+  BYTE_SHUFFLE,
 ];
 
 export function getPuzzleById(id: string): Puzzle | undefined {
