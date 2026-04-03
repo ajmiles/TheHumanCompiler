@@ -59,7 +59,7 @@ const VOP2_FIELDS: BitFieldDef[][] = [[
   { name: '0', bits: 1, color: '#f85149',
     extract: () => '0' },
   { name: 'OP', bits: 6, color: '#58a6ff',
-    extract: (_w, _i, info) => hexVal(info.opcode) },
+    extract: (_w, _i, info) => info.mnemonic },
   { name: 'VDST', bits: 8, color: '#39d353',
     extract: (_w, instr) => `v${instr.dst.value}` },
   { name: 'VSRC1', bits: 8, color: '#d29922',
@@ -74,7 +74,7 @@ const VOP1_FIELDS: BitFieldDef[][] = [[
   { name: 'VDST', bits: 8, color: '#39d353',
     extract: (_w, instr) => `v${instr.dst.value}` },
   { name: 'OP', bits: 8, color: '#58a6ff',
-    extract: (_w, _i, info) => hexVal(info.opcode) },
+    extract: (_w, _i, info) => info.mnemonic },
   { name: 'SRC0', bits: 9, color: '#bc8cff',
     extract: (_w, instr) => src0EncodedStr(instr.src0) },
 ]];
@@ -83,7 +83,7 @@ const VOP1_FIELDS: BitFieldDef[][] = [[
 const VOPC_FIELDS: BitFieldDef[][] = [[
   { name: '0x3E', bits: 7, color: '#f85149', extract: () => '0x3E' },
   { name: 'OP', bits: 8, color: '#58a6ff',
-    extract: (_w, _i, info) => hexVal(info.opcode) },
+    extract: (_w, _i, info) => info.mnemonic },
   { name: 'VSRC1', bits: 8, color: '#d29922',
     extract: (_w, instr) => formatOperandShort(instr.src0) },
   { name: 'SRC0', bits: 9, color: '#bc8cff',
@@ -96,7 +96,7 @@ const SOP1_FIELDS: BitFieldDef[][] = [[
   { name: 'SDST', bits: 7, color: '#39d353',
     extract: (_w, instr) => formatOperandShort(instr.dst) },
   { name: 'OP', bits: 8, color: '#58a6ff',
-    extract: (_w, _i, info) => hexVal(info.opcode) },
+    extract: (_w, _i, info) => info.mnemonic },
   { name: 'SSRC0', bits: 8, color: '#bc8cff',
     extract: (_w, instr) => formatOperandShort(instr.src0) },
 ]];
@@ -105,7 +105,7 @@ const SOP1_FIELDS: BitFieldDef[][] = [[
 const SOPP_FIELDS: BitFieldDef[][] = [[
   { name: '0x17F', bits: 9, color: '#f85149', extract: () => '0x17F' },
   { name: 'OP', bits: 7, color: '#58a6ff',
-    extract: (_w, _i, info) => hexVal(info.opcode) },
+    extract: (_w, _i, info) => info.mnemonic },
   { name: 'SIMM16', bits: 16, color: '#bc8cff', extract: () => '0x0000' },
 ]];
 
@@ -114,7 +114,7 @@ const VOP3_FIELDS: BitFieldDef[][] = [
   [
     { name: '0x34', bits: 6, color: '#f85149', extract: () => '0x34' },
     { name: 'OP', bits: 10, color: '#58a6ff',
-      extract: (words) => hexVal((words[0] >>> 16) & 0x3FF, 3) },
+      extract: (_w, _i, info) => info.mnemonic },
     { name: '', bits: 1, color: '#21262d', extract: () => '—' },
     { name: 'CLAMP', bits: 1, color: '#db6d28',
       extract: (_w, instr) => instr.clamp ? '1' : '0' },
