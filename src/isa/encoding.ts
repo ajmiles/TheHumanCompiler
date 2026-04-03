@@ -843,7 +843,16 @@ function formatSrc0(encoded: number, literal?: number): string {
   if (encoded === LITERAL_CONST && literal !== undefined) {
     f32Buf[0] = 0;
     u32Buf[0] = literal;
-    return f32Buf[0].toString();
+    const fval = f32Buf[0];
+    // Show as hex if the float value is not a "nice" number
+    if (!Number.isFinite(fval) || Math.abs(fval) > 1e15 || Math.abs(fval) < 1e-6 && fval !== 0) {
+      return '0x' + (literal >>> 0).toString(16).padStart(8, '0');
+    }
+    // Show as float with reasonable precision
+    const s = fval.toString();
+    // Ensure it looks like a float (has decimal point)
+    if (!s.includes('.') && !s.includes('e')) return s + '.0';
+    return s;
   }
   if (encoded === 128) return '0';
   if (encoded >= 129 && encoded <= 192) return `${encoded - 128}`;
