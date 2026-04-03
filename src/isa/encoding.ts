@@ -504,7 +504,7 @@ export function disassemble(
   lookupFn?: (format: InstructionFormat, opcode: number) => { mnemonic: string } | undefined,
 ): string {
   const info = lookupFn?.(decoded.format, decoded.opcode);
-  const mnemonic = info ? info.mnemonic : `unknown_${decoded.format}_${decoded.opcode}`;
+  const mnemonic = info ? info.mnemonic : `v_unknown_${decoded.format.toLowerCase()}_0x${decoded.opcode.toString(16)}`;
 
   if (decoded.format === InstructionFormat.SOPP) {
     return mnemonic; // no operands

@@ -18,6 +18,8 @@ import { ALL_PUZZLES, getPuzzleById } from '../puzzle/puzzles';
 import { validatePuzzle } from '../puzzle/validator';
 import { WAVE_WIDTH } from '../isa/constants';
 import { AssemblyResult, OperandType } from '../isa/types';
+import { decodeBinary, disassemble } from '../isa/encoding';
+import { lookupByOpcode } from '../isa/opcodes';
 import { VERSION } from '../version';
 
 const STORAGE_KEY = 'humancompiler_completed';
@@ -102,11 +104,17 @@ export class App {
     feedbackBtn.target = '_blank';
     feedbackBtn.style.textDecoration = 'none';
 
+    const importBtn = document.createElement('button');
+    importBtn.className = 'header__puzzle-select';
+    importBtn.textContent = '📂 Import Binary';
+    importBtn.title = 'Load a binary RDNA2 shader and disassemble it';
+    importBtn.onclick = () => this.importBinary();
+
     const info = document.createElement('div');
     info.className = 'header__info';
     info.innerHTML = '<span class="header__badge">RDNA2</span><span>Wave32</span>';
 
-    header.append(title, puzzleBtn, spacer, encyBtn, feedbackBtn, info);
+    header.append(title, puzzleBtn, spacer, encyBtn, importBtn, feedbackBtn, info);
 
     // Main 3-column layout
     const main = document.createElement('div');
@@ -699,5 +707,51 @@ export class App {
     this.activeRevision = this.revisions.length - 1;
     this.renderRevisionTabs();
     this.saveSolution();
+  }
+
+  // ── Binary Import ──
+
+  private importBinary(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.bin,.o,.so,.elf,*';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const buffer = reader.result as ArrayBuffer;
+        const bytes = new Uint8Array(buffer);
+
+        // Pad to 4-byte alignment
+        const wordCount = Math.ceil(bytes.length / 4);
+        const padded = new Uint8Array(wordCount * 4);
+        padded.set(bytes);
+        const binary = new Uint32Array(padded.buffer);
+
+        try {
+          const decoded = decodeBinary(binary);
+          const lines: string[] = [];
+          lines.push(`; Disassembled from: ${file.name}`);
+          lines.push(`; Size: ${bytes.length} bytes (${binary.length} dwords)`);
+          lines.push('');
+
+          for (const instr of decoded) {
+            const asm = disassemble(instr, lookupByOpcode);
+            lines.push(asm);
+          }
+
+          lines.push('');
+          this.editor.setSource(lines.join('\n'));
+          this.doAssemble();
+          this.statusBar.setStatus(`Imported ${file.name}: ${decoded.length} instructions`, 'success');
+        } catch (e) {
+          this.statusBar.setStatus(`Import failed: ${(e as Error).message}`, 'error');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    };
+    input.click();
   }
 }
