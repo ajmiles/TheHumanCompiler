@@ -118,6 +118,21 @@
   color: var(--text-secondary);
 }
 
+.binary-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  transition: color 0.15s;
+}
+
+.binary-toggle:hover {
+  color: var(--text-primary);
+}
+
 /* ── Error display ── */
 
 .error-list {

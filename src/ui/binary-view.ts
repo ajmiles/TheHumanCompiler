@@ -6,6 +6,9 @@ import { lookupByOpcode } from '../isa/opcodes';
 export class BinaryView {
   private container: HTMLElement;
   private listEl: HTMLElement;
+  private scrollable: HTMLElement;
+  private toggleBtn: HTMLButtonElement;
+  private collapsed = false;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -13,16 +16,37 @@ export class BinaryView {
 
     const header = document.createElement('div');
     header.className = 'panel__header';
-    header.textContent = 'Binary';
+    header.style.display = 'flex';
+    header.style.justifyContent = 'space-between';
+    header.style.alignItems = 'center';
+    header.style.cursor = 'pointer';
+
+    const label = document.createElement('span');
+    label.textContent = 'Binary';
+
+    this.toggleBtn = document.createElement('button');
+    this.toggleBtn.className = 'binary-toggle';
+    this.toggleBtn.textContent = '▼';
+    this.toggleBtn.title = 'Collapse binary view';
+
+    header.append(label, this.toggleBtn);
+    header.onclick = () => this.toggle();
 
     this.listEl = document.createElement('div');
     this.listEl.className = 'binary-list';
 
-    const scrollable = document.createElement('div');
-    scrollable.className = 'panel__content';
-    scrollable.appendChild(this.listEl);
+    this.scrollable = document.createElement('div');
+    this.scrollable.className = 'panel__content';
+    this.scrollable.appendChild(this.listEl);
 
-    this.container.append(header, scrollable);
+    this.container.append(header, this.scrollable);
+  }
+
+  private toggle(): void {
+    this.collapsed = !this.collapsed;
+    this.scrollable.style.display = this.collapsed ? 'none' : '';
+    this.toggleBtn.textContent = this.collapsed ? '▶' : '▼';
+    this.toggleBtn.title = this.collapsed ? 'Expand binary view' : 'Collapse binary view';
   }
 
   update(binary: Uint32Array, currentPC: number): void {
