@@ -309,9 +309,9 @@ export class Encyclopedia {
 
     // Instruction table
     const instrs = allOpcodes.filter(o => {
-      if (spec.name === 'VOP3') return false; // VOP3 shows promoted instructions
+      if (spec.name === 'VOP3') return o.format.toString() === 'VOP3';
       return o.format.toString() === spec.name;
-    });
+    }).sort((a, b) => a.opcode - b.opcode);
 
     if (instrs.length > 0) {
       html += `<div class="ency-instr-table"><h4>Available Instructions</h4>`;
