@@ -329,6 +329,27 @@ function parseOperands(
     return { dst, src0 };
   }
 
+  if (format === InstructionFormat.SOP2) {
+    // SOP2: sdst, ssrc0, ssrc1
+    const dst = parseSgprDestOperand(tokens[0], errors);
+    if (!dst) return null;
+    const src0 = parseSsrc0Operand(tokens[1], errors);
+    if (!src0) return null;
+    const src1 = parseSsrc0Operand(tokens[2], errors);
+    if (!src1) return null;
+    return { dst, src0, src1 };
+  }
+
+  if (format === InstructionFormat.SOPC) {
+    // SOPC: ssrc0, ssrc1 (no dest — writes SCC)
+    const src0 = parseSsrc0Operand(tokens[0], errors);
+    if (!src0) return null;
+    const src1 = parseSsrc0Operand(tokens[1], errors);
+    if (!src1) return null;
+    const nullDst: Operand = { type: OperandType.INLINE_INT, value: 0, encoded: 0 };
+    return { dst: nullDst, src0, src1 };
+  }
+
   if (format === InstructionFormat.VOP1) {
     // VOP1: dst, src0
     const dst = parseDestOperand(tokens[0], errors);
