@@ -30,38 +30,35 @@ export class BinaryView {
 
     const decoded = decodeBinary(binary);
 
-    // Build a map from word address → decoded instruction
-    const instrAtAddress = new Map<number, ReturnType<typeof decodeBinary>[number]>();
-    for (const instr of decoded) {
-      instrAtAddress.set(instr.address, instr);
-    }
-
-    // Render each word
-    for (let i = 0; i < binary.length; i++) {
+    for (let idx = 0; idx < decoded.length; idx++) {
+      const instr = decoded[idx];
       const entry = document.createElement('div');
       entry.className = 'binary-entry';
 
-      // Check if this word is the current PC's instruction
-      const instr = instrAtAddress.get(i);
-      const instrIdx = instr ? decoded.indexOf(instr) : -1;
-      if (instrIdx === currentPC) {
+      if (idx === currentPC) {
         entry.classList.add('binary-entry--current');
       }
 
+      // Byte address
       const addr = document.createElement('span');
       addr.className = 'binary-entry__addr';
-      addr.textContent = i.toString(16).padStart(4, '0');
+      addr.textContent = (instr.address * 4).toString(16).padStart(3, '0');
 
+      // All dwords for this instruction on one line
       const hex = document.createElement('span');
       hex.className = 'binary-entry__hex';
-      hex.textContent = '0x' + (binary[i] >>> 0).toString(16).padStart(8, '0');
+
+      // Determine instruction size: find next instruction's address or end of binary
+      const nextAddr = (idx + 1 < decoded.length) ? decoded[idx + 1].address : binary.length;
+      const words: string[] = [];
+      for (let w = instr.address; w < nextAddr; w++) {
+        words.push((binary[w] >>> 0).toString(16).padStart(8, '0'));
+      }
+      hex.textContent = words.join(' ');
 
       const asmEl = document.createElement('span');
       asmEl.className = 'binary-entry__asm';
-
-      if (instr) {
-        asmEl.textContent = disassemble(instr, lookupByOpcode);
-      }
+      asmEl.textContent = disassemble(instr, lookupByOpcode);
 
       entry.append(addr, hex, asmEl);
       this.listEl.appendChild(entry);

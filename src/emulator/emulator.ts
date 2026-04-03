@@ -67,4 +67,22 @@ export class Emulator {
   getCycleCount(): number {
     return this.state.cycleCount;
   }
+
+  /** Get current PC as byte address. */
+  getPCBytes(): number {
+    if (this.isComplete() && this.program.length > 0) {
+      // Past last instruction: use binary length
+      const last = this.program[this.program.length - 1];
+      // Estimate: last instruction address + its size in words
+      const lastAddr = last.decoded.address;
+      const lastSize = (last.decoded.literal !== undefined) ? 2 :
+        (last.decoded.src2 !== undefined || last.decoded.src0Abs || last.decoded.src0Neg ||
+         last.decoded.src1Abs || last.decoded.src1Neg || last.decoded.omod || last.decoded.clamp) ? 2 : 1;
+      return (lastAddr + lastSize) * 4;
+    }
+    if (this.state.pc < this.program.length) {
+      return this.program[this.state.pc].decoded.address * 4;
+    }
+    return 0;
+  }
 }

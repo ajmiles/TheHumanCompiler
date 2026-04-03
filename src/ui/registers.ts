@@ -160,15 +160,18 @@ export class RegisterDisplay {
     this.container.append(vgprSection, sgprSection, specialSection);
   }
 
-  update(state: GPUState): void {
+  private pcBytes = 0;
+
+  update(state: GPUState, pcBytes?: number): void {
     this.lastState = state;
+    if (pcBytes !== undefined) this.pcBytes = pcBytes;
     this.renderVGPRs(state);
     this.renderSGPRs(state);
     this.renderSpecial(state);
   }
 
   private rerender(): void {
-    if (this.lastState) this.update(this.lastState);
+    if (this.lastState) this.update(this.lastState, this.pcBytes);
   }
 
   private renderVGPRs(state: GPUState): void {
@@ -267,7 +270,7 @@ export class RegisterDisplay {
     const regs: [string, string][] = [
       ['EXEC', '0x' + (state.exec >>> 0).toString(16).padStart(8, '0')],
       ['VCC', '0x' + (state.vcc >>> 0).toString(16).padStart(8, '0')],
-      ['PC', state.pc.toString()],
+      ['PC', '0x' + this.pcBytes.toString(16).padStart(3, '0')],
     ];
 
     for (const [name, value] of regs) {

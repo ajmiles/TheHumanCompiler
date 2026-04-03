@@ -178,7 +178,7 @@ export class App {
     this.encyclopedia = new Encyclopedia(encyHost);
 
     // Initial register display
-    this.registers.update(this.emulator.state);
+    this.registers.update(this.emulator.state, 0);
   }
 
   private wireEvents(): void {
@@ -409,7 +409,7 @@ export class App {
   }
 
   private updateAllDisplays(): void {
-    this.registers.update(this.emulator.state);
+    this.registers.update(this.emulator.state, this.emulator.getPCBytes());
 
     if (this.assemblyResult && this.assemblyResult.binary.length > 0) {
       this.binaryView.update(this.assemblyResult.binary, this.emulator.state.pc);
