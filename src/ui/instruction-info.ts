@@ -361,7 +361,10 @@ export class InstructionInfo {
       for (const field of fields) {
         const value = field.extract(words, instr, info);
         html += `<div class="instr-info-bit" style="flex:${field.bits};background:${field.color}15;border-color:${field.color}">`;
-        html += `<span class="instr-info-field-name" style="color:${field.color}80">${field.name || '—'}</span>`;
+        // Only show the field name if it differs from the value
+        if (field.name && field.name !== value) {
+          html += `<span class="instr-info-field-name" style="color:${field.color}80">${field.name}</span>`;
+        }
         html += `<span class="instr-info-field-value" style="color:${field.color}">${escapeHtml(value)}</span>`;
         html += `</div>`;
       }
