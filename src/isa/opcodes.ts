@@ -317,7 +317,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_cvt_i32_f32',
     format: InstructionFormat.VOP1,
-    opcode: 0x11,
+    opcode: 0x08,
     operandCount: 2,
     execute: (a) => Math.trunc(a) | 0,
     description: 'Convert a 32-bit float to a signed 32-bit integer (truncate toward zero).\nvdst = (int)src0',
@@ -327,7 +327,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_rcp_f32',
     format: InstructionFormat.VOP1,
-    opcode: 0x2B,
+    opcode: 0x2A,
     operandCount: 2,
     execute: (a) => asFloat(1.0 / a),
     description: 'Compute the reciprocal (1/x) of a 32-bit float.\nvdst = 1.0 / src0',
@@ -354,7 +354,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_ceil_f32',
     format: InstructionFormat.VOP1,
-    opcode: 0x25,
+    opcode: 0x22,
     operandCount: 2,
     execute: (a) => asFloat(Math.ceil(a)),
     description: 'Round a 32-bit float up to the nearest integer.\nvdst = ceil(src0)',
@@ -383,7 +383,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_trunc_f32',
     format: InstructionFormat.VOP1,
-    opcode: 0x23,
+    opcode: 0x21,
     operandCount: 2,
     execute: (a) => asFloat(Math.trunc(a)),
     description: 'Truncate a 32-bit float toward zero (drop the fractional part).\nvdst = trunc(src0)',
@@ -392,7 +392,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_rndne_f32',
     format: InstructionFormat.VOP1,
-    opcode: 0x26,
+    opcode: 0x23,
     operandCount: 2,
     execute: (a) => {
       // Round to nearest even (banker's rounding)
@@ -407,7 +407,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_fract_f32',
     format: InstructionFormat.VOP1,
-    opcode: 0x27,
+    opcode: 0x20,
     operandCount: 2,
     execute: (a) => asFloat(a - Math.floor(a)),
     description: 'Return the fractional part of a 32-bit float.\nvdst = src0 - floor(src0)',
@@ -416,7 +416,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_exp_f32',
     format: InstructionFormat.VOP1,
-    opcode: 0x2C,
+    opcode: 0x25,
     operandCount: 2,
     execute: (a) => asFloat(Math.pow(2, a)),
     description: 'Compute 2^x (base-2 exponential) of a 32-bit float.\nvdst = 2^src0',
@@ -425,7 +425,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_log_f32',
     format: InstructionFormat.VOP1,
-    opcode: 0x2D,
+    opcode: 0x27,
     operandCount: 2,
     execute: (a) => asFloat(Math.log2(a)),
     description: 'Compute log₂(x) (base-2 logarithm) of a 32-bit float.\nvdst = log₂(src0)',
@@ -434,7 +434,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_cvt_f32_ubyte0',
     format: InstructionFormat.VOP1,
-    opcode: 0x11 + 2, // 0x13
+    opcode: 0x11,
     operandCount: 2,
     execute: (a) => asFloat((a >>> 0) & 0xFF),
     description: 'Extract byte 0 (bits [7:0]) from src0 and convert to float.\nvdst = (float)(src0 & 0xFF)',
@@ -444,7 +444,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_cvt_f32_ubyte1',
     format: InstructionFormat.VOP1,
-    opcode: 0x14,
+    opcode: 0x12,
     operandCount: 2,
     execute: (a) => asFloat(((a >>> 0) >> 8) & 0xFF),
     description: 'Extract byte 1 (bits [15:8]) from src0 and convert to float.\nvdst = (float)((src0 >> 8) & 0xFF)',
@@ -454,7 +454,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_cvt_f32_ubyte2',
     format: InstructionFormat.VOP1,
-    opcode: 0x15,
+    opcode: 0x13,
     operandCount: 2,
     execute: (a) => asFloat(((a >>> 0) >> 16) & 0xFF),
     description: 'Extract byte 2 (bits [23:16]) from src0 and convert to float.\nvdst = (float)((src0 >> 16) & 0xFF)',
@@ -464,7 +464,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_cvt_f32_ubyte3',
     format: InstructionFormat.VOP1,
-    opcode: 0x16,
+    opcode: 0x14,
     operandCount: 2,
     execute: (a) => asFloat(((a >>> 0) >> 24) & 0xFF),
     description: 'Extract byte 3 (bits [31:24]) from src0 and convert to float.\nvdst = (float)((src0 >> 24) & 0xFF)',
@@ -499,6 +499,24 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     description: 'Bitwise NOT of a 32-bit value.\nvdst = ~src0',
     syntax: 'v_not_b32 vdst, src0',
     isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_sin_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x35,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.sin(a * 2 * Math.PI)),
+    description: 'Compute sin(2π × src0). Input is in turns, not radians.\nvdst = sin(2π × src0)',
+    syntax: 'v_sin_f32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_cos_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x36,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.cos(a * 2 * Math.PI)),
+    description: 'Compute cos(2π × src0). Input is in turns, not radians.\nvdst = cos(2π × src0)',
+    syntax: 'v_cos_f32 vdst, src0',
   },
   {
     mnemonic: 'v_bfrev_b32',
@@ -547,7 +565,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_swap_b32',
     format: InstructionFormat.VOP1,
-    opcode: 0x51,
+    opcode: 0x65,
     operandCount: 2,
     execute: (a) => a,
     description: 'Swap the contents of two VGPRs.\nvdst, src0 = src0, vdst (both registers are exchanged)',
