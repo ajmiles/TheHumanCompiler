@@ -72,7 +72,9 @@ export interface OpcodeInfo {
   readsVCC?: boolean;   // v_cndmask_b32: uses VCC to select
   writesVCC?: boolean;  // VOPC: writes comparison result to VCC
   halts?: boolean;      // s_endpgm: stops execution
-  isIntegerOp?: boolean; // true for _b32/_u32/_i32 ops that work on raw u32 bits
+  isIntegerOp?: boolean; // true: raw u32 input AND output (v_and_b32, v_mov_b32, etc.)
+  integerInput?: boolean; // true: raw u32 input, float output (v_cvt_f32_i32, v_cvt_f32_ubyte*)
+  integerOutput?: boolean; // true: float input, raw u32 output (v_cvt_u32_f32, v_cvt_i32_f32)
 }
 
 export interface AssemblyError {

@@ -114,6 +114,7 @@ function resolveSsrc0(state: GPUState, encoded: number, literal: number | undefi
 export function executeInstruction(state: GPUState, instr: ResolvedInstruction): void {
   const { decoded, opcodeInfo } = instr;
   const isInt = !!opcodeInfo.isIntegerOp;
+  const intIn = !!opcodeInfo.integerInput;
 
   state.modifiedRegs.clear();
 
@@ -148,7 +149,7 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       if (((exec >>> lane) & 1) === 0) continue;
 
       const src0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, lane);
-      const src1Raw = state.readVGPR_u32(decoded.src1!, lane);
+      const src1Raw = resolveRaw(state, decoded.src1!, decoded.literal, lane);
       const src0Val = bitsToFloat(src0Raw);
       const src1Val = bitsToFloat(src1Raw);
       const cmpResult = opcodeInfo.execute(src0Val, src1Val);
@@ -159,6 +160,22 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     }
     state.vcc = vcc >>> 0;
     state.modifiedRegs.add('VCC');
+    return;
+  }
+
+  // v_readfirstlane_b32: broadcast first active lane to all lanes
+  if (opcodeInfo.mnemonic === 'v_readfirstlane_b32') {
+    const exec = state.exec;
+    let firstVal = 0;
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) !== 0) {
+        firstVal = resolveRaw(state, decoded.src0Encoded, decoded.literal, lane);
+        break;
+      }
+    }
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      state.writeVGPR_u32(decoded.dst, lane, firstVal);
+    }
     return;
   }
 
@@ -187,6 +204,11 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
         result = opcodeInfo.execute(src0Raw);
       }
       state.writeVGPR_u32(decoded.dst, lane, result >>> 0);
+    } else if (intIn) {
+      // Integer input, float output (v_cvt_f32_i32, v_cvt_f32_u32, v_cvt_f32_ubyte*)
+      // Pass raw u32 to execute, get float back, bitcast for storage
+      const floatResult = opcodeInfo.execute(src0Raw);
+      state.writeVGPR_u32(decoded.dst, lane, floatBits(floatResult));
     } else {
       // Float ops: bitcast u32 → float, apply modifiers, execute, bitcast back
       let src0Val = bitsToFloat(src0Raw);
@@ -222,7 +244,8 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
         result = Math.max(0.0, Math.min(1.0, result));
       }
 
-      state.writeVGPR_u32(decoded.dst, lane, floatBits(result));
+      state.writeVGPR_u32(decoded.dst, lane,
+        opcodeInfo.integerOutput ? (result >>> 0) : floatBits(result));
     }
   }
 }
