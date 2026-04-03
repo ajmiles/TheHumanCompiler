@@ -83,7 +83,7 @@ const VOP2_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_and_b32',
     format: InstructionFormat.VOP2,
-    opcode: 0x1C,
+    opcode: 0x1B,
     operandCount: 3,
     execute: (a, b) => ((a & (b ?? 0)) >>> 0),
     description: 'Bitwise AND of two 32-bit values per lane.\nvdst = src0 & vsrc1',
@@ -93,7 +93,7 @@ const VOP2_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_or_b32',
     format: InstructionFormat.VOP2,
-    opcode: 0x1D,
+    opcode: 0x1C,
     operandCount: 3,
     execute: (a, b) => ((a | (b ?? 0)) >>> 0),
     description: 'Bitwise OR of two 32-bit values per lane.\nvdst = src0 | vsrc1',
@@ -103,7 +103,7 @@ const VOP2_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 'v_xor_b32',
     format: InstructionFormat.VOP2,
-    opcode: 0x1E,
+    opcode: 0x1D,
     operandCount: 3,
     execute: (a, b) => ((a ^ (b ?? 0)) >>> 0),
     description: 'Bitwise XOR of two 32-bit values per lane.\nvdst = src0 ^ vsrc1',
@@ -111,14 +111,183 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     isIntegerOp: true,
   },
   {
+    mnemonic: 'v_xnor_b32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x1E,
+    operandCount: 3,
+    execute: (a, b) => (~((a ^ (b ?? 0))) >>> 0),
+    description: 'Bitwise XNOR of two 32-bit values per lane.\nvdst = ~(src0 ^ vsrc1)',
+    syntax: 'v_xnor_b32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_min_i32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x11,
+    operandCount: 3,
+    execute: (a, b) => ((a | 0) < ((b ?? 0) | 0)) ? a : (b ?? 0),
+    description: 'Return the minimum of two signed 32-bit integers per lane.\nvdst = min((int)src0, (int)vsrc1)',
+    syntax: 'v_min_i32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_max_i32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x12,
+    operandCount: 3,
+    execute: (a, b) => ((a | 0) > ((b ?? 0) | 0)) ? a : (b ?? 0),
+    description: 'Return the maximum of two signed 32-bit integers per lane.\nvdst = max((int)src0, (int)vsrc1)',
+    syntax: 'v_max_i32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_min_u32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x13,
+    operandCount: 3,
+    execute: (a, b) => ((a >>> 0) < ((b ?? 0) >>> 0)) ? a : (b ?? 0),
+    description: 'Return the minimum of two unsigned 32-bit integers per lane.\nvdst = min((uint)src0, (uint)vsrc1)',
+    syntax: 'v_min_u32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_max_u32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x14,
+    operandCount: 3,
+    execute: (a, b) => ((a >>> 0) > ((b ?? 0) >>> 0)) ? a : (b ?? 0),
+    description: 'Return the maximum of two unsigned 32-bit integers per lane.\nvdst = max((uint)src0, (uint)vsrc1)',
+    syntax: 'v_max_u32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
     mnemonic: 'v_add_nc_u32',
     format: InstructionFormat.VOP2,
-    opcode: 0x2A,
+    opcode: 0x25,
     operandCount: 3,
     execute: (a, b) => ((a + (b ?? 0)) >>> 0),
     description: 'Add two unsigned 32-bit integers per lane (no carry out).\nvdst = src0 + vsrc1',
     syntax: 'v_add_nc_u32 vdst, src0, vsrc1',
     isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_sub_nc_u32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x26,
+    operandCount: 3,
+    execute: (a, b) => ((a - (b ?? 0)) >>> 0),
+    description: 'Subtract two unsigned 32-bit integers per lane (no carry).\nvdst = src0 - vsrc1',
+    syntax: 'v_sub_nc_u32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_subrev_nc_u32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x27,
+    operandCount: 3,
+    execute: (a, b) => (((b ?? 0) - a) >>> 0),
+    description: 'Reverse subtract two unsigned 32-bit integers (no carry).\nvdst = vsrc1 - src0',
+    syntax: 'v_subrev_nc_u32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mul_i32_i24',
+    format: InstructionFormat.VOP2,
+    opcode: 0x09,
+    operandCount: 3,
+    execute: (a, b) => {
+      // Sign-extend 24-bit values then multiply
+      const sa = (a << 8) >> 8;
+      const sb = ((b ?? 0) << 8) >> 8;
+      return (sa * sb) | 0;
+    },
+    description: 'Multiply two signed 24-bit integers, return low 32 bits.\nvdst = (int24)src0 × (int24)vsrc1',
+    syntax: 'v_mul_i32_i24 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mul_hi_i32_i24',
+    format: InstructionFormat.VOP2,
+    opcode: 0x0A,
+    operandCount: 3,
+    execute: (a, b) => {
+      const sa = (a << 8) >> 8;
+      const sb = ((b ?? 0) << 8) >> 8;
+      // JS can handle 48-bit products safely
+      const product = sa * sb;
+      return (product / 0x100000000) | 0;
+    },
+    description: 'Multiply two signed 24-bit integers, return high 32 bits.\nvdst = hi32((int24)src0 × (int24)vsrc1)',
+    syntax: 'v_mul_hi_i32_i24 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mul_u32_u24',
+    format: InstructionFormat.VOP2,
+    opcode: 0x0B,
+    operandCount: 3,
+    execute: (a, b) => {
+      const ua = (a >>> 0) & 0xFFFFFF;
+      const ub = ((b ?? 0) >>> 0) & 0xFFFFFF;
+      return (ua * ub) >>> 0;
+    },
+    description: 'Multiply two unsigned 24-bit integers, return low 32 bits.\nvdst = (uint24)src0 × (uint24)vsrc1',
+    syntax: 'v_mul_u32_u24 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mul_hi_u32_u24',
+    format: InstructionFormat.VOP2,
+    opcode: 0x0C,
+    operandCount: 3,
+    execute: (a, b) => {
+      const ua = (a >>> 0) & 0xFFFFFF;
+      const ub = ((b ?? 0) >>> 0) & 0xFFFFFF;
+      const product = ua * ub;
+      return (product / 0x100000000) >>> 0;
+    },
+    description: 'Multiply two unsigned 24-bit integers, return high 32 bits.\nvdst = hi32((uint24)src0 × (uint24)vsrc1)',
+    syntax: 'v_mul_hi_u32_u24 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_lshlrev_b32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x1A,
+    operandCount: 3,
+    execute: (a, b) => ((b ?? 0) << (a & 31)) >>> 0,
+    description: 'Left shift vsrc1 by src0 bits (reversed operand order).\nvdst = vsrc1 << (src0 & 31)',
+    syntax: 'v_lshlrev_b32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_lshrrev_b32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x16,
+    operandCount: 3,
+    execute: (a, b) => ((b ?? 0) >>> (a & 31)) >>> 0,
+    description: 'Logical right shift vsrc1 by src0 bits (reversed operand order).\nvdst = vsrc1 >> (src0 & 31) (unsigned)',
+    syntax: 'v_lshrrev_b32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_ashrrev_i32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x18,
+    operandCount: 3,
+    execute: (a, b) => (((b ?? 0) | 0) >> (a & 31)) | 0,
+    description: 'Arithmetic right shift vsrc1 by src0 bits (sign-extending, reversed order).\nvdst = (int)vsrc1 >> (src0 & 31)',
+    syntax: 'v_ashrrev_i32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_fmac_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x2B,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Fused multiply-accumulate: vdst = src0 × vsrc1 + vdst.\nNote: vdst is also an implicit source (accumulated).',
+    syntax: 'v_fmac_f32 vdst, src0, vsrc1',
   },
 ];
 
