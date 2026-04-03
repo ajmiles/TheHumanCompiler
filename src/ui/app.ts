@@ -749,7 +749,8 @@ export class App {
 
           lines.push('');
           this.editor.setSource(lines.join('\n'));
-          this.doAssemble();
+          // Don't assemble — imported disassembly may contain instructions
+          // the assembler doesn't support yet
           this.statusBar.setStatus(`Imported ${file.name}: ${decoded.length} instructions`, 'success');
         } catch (e) {
           this.statusBar.setStatus(`Import failed: ${(e as Error).message}`, 'error');

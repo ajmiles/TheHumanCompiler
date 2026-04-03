@@ -80,6 +80,19 @@ export function parse(tokens: Token[]): ParseResult {
       continue;
     }
 
+    // Skip formats we can't assemble (memory ops, etc.) — just consume the line
+    const assembleableFormats = new Set([
+      InstructionFormat.VOP1, InstructionFormat.VOP2, InstructionFormat.VOP3,
+      InstructionFormat.VOPC, InstructionFormat.SOP1, InstructionFormat.SOPP,
+      InstructionFormat.SOP2, InstructionFormat.SOPC,
+    ]);
+    if (!assembleableFormats.has(info.format)) {
+      while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
+        advance();
+      }
+      continue;
+    }
+
     // Collect operand groups (handling modifiers like abs(v0), |v0|)
     interface OperandGroup {
       token: Token;
@@ -279,16 +292,22 @@ function parseOperands(
   errors: AssemblyError[],
 ): OperandSet | null {
   if (format === InstructionFormat.VOP3) {
-    // VOP3-only: dst, src0, src1, src2 (all 9-bit sources)
+    // VOP3: can be 3-source (dst, src0, src1, src2) or 2-source (dst, src0, src1)
     const dst = parseDestOperand(tokens[0], errors);
     if (!dst) return null;
     const src0 = parseSrc0Operand(tokens[1], errors);
     if (!src0) return null;
-    const src1 = parseSrc0Operand(tokens[2], errors); // all sources are 9-bit in VOP3
-    if (!src1) return null;
-    const src2 = parseSrc0Operand(tokens[3], errors);
-    if (!src2) return null;
-    return { dst, src0, src1, src2 };
+    if (tokens.length >= 4) {
+      const src1 = parseSrc0Operand(tokens[2], errors);
+      if (!src1) return null;
+      const src2 = parseSrc0Operand(tokens[3], errors);
+      if (!src2) return null;
+      return { dst, src0, src1, src2 };
+    } else {
+      const src1 = parseSrc0Operand(tokens[2], errors);
+      if (!src1) return null;
+      return { dst, src0, src1 };
+    }
   }
 
   if (format === InstructionFormat.VOPC) {
