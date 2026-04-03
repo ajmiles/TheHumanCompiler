@@ -1,7 +1,8 @@
 // ── Monaco Editor Setup with AMD ASM Language ──
 
 import * as monaco from 'monaco-editor';
-import { getAllMnemonics, lookupByMnemonic } from '../isa/opcodes';
+import { getAllMnemonics, getAllOpcodes, lookupByMnemonic } from '../isa/opcodes';
+import { InstructionFormat } from '../isa/types';
 
 self.MonacoEnvironment = {
   getWorker(_: unknown, _label: string) {
@@ -20,11 +21,51 @@ function registerLanguage(): void {
   registered = true;
 
   const mnemonics = getAllMnemonics();
+  const allOps = getAllOpcodes();
+
+  // Categorize mnemonics by instruction type for color coding
+  const valuMnemonics: string[] = [];
+  const saluMnemonics: string[] = [];
+  const soppMnemonics: string[] = [];
+  const vmemMnemonics: string[] = [];
+  const smemMnemonics: string[] = [];
+
+  for (const op of allOps) {
+    switch (op.format) {
+      case InstructionFormat.VOP1:
+      case InstructionFormat.VOP2:
+      case InstructionFormat.VOP3:
+      case InstructionFormat.VOPC:
+        valuMnemonics.push(op.mnemonic);
+        break;
+      case InstructionFormat.SOP1:
+      case InstructionFormat.SOP2:
+      case InstructionFormat.SOPC:
+      case InstructionFormat.SOPK:
+        saluMnemonics.push(op.mnemonic);
+        break;
+      case InstructionFormat.SOPP:
+        soppMnemonics.push(op.mnemonic);
+        break;
+      case InstructionFormat.MUBUF:
+      case InstructionFormat.MTBUF:
+      case InstructionFormat.MIMG:
+        vmemMnemonics.push(op.mnemonic);
+        break;
+      case InstructionFormat.SMEM:
+        smemMnemonics.push(op.mnemonic);
+        break;
+    }
+  }
 
   monaco.languages.register({ id: LANG_ID });
 
   monaco.languages.setMonarchTokensProvider(LANG_ID, {
-    keywords: mnemonics,
+    valu: valuMnemonics,
+    salu: saluMnemonics,
+    sopp: soppMnemonics,
+    vmem: vmemMnemonics,
+    smem: smemMnemonics,
     tokenizer: {
       root: [
         // Comments
@@ -37,10 +78,14 @@ function registerLanguage(): void {
         [/-?\d+/, 'number'],
         // Registers v0-v255, s0-s105
         [/\b[vs]\d+\b/, 'register'],
-        // Mnemonics / identifiers
+        // Mnemonics / identifiers — classify by category
         [/[a-z_][a-z0-9_]*/, {
           cases: {
-            '@keywords': 'keyword',
+            '@valu': 'keyword.valu',
+            '@salu': 'keyword.salu',
+            '@sopp': 'keyword.sopp',
+            '@vmem': 'keyword.vmem',
+            '@smem': 'keyword.smem',
             '@default': 'identifier',
           },
         }],
@@ -56,7 +101,12 @@ function registerLanguage(): void {
     base: 'vs-dark',
     inherit: true,
     rules: [
-      { token: 'keyword', foreground: '39d353', fontStyle: 'bold' },
+      { token: 'keyword.valu', foreground: '39d353', fontStyle: 'bold' },   // Green — VALU
+      { token: 'keyword.salu', foreground: '58a6ff', fontStyle: 'bold' },   // Blue — SALU
+      { token: 'keyword.sopp', foreground: 'd29922', fontStyle: 'bold' },   // Yellow — SOPP
+      { token: 'keyword.vmem', foreground: 'db6d28', fontStyle: 'bold' },   // Orange — VMEM
+      { token: 'keyword.smem', foreground: '39c5cf', fontStyle: 'bold' },   // Cyan — SMEM
+      { token: 'keyword', foreground: '39d353', fontStyle: 'bold' },        // Fallback green
       { token: 'register', foreground: '39c5cf' },
       { token: 'number', foreground: 'd29922' },
       { token: 'number.hex', foreground: 'd29922' },
