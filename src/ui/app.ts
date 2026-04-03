@@ -738,8 +738,13 @@ export class App {
           lines.push('');
 
           for (const instr of decoded) {
-            const asm = disassemble(instr, lookupByOpcode);
-            lines.push(asm);
+            try {
+              const asm = disassemble(instr, lookupByOpcode);
+              lines.push(asm);
+            } catch {
+              const addr = (instr.address * 4).toString(16).padStart(6, '0');
+              lines.push(`; ${addr}: <decode error> format=${instr.format} opcode=0x${instr.opcode.toString(16)}`);
+            }
           }
 
           lines.push('');
