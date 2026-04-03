@@ -265,6 +265,9 @@ export class App {
     // Update VGPR display range based on registers used
     this.registers.setUsedVGPRs(this.computeMaxVGPR());
     this.registers.setUsedSGPRs(this.computeMaxSGPR());
+
+    // Reset execution state when code changes
+    this.doReset();
   }
 
   /** Find the highest VGPR index referenced by the program and puzzle I/O. */
@@ -328,6 +331,11 @@ export class App {
   }
 
   private doRun(): void {
+    // Auto-reset if program already finished
+    if (this.emulator.isComplete() && this.emulator.state.pc > 0) {
+      this.doReset();
+    }
+
     if (!this.ensureLoaded()) return;
 
     this.primed = true; // skip priming on Run
