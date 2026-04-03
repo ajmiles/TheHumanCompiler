@@ -23,7 +23,7 @@ export interface Token {
 
 const REGISTER_RE = /^[vs]\d+$/;
 const SPECIAL_REGS = new Set(['exec', 'exec_lo', 'exec_hi', 'vcc', 'vcc_lo', 'vcc_hi', 'm0', 'null']);
-const MODIFIERS = new Set(['abs', 'neg']);
+const MODIFIERS = new Set(['abs', 'neg', 'clamp']);
 const MNEMONIC_RE = /^[a-z_][a-z0-9_]*$/;
 
 export function tokenize(source: string): Token[] {
@@ -121,6 +121,13 @@ export function tokenize(source: string): Token[] {
           tokens.push({ type: TokenType.REGISTER, value: lower, line: lineNum, column: start + 1 });
         } else if (MODIFIERS.has(lower)) {
           tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
+        } else if ((lower === 'mul' || lower === 'div') && col < lineText.length && lineText[col] === ':') {
+          // Compound output modifier: mul:2, mul:4, div:2
+          col++; // skip ':'
+          const dStart = col;
+          while (col < lineText.length && isDigit(lineText[col])) col++;
+          const compound = lower + ':' + lineText.slice(dStart, col);
+          tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
         } else if (MNEMONIC_RE.test(lower)) {
           tokens.push({ type: TokenType.MNEMONIC, value: lower, line: lineNum, column: start + 1 });
         }

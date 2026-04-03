@@ -98,6 +98,19 @@ export function parse(tokens: Token[]): ParseResult {
       rawTokens.push(advance());
     }
 
+    // Extract trailing output modifiers (mul:2, mul:4, div:2, clamp) from raw tokens
+    let omod = 0;
+    let clamp = false;
+    while (rawTokens.length > 0 && rawTokens[rawTokens.length - 1].type === TokenType.MODIFIER) {
+      const mod = rawTokens.pop()!;
+      switch (mod.value) {
+        case 'mul:2': omod = 1; break;
+        case 'mul:4': omod = 2; break;
+        case 'div:2': omod = 3; break;
+        case 'clamp': clamp = true; break;
+      }
+    }
+
     // Parse raw tokens into operand groups with modifier flags
     let ri = 0;
     while (ri < rawTokens.length) {
@@ -182,6 +195,8 @@ export function parse(tokens: Token[]): ParseResult {
       src1: parsed.src1,
       line: mnemonicToken.line,
       column: mnemonicToken.column,
+      omod: omod || undefined,
+      clamp: clamp || undefined,
     });
   }
 

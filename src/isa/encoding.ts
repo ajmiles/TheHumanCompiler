@@ -48,13 +48,16 @@ import {
   VOP3_NEG_SHIFT,
   VOP3_NEG_MASK,
   VOP3_ABS_MASK,
+  VOP3_OMOD_SHIFT,
+  VOP3_OMOD_MASK,
+  VOP3_CLAMP_BIT,
   VOP3_VOP1_OFFSET,
 } from './constants';
 import { lookupByMnemonic } from './opcodes';
 
-/** Check if an instruction needs VOP3 promotion (has source modifiers). */
+/** Check if an instruction needs VOP3 promotion (has modifiers). */
 function needsVOP3(instr: ParsedInstruction): boolean {
-  return !!(instr.src0.abs || instr.src0.neg || instr.src1?.abs || instr.src1?.neg);
+  return !!(instr.src0.abs || instr.src0.neg || instr.src1?.abs || instr.src1?.neg || instr.omod || instr.clamp);
 }
 
 /**
@@ -181,9 +184,13 @@ function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: Pa
   if (instr.src0.neg) negBits |= 1;
   if (instr.src1?.neg) negBits |= 2;
 
-  // Dword 0: [31:26]=prefix, [25:16]=OP, [10:8]=ABS, [7:0]=VDST
+  const clampBit = instr.clamp ? 1 : 0;
+  const omodBits = (instr.omod ?? 0) & VOP3_OMOD_MASK;
+
+  // Dword 0: [31:26]=prefix, [25:16]=OP, [11]=CLAMP, [10:8]=ABS, [7:0]=VDST
   const dword0 = (VOP3_ENCODING_PREFIX << VOP3_PREFIX_SHIFT)
     | ((vop3Opcode & VOP3_OP_MASK) << VOP3_OP_SHIFT)
+    | (clampBit << VOP3_CLAMP_BIT)
     | ((absBits & VOP3_ABS_MASK) << VOP3_ABS_SHIFT)
     | (vdst & VOP3_VDST_MASK);
 
@@ -193,8 +200,9 @@ function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: Pa
     ? encodeVGPR(instr.src1.value) // in VOP3, src1 is also 9-bit
     : 0;
 
-  // Dword 1: [31:29]=NEG, [17:9]=SRC1, [8:0]=SRC0
+  // Dword 1: [31:29]=NEG, [28:27]=OMOD, [17:9]=SRC1, [8:0]=SRC0
   const dword1 = ((negBits & VOP3_NEG_MASK) << VOP3_NEG_SHIFT)
+    | ((omodBits & VOP3_OMOD_MASK) << VOP3_OMOD_SHIFT)
     | ((src1Encoded & VOP3_SRC1_MASK) << VOP3_SRC1_SHIFT)
     | (src0.encoded & VOP3_SRC0_MASK);
 
@@ -296,6 +304,8 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       const src0 = dword1 & VOP3_SRC0_MASK;
       const src1 = (dword1 >>> VOP3_SRC1_SHIFT) & VOP3_SRC1_MASK;
       const negBits = (dword1 >>> VOP3_NEG_SHIFT) & VOP3_NEG_MASK;
+      const omodBits = (dword1 >>> VOP3_OMOD_SHIFT) & VOP3_OMOD_MASK;
+      const clampBit = (dword0 >>> VOP3_CLAMP_BIT) & 1;
 
       // Determine original format and base opcode
       let baseOpcode: number;
@@ -319,6 +329,8 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
         src0Neg: !!(negBits & 1),
         src1Abs: !!(absBits & 2),
         src1Neg: !!(negBits & 2),
+        omod: omodBits || undefined,
+        clamp: clampBit ? true : undefined,
       };
 
       i += 2;
@@ -446,13 +458,21 @@ export function disassemble(
   if (decoded.src0Abs) src0 = `abs(${src0})`;
   if (decoded.src0Neg) src0 = `-${src0}`;
 
+  // Output modifier suffixes
+  const suffixes: string[] = [];
+  if (decoded.clamp) suffixes.push('clamp');
+  if (decoded.omod === 1) suffixes.push('mul:2');
+  if (decoded.omod === 2) suffixes.push('mul:4');
+  if (decoded.omod === 3) suffixes.push('div:2');
+  const suffix = suffixes.length > 0 ? ' ' + suffixes.join(' ') : '';
+
   if (decoded.format === InstructionFormat.VOP2) {
     let src1 = `v${decoded.src1}`;
     if (decoded.src1Abs) src1 = `abs(${src1})`;
     if (decoded.src1Neg) src1 = `-${src1}`;
-    return `${mnemonic} ${dst}, ${src0}, ${src1}`;
+    return `${mnemonic} ${dst}, ${src0}, ${src1}${suffix}`;
   } else {
-    return `${mnemonic} ${dst}, ${src0}`;
+    return `${mnemonic} ${dst}, ${src0}${suffix}`;
   }
 }
 

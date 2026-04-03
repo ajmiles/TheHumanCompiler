@@ -32,6 +32,8 @@ export interface ParsedInstruction {
   src1?: Operand;      // Only for VOP2
   line: number;
   column: number;
+  omod?: number;       // Output modifier: 0=none, 1=×2, 2=×4, 3=÷2
+  clamp?: boolean;     // Clamp output to [0.0, 1.0]
 }
 
 export interface DecodedInstruction {
@@ -47,6 +49,9 @@ export interface DecodedInstruction {
   src0Neg?: boolean;
   src1Abs?: boolean;
   src1Neg?: boolean;
+  // Output modifiers
+  omod?: number;       // 0=none, 1=×2, 2=×4, 3=÷2
+  clamp?: boolean;
 }
 
 export type SemanticFn = (a: number, b?: number) => number;

@@ -134,6 +134,18 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       result = opcodeInfo.execute(src0Val);
     }
 
+    // Apply output modifiers (OMOD then CLAMP)
+    if (decoded.omod) {
+      switch (decoded.omod) {
+        case 1: result = result * 2.0; break;
+        case 2: result = result * 4.0; break;
+        case 3: result = result * 0.5; break;
+      }
+    }
+    if (decoded.clamp) {
+      result = Math.max(0.0, Math.min(1.0, result));
+    }
+
     state.writeVGPR(decoded.dst, lane, result);
   }
 }
