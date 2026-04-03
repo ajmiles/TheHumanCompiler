@@ -531,12 +531,15 @@ function formatSrc0(encoded: number, literal?: number): string {
 }
 
 function formatSsrc0(encoded: number, literal?: number): string {
-  // Check special registers first
-  const special = formatSpecialOrSgpr(encoded);
-  if (special !== null) return special;
+  // Special registers
+  if (encoded in SPECIAL_REG_NAMES) return SPECIAL_REG_NAMES[encoded];
+  // SGPRs
+  if (encoded <= 105) return `s${encoded}`;
+  // Literal
   if (encoded === 0xFF && literal !== undefined) {
     return `0x${(literal >>> 0).toString(16)}`;
   }
+  // Inline constants
   if (encoded === 128) return '0';
   if (encoded >= 129 && encoded <= 192) return `${encoded - 128}`;
   if (encoded >= 193 && encoded <= 208) return `${-(encoded - 192)}`;
@@ -549,16 +552,15 @@ function formatSsrc0(encoded: number, literal?: number): string {
 }
 
 const SPECIAL_REG_NAMES: Record<number, string> = {
-  106: 'vcc_lo',
+  106: 'vcc',
   107: 'vcc_hi',
   124: 'm0',
   125: 'null',
-  126: 'exec_lo',
+  126: 'exec',
   127: 'exec_hi',
 };
 
 function formatSpecialOrSgpr(encoded: number): string {
   if (encoded in SPECIAL_REG_NAMES) return SPECIAL_REG_NAMES[encoded];
-  if (encoded <= 105) return `s${encoded}`;
   return `s${encoded}`;
 }
