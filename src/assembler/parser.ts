@@ -264,12 +264,21 @@ function parseOperands(
   }
 
   // VOP2: dst, src0, vsrc1
+  // vsrc1 is VGPR-only in VOP2 encoding, but if a non-VGPR operand is given
+  // (literal, SGPR, inline constant), we accept it and let the encoder
+  // auto-promote to VOP3 where all sources are 9-bit.
   const dst = parseDestOperand(tokens[0], errors);
   if (!dst) return null;
   const src0 = parseSrc0Operand(tokens[1], errors);
   if (!src0) return null;
-  const vsrc1 = parseVsrc1Operand(tokens[2], errors);
+  const vsrc1 = parseSrc0Operand(tokens[2], errors); // accept any source type
   if (!vsrc1) return null;
+
+  // For plain VOP2 encoding, VSRC1 needs plain VGPR index (0-255)
+  // For VOP3-promoted, it uses 9-bit encoding (handled by encoder)
+  if (vsrc1.type === OperandType.VGPR) {
+    vsrc1.encoded = vsrc1.value; // plain 8-bit VGPR index for VOP2
+  }
 
   return { dst, src0, src1: vsrc1 };
 }

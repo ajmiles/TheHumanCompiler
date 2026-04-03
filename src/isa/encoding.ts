@@ -57,9 +57,11 @@ import {
 } from './constants';
 import { lookupByMnemonic, lookupByOpcode } from './opcodes';
 
-/** Check if an instruction needs VOP3 promotion (has modifiers). */
+/** Check if an instruction needs VOP3 promotion (has modifiers or non-VGPR in src1). */
 function needsVOP3(instr: ParsedInstruction): boolean {
-  return !!(instr.src0.abs || instr.src0.neg || instr.src1?.abs || instr.src1?.neg || instr.omod || instr.clamp);
+  const hasMods = !!(instr.src0.abs || instr.src0.neg || instr.src1?.abs || instr.src1?.neg || instr.omod || instr.clamp);
+  const src1NeedsPromotion = instr.src1 && instr.src1.type !== OperandType.VGPR;
+  return hasMods || !!src1NeedsPromotion;
 }
 
 /**
@@ -206,8 +208,11 @@ function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: Pa
     | (vdst & VOP3_VDST_MASK);
 
   const src0 = encodeSrc0(instr.src0);
-  const src1Encoded = instr.src1 ? encodeSrc0(instr.src1).encoded : 0;
-  const src2Encoded = instr.src2 ? encodeSrc0(instr.src2).encoded : 0;
+  const src1Result = instr.src1 ? encodeSrc0(instr.src1) : null;
+  const src2Result = instr.src2 ? encodeSrc0(instr.src2) : null;
+
+  const src1Encoded = src1Result?.encoded ?? 0;
+  const src2Encoded = src2Result?.encoded ?? 0;
 
   // Dword 1: [31:29]=NEG, [28:27]=OMOD, [26:18]=SRC2, [17:9]=SRC1, [8:0]=SRC0
   const dword1 = ((negBits & VOP3_NEG_MASK) << VOP3_NEG_SHIFT)
@@ -216,7 +221,15 @@ function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: Pa
     | ((src1Encoded & VOP3_SRC1_MASK) << VOP3_SRC1_SHIFT)
     | (src0.encoded & VOP3_SRC0_MASK);
 
-  return [(dword0 >>> 0), (dword1 >>> 0)];
+  const words = [(dword0 >>> 0), (dword1 >>> 0)];
+
+  // VOP3 supports one literal constant shared across sources
+  const literal = src0.literal ?? src1Result?.literal ?? src2Result?.literal;
+  if (literal !== undefined) {
+    words.push(literal >>> 0);
+  }
+
+  return words;
 }
 
 interface Src0Encoding {
@@ -356,6 +369,13 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       };
 
       i += 2;
+
+      // Check for literal constant (any source field == 255)
+      if ((src0 === LITERAL_CONST || src1 === LITERAL_CONST || src2 === LITERAL_CONST) && i < binary.length) {
+        decoded.literal = binary[i];
+        i++;
+      }
+
       instructions.push(decoded);
     } else if (format === InstructionFormat.VOPC) {
       const opcode = (word >>> VOPC_OP_SHIFT) & VOPC_OP_MASK;
@@ -367,8 +387,7 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
         opcode,
         dst: 0,  // VOPC has no dest; result goes to VCC
         src0Encoded: src0,
-        src1: vsrc1,
-        address,
+        src1: VGPR_SRC_MIN + vsrc1,        address,
       };
 
       i++;
@@ -434,7 +453,7 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
         opcode,
         dst: vdst,
         src0Encoded: src0,
-        src1: vsrc1,
+        src1: VGPR_SRC_MIN + vsrc1, // store as 9-bit encoding for consistency with VOP3
         address,
       };
 
@@ -471,7 +490,7 @@ export function disassemble(
 
   if (decoded.format === InstructionFormat.VOPC) {
     const src0 = formatSrc0(decoded.src0Encoded, decoded.literal);
-    const src1 = `v${decoded.src1}`;
+    const src1 = formatSrc0(decoded.src1!, decoded.literal);
     return `${mnemonic} vcc, ${src0}, ${src1}`;
   }
 
@@ -496,11 +515,8 @@ export function disassemble(
     if (decoded.src2Abs) src2 = `abs(${src2})`;
     if (decoded.src2Neg) src2 = `-${src2}`;
     return `${mnemonic} ${dst}, ${src0}, ${src1}, ${src2}${suffix}`;
-  } else if (decoded.format === InstructionFormat.VOP2 || decoded.src1 !== undefined) {
-    const hasVop3Mods = decoded.src0Abs || decoded.src0Neg || decoded.src1Abs ||
-      decoded.src1Neg || decoded.omod || decoded.clamp;
-    let src1 = (decoded.format === InstructionFormat.VOP2 && !hasVop3Mods)
-      ? `v${decoded.src1}` : formatSrc0(decoded.src1!, decoded.literal);
+  } else if (decoded.src1 !== undefined) {
+    let src1 = formatSrc0(decoded.src1, decoded.literal);
     if (decoded.src1Abs) src1 = `abs(${src1})`;
     if (decoded.src1Neg) src1 = `-${src1}`;
     return `${mnemonic} ${dst}, ${src0}, ${src1}${suffix}`;
