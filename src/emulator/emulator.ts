@@ -7,22 +7,25 @@ import { executeInstruction } from './executor';
 
 export class Emulator {
   state: GPUState;
+  halted: boolean;
   private program: ResolvedInstruction[];
 
   constructor() {
     this.state = new GPUState();
     this.program = [];
+    this.halted = false;
   }
 
   /** Load a binary program, decode it, and reset execution state. */
   load(binary: Uint32Array): void {
     this.program = decodeProgram(binary);
     this.state.reset();
+    this.halted = false;
   }
 
   /**
    * Execute one instruction at the current PC and advance.
-   * Returns false if the program is already complete.
+   * Returns false if the program is already complete or halted.
    */
   step(): boolean {
     if (this.isComplete()) return false;
@@ -32,9 +35,9 @@ export class Emulator {
     this.state.pc++;
     this.state.cycleCount++;
 
-    // Halting instruction (s_endpgm): jump to end
+    // Halting instruction (s_endpgm): set halted flag
     if (instr.opcodeInfo.halts) {
-      this.state.pc = this.program.length;
+      this.halted = true;
     }
 
     return true;
@@ -50,11 +53,12 @@ export class Emulator {
   /** Reset execution state but keep the loaded program. */
   reset(): void {
     this.state.reset();
+    this.halted = false;
   }
 
-  /** Check if execution has reached the end of the program. */
+  /** Check if execution has completed (halted or past end of program). */
   isComplete(): boolean {
-    return this.state.pc >= this.program.length;
+    return this.halted || this.state.pc >= this.program.length;
   }
 
   /** Get the instruction at the current PC, or null if complete. */

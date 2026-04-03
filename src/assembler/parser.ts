@@ -21,6 +21,7 @@ import {
   NULL_REG,
   EXEC_LO,
   EXEC_HI,
+  FLOAT_TO_INLINE,
 } from '../isa/constants';
 import {
   unknownMnemonic,
@@ -454,9 +455,18 @@ function parseNumericOperand(token: Token, errors: AssemblyError[]): Operand | n
   }
 
   // Try inline constant encoding first
-  const inlineEncoded = tryEncodeInline(value);
+  const isFloat = text.includes('.');
+  let inlineEncoded: number | null = null;
+
+  if (isFloat) {
+    // Float literals: prefer inline float encoding (e.g. 1.0 → 242, not inline int 1 → 129)
+    const floatEncoding = FLOAT_TO_INLINE.get(value);
+    inlineEncoded = floatEncoding !== undefined ? floatEncoding : tryEncodeInline(value);
+  } else {
+    inlineEncoded = tryEncodeInline(value);
+  }
+
   if (inlineEncoded !== null) {
-    const isFloat = text.includes('.');
     return {
       type: isFloat ? OperandType.INLINE_FLOAT : OperandType.INLINE_INT,
       value,

@@ -29,7 +29,6 @@ import {
   LITERAL_CONST,
   VGPR_SRC_MIN,
   encodeVGPR,
-  tryEncodeInline,
   SOP1_ENCODING_PREFIX,
   SOP1_PREFIX_SHIFT,
   SOP1_PREFIX_MASK,
@@ -258,12 +257,8 @@ function encodeSrc0(operand: ParsedInstruction['src0']): Src0Encoding {
     case OperandType.SGPR:
       return { encoded: operand.value }; // SGPR index is direct
     case OperandType.INLINE_INT:
-    case OperandType.INLINE_FLOAT: {
-      const inlineCode = tryEncodeInline(operand.value);
-      if (inlineCode !== null) return { encoded: inlineCode };
-      // Fall through to literal if inline encoding fails
-      return encodeLiteral(operand.value);
-    }
+    case OperandType.INLINE_FLOAT:
+      return { encoded: operand.encoded };
     case OperandType.LITERAL:
       return encodeLiteral(operand.value);
     default:

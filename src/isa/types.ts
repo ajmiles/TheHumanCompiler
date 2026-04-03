@@ -72,6 +72,7 @@ export interface OpcodeInfo {
   readsVCC?: boolean;   // v_cndmask_b32: uses VCC to select
   writesVCC?: boolean;  // VOPC: writes comparison result to VCC
   halts?: boolean;      // s_endpgm: stops execution
+  isIntegerOp?: boolean; // true for _b32/_u32/_i32 ops that work on raw u32 bits
 }
 
 export interface AssemblyError {

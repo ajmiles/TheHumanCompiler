@@ -92,11 +92,18 @@ export class App {
       this.encyclopedia.show();
     };
 
+    const feedbackBtn = document.createElement('a');
+    feedbackBtn.className = 'header__puzzle-select';
+    feedbackBtn.textContent = '💬 Feedback?';
+    feedbackBtn.href = 'https://github.com/ajmiles/TheHumanCompiler/issues';
+    feedbackBtn.target = '_blank';
+    feedbackBtn.style.textDecoration = 'none';
+
     const info = document.createElement('div');
     info.className = 'header__info';
     info.innerHTML = '<span class="header__badge">RDNA2</span><span>Wave32</span>';
 
-    header.append(title, puzzleBtn, spacer, encyBtn, info);
+    header.append(title, puzzleBtn, spacer, encyBtn, feedbackBtn, info);
 
     // Main 3-column layout
     const main = document.createElement('div');
@@ -469,7 +476,7 @@ export class App {
     } else {
       const inputNames = puzzle.inputs.map(i => `; ${i.name} in v${i.register}`).join('\n');
       const outputNames = puzzle.outputs.map(o => `; ${o.name} to v${o.register}`).join('\n');
-      const template = `; ${puzzle.title}\n${inputNames}\n${outputNames}\n; Write your solution below:\n\n`;
+      const template = `; ${puzzle.title}\n${inputNames}\n${outputNames}\n; Write your solution below:\n\ns_endpgm\n`;
       this.revisions = [template];
       this.activeRevision = 0;
     }

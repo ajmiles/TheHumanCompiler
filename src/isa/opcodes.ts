@@ -3,14 +3,8 @@
 
 import { InstructionFormat, OpcodeInfo } from './types';
 
-// IEEE 754 helpers for bit-exact float operations
+// IEEE 754 helper for bit-exact float operations
 const f32 = new Float32Array(1);
-const u32 = new Uint32Array(f32.buffer);
-
-function toU32(val: number): number {
-  f32[0] = val;
-  return u32[0];
-}
 
 function asFloat(v: number): number {
   // Reinterpret a value through f32 to match GPU precision
@@ -30,6 +24,7 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     description: 'Conditional mask: select src0 or vsrc1 per lane based on VCC.\nvdst = VCC[lane] ? vsrc1 : src0',
     syntax: 'v_cndmask_b32 vdst, src0, vsrc1',
     readsVCC: true,
+    isIntegerOp: true,
   },
   {
     mnemonic: 'v_add_f32',
@@ -90,27 +85,30 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     format: InstructionFormat.VOP2,
     opcode: 0x1C,
     operandCount: 3,
-    execute: (a, b) => ((toU32(a) & toU32(b ?? 0)) >>> 0),
+    execute: (a, b) => ((a & (b ?? 0)) >>> 0),
     description: 'Bitwise AND of two 32-bit values per lane.\nvdst = src0 & vsrc1',
     syntax: 'v_and_b32 vdst, src0, vsrc1',
+    isIntegerOp: true,
   },
   {
     mnemonic: 'v_or_b32',
     format: InstructionFormat.VOP2,
     opcode: 0x1D,
     operandCount: 3,
-    execute: (a, b) => ((toU32(a) | toU32(b ?? 0)) >>> 0),
+    execute: (a, b) => ((a | (b ?? 0)) >>> 0),
     description: 'Bitwise OR of two 32-bit values per lane.\nvdst = src0 | vsrc1',
     syntax: 'v_or_b32 vdst, src0, vsrc1',
+    isIntegerOp: true,
   },
   {
     mnemonic: 'v_xor_b32',
     format: InstructionFormat.VOP2,
     opcode: 0x1E,
     operandCount: 3,
-    execute: (a, b) => ((toU32(a) ^ toU32(b ?? 0)) >>> 0),
+    execute: (a, b) => ((a ^ (b ?? 0)) >>> 0),
     description: 'Bitwise XOR of two 32-bit values per lane.\nvdst = src0 ^ vsrc1',
     syntax: 'v_xor_b32 vdst, src0, vsrc1',
+    isIntegerOp: true,
   },
   {
     mnemonic: 'v_add_nc_u32',
@@ -120,6 +118,7 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     execute: (a, b) => ((a + (b ?? 0)) >>> 0),
     description: 'Add two unsigned 32-bit integers per lane (no carry out).\nvdst = src0 + vsrc1',
     syntax: 'v_add_nc_u32 vdst, src0, vsrc1',
+    isIntegerOp: true,
   },
 ];
 
@@ -134,6 +133,7 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     execute: (a) => a,
     description: 'Copy a 32-bit value into the destination per lane.\nvdst = src0',
     syntax: 'v_mov_b32 vdst, src0',
+    isIntegerOp: true,
   },
   {
     mnemonic: 'v_cvt_f32_i32',
@@ -211,6 +211,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     execute: (a, b, c) => (((a + (b ?? 0)) << ((c ?? 0) & 31)) >>> 0),
     description: 'Add two unsigned 32-bit integers, then left-shift the result.\nvdst = (src0 + src1) << src2',
     syntax: 'v_add_lshl_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
   },
   {
     mnemonic: 'v_bfe_u32',
@@ -226,6 +227,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     },
     description: 'Bitfield extract (unsigned): extract a field of bits from src0.\nvdst = (src0 >> src1) & ((1 << src2) - 1)\nsrc1 = bit offset, src2 = field width',
     syntax: 'v_bfe_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
   },
 ];
 
