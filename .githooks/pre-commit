@@ -1,0 +1,10 @@
+#!/bin/sh
+# Auto-increment version number on each commit
+VERSION_FILE="src/version.ts"
+if [ -f "$VERSION_FILE" ]; then
+  CURRENT=$(grep -oP "[\d.]+" "$VERSION_FILE")
+  # Increment by 0.01 using awk for float math
+  NEW=$(echo "$CURRENT" | awk '{printf "%.2f", $1 + 0.01}')
+  echo "export const VERSION = '$NEW';" > "$VERSION_FILE"
+  git add "$VERSION_FILE"
+fi

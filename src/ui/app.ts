@@ -18,6 +18,7 @@ import { ALL_PUZZLES, getPuzzleById } from '../puzzle/puzzles';
 import { validatePuzzle } from '../puzzle/validator';
 import { WAVE_WIDTH } from '../isa/constants';
 import { AssemblyResult, OperandType } from '../isa/types';
+import { VERSION } from '../version';
 
 const STORAGE_KEY = 'humancompiler_completed';
 const SOLUTIONS_KEY = 'humancompiler_solutions';
@@ -75,7 +76,7 @@ export class App {
 
     const title = document.createElement('div');
     title.className = 'header__title';
-    title.innerHTML = '<span class="icon">⚡</span> Human Compiler';
+    title.innerHTML = `<span class="icon">⚡</span> Human Compiler <span class="header__version">v${VERSION}</span>`;
 
     const puzzleBtn = document.createElement('button');
     puzzleBtn.className = 'header__puzzle-select';
