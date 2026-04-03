@@ -76,9 +76,31 @@
 /* ── Binary View ── */
 
 .binary-panel {
-  max-height: 180px;
+  max-height: 200px;
   border-top: 1px solid var(--border-default);
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.binary-panel > .panel__content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.binary-panel > .panel__content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.binary-panel > .panel__content::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+.binary-panel > .panel__content::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 3px;
 }
 
 .binary-list {
