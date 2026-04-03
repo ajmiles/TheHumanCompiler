@@ -30,6 +30,15 @@ export class BinaryView {
 
     const decoded = decodeBinary(binary);
 
+    // Compute max dwords per instruction to size the hex column
+    let maxWords = 1;
+    for (let idx = 0; idx < decoded.length; idx++) {
+      const nextAddr = (idx + 1 < decoded.length) ? decoded[idx + 1].address : binary.length;
+      maxWords = Math.max(maxWords, nextAddr - decoded[idx].address);
+    }
+    // Each dword = 8 hex chars + 1 space separator. Width in ch units.
+    const hexWidthCh = maxWords * 9 - 1;
+
     for (let idx = 0; idx < decoded.length; idx++) {
       const instr = decoded[idx];
       const entry = document.createElement('div');
@@ -39,16 +48,15 @@ export class BinaryView {
         entry.classList.add('binary-entry--current');
       }
 
-      // Byte address
       const addr = document.createElement('span');
       addr.className = 'binary-entry__addr';
       addr.textContent = (instr.address * 4).toString(16).padStart(3, '0');
 
-      // All dwords for this instruction on one line
       const hex = document.createElement('span');
       hex.className = 'binary-entry__hex';
+      hex.style.width = `${hexWidthCh}ch`;
+      hex.style.minWidth = `${hexWidthCh}ch`;
 
-      // Determine instruction size: find next instruction's address or end of binary
       const nextAddr = (idx + 1 < decoded.length) ? decoded[idx + 1].address : binary.length;
       const words: string[] = [];
       for (let w = instr.address; w < nextAddr; w++) {
