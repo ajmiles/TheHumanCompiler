@@ -6,6 +6,7 @@ export enum InstructionFormat {
   VOP3 = 'VOP3',
   VOPC = 'VOPC',
   SOP1 = 'SOP1',
+  SOPP = 'SOPP',
 }
 
 export enum OperandType {
@@ -70,6 +71,7 @@ export interface OpcodeInfo {
   syntax: string;
   readsVCC?: boolean;   // v_cndmask_b32: uses VCC to select
   writesVCC?: boolean;  // VOPC: writes comparison result to VCC
+  halts?: boolean;      // s_endpgm: stops execution
 }
 
 export interface AssemblyError {

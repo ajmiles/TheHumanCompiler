@@ -58,6 +58,12 @@ export const WAVE_WIDTH = 32;
 // VOP1 encoding marker: bits [31:25] = 0b0111111 = 0x3F
 export const VOP1_ENCODING_PREFIX = 0x3F;
 
+// SOPP encoding: bits [31:23] = 0b101111111 = 0x17F
+// [22:16] = OP (7 bits), [15:0] = SIMM16 (16 bits)
+export const SOPP_ENCODING_PREFIX = 0x17F;
+export const SOPP_OP_SHIFT = 16;
+export const SOPP_OP_MASK = 0x7F;     // 7 bits
+
 // VOPC encoding marker: bits [31:25] = 0b0111110 = 0x3E
 // [24:17] = OP (8 bits), [16:9] = VSRC1 (8 bits), [8:0] = SRC0 (9 bits)
 export const VOPC_ENCODING_PREFIX = 0x3E;

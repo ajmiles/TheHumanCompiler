@@ -12,6 +12,9 @@ import {
   VOPC_ENCODING_PREFIX,
   VOPC_OP_SHIFT,
   VOPC_OP_MASK,
+  SOPP_ENCODING_PREFIX,
+  SOPP_OP_SHIFT,
+  SOPP_OP_MASK,
   VOP2_OP_SHIFT,
   VDST_SHIFT,
   VSRC1_SHIFT,
@@ -79,6 +82,10 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
   // Auto-promote to VOP3 if modifiers are present
   if ((info.format === InstructionFormat.VOP1 || info.format === InstructionFormat.VOP2) && needsVOP3(instr)) {
     return encodeVOP3(info.format, info.opcode, instr);
+  }
+
+  if (info.format === InstructionFormat.SOPP) {
+    return encodeSOPP(info.opcode);
   }
 
   if (info.format === InstructionFormat.VOPC) {
@@ -173,6 +180,13 @@ function encodeSOP1(opcode: number, instr: ParsedInstruction): number[] {
     }
   }
   return words;
+}
+
+function encodeSOPP(opcode: number): number[] {
+  // SOPP: [31:23]=0x17F, [22:16]=OP, [15:0]=SIMM16 (0 for s_endpgm)
+  const word = (SOPP_ENCODING_PREFIX << SOP1_PREFIX_SHIFT)
+    | ((opcode & SOPP_OP_MASK) << SOPP_OP_SHIFT);
+  return [(word >>> 0)];
 }
 
 function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: ParsedInstruction): number[] {
@@ -290,8 +304,9 @@ export function detectFormat(word: number): InstructionFormat {
   // Check VOP3 first: bits [31:26] = 0x34 (110100)
   const prefix6 = (word >>> VOP3_PREFIX_SHIFT) & VOP3_PREFIX_MASK;
   if (prefix6 === VOP3_ENCODING_PREFIX) return InstructionFormat.VOP3;
-  // Check SOP1: bits [31:23] = 0x17D (101111101)
+  // Check SOP1/SOPP: bits [31:23] — 9-bit prefix
   const prefix9 = (word >>> SOP1_PREFIX_SHIFT) & SOP1_PREFIX_MASK;
+  if (prefix9 === SOPP_ENCODING_PREFIX) return InstructionFormat.SOPP;
   if (prefix9 === SOP1_ENCODING_PREFIX) return InstructionFormat.SOP1;
   // VOP1: bits [31:25] = 0x3F (0111111)
   const prefix7 = (word >>> VOP1_PREFIX_SHIFT) & VOP1_PREFIX_MASK;
@@ -398,6 +413,18 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       }
 
       instructions.push(decoded);
+    } else if (format === InstructionFormat.SOPP) {
+      const opcode = (word >>> SOPP_OP_SHIFT) & SOPP_OP_MASK;
+
+      instructions.push({
+        format,
+        opcode,
+        dst: 0,
+        src0Encoded: 0,
+        address,
+      });
+
+      i++;
     } else if (format === InstructionFormat.SOP1) {
       const sdst = (word >>> SOP1_SDST_SHIFT) & SOP1_SDST_MASK;
       const opcode = (word >>> SOP1_OP_SHIFT) & SOP1_OP_MASK;
@@ -481,6 +508,10 @@ export function disassemble(
 ): string {
   const info = lookupFn?.(decoded.format, decoded.opcode);
   const mnemonic = info ? info.mnemonic : `unknown_${decoded.format}_${decoded.opcode}`;
+
+  if (decoded.format === InstructionFormat.SOPP) {
+    return mnemonic; // no operands
+  }
 
   if (decoded.format === InstructionFormat.SOP1) {
     const dst = formatSpecialOrSgpr(decoded.dst);

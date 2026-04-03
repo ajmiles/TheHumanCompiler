@@ -69,6 +69,11 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
 
   state.modifiedRegs.clear();
 
+  // SOPP: program control (e.g. s_endpgm)
+  if (opcodeInfo.halts) {
+    return; // executor returns; emulator's step() advances PC past the end
+  }
+
   // SOP1: scalar instruction, writes to SGPR or special register
   if (decoded.format === InstructionFormat.SOP1) {
     const src0Val = resolveSsrc0(state, decoded.src0Encoded, decoded.literal);

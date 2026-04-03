@@ -152,6 +152,19 @@ export function parse(tokens: Token[]): ParseResult {
       }
     }
 
+    // SOPP: no operands (e.g. s_endpgm)
+    if (info.format === InstructionFormat.SOPP) {
+      const nullOp: Operand = { type: OperandType.INLINE_INT, value: 0, encoded: 0 };
+      instructions.push({
+        mnemonic: mnemonicToken.value,
+        dst: nullOp,
+        src0: nullOp,
+        line: mnemonicToken.line,
+        column: mnemonicToken.column,
+      });
+      continue;
+    }
+
     // VOPC special handling: accept 2 or 3 operands (optional vcc dest)
     let expectedCount = info.operandCount;
     if (info.format === InstructionFormat.VOPC) {

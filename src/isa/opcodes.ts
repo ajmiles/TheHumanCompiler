@@ -308,6 +308,21 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   },
 ];
 
+// ── SOPP Instructions (scalar, no operands / immediate only) ──
+
+const SOPP_OPCODES: OpcodeInfo[] = [
+  {
+    mnemonic: 's_endpgm',
+    format: InstructionFormat.SOPP,
+    opcode: 0x01,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'End the shader program. Execution stops at this instruction.',
+    syntax: 's_endpgm',
+    halts: true,
+  },
+];
+
 // ── Lookup Tables ──
 
 const byMnemonic = new Map<string, OpcodeInfo>();
@@ -325,6 +340,7 @@ register(VOP1_OPCODES);
 register(VOP3_ONLY_OPCODES);
 register(VOPC_OPCODES);
 register(SOP1_OPCODES);
+register(SOPP_OPCODES);
 
 export function lookupByMnemonic(mnemonic: string): OpcodeInfo | undefined {
   return byMnemonic.get(mnemonic.toLowerCase());

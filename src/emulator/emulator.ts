@@ -31,6 +31,12 @@ export class Emulator {
     executeInstruction(this.state, instr);
     this.state.pc++;
     this.state.cycleCount++;
+
+    // Halting instruction (s_endpgm): jump to end
+    if (instr.opcodeInfo.halts) {
+      this.state.pc = this.program.length;
+    }
+
     return true;
   }
 
