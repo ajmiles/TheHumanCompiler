@@ -722,10 +722,14 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
  */
 export function disassemble(
   decoded: DecodedInstruction,
-  lookupFn?: (format: InstructionFormat, opcode: number) => { mnemonic: string } | undefined,
+  lookupFn?: (format: InstructionFormat, opcode: number) => { mnemonic: string; isIntegerOp?: boolean } | undefined,
 ): string {
   const info = lookupFn?.(decoded.format, decoded.opcode);
   const mnemonic = info ? info.mnemonic : `v_unknown_${decoded.format.toLowerCase()}_0x${decoded.opcode.toString(16)}`;
+  const isInt = !!(info as Record<string, unknown> | undefined)?.isIntegerOp ||
+    mnemonic.endsWith('_b32') || mnemonic.endsWith('_b64') ||
+    mnemonic.endsWith('_u32') || mnemonic.endsWith('_i32') ||
+    mnemonic.endsWith('_u16') || mnemonic.endsWith('_i16');
 
   if (decoded.format === InstructionFormat.SOPP) {
     if (decoded.simm16 !== undefined && decoded.simm16 !== 0) {
@@ -796,8 +800,8 @@ export function disassemble(
   }
 
   if (decoded.format === InstructionFormat.VOPC) {
-    const src0 = formatSrc0(decoded.src0Encoded, decoded.literal);
-    const src1 = formatSrc0(decoded.src1!, decoded.literal);
+    const src0 = formatSrc0(decoded.src0Encoded, decoded.literal, isInt);
+    const src1 = formatSrc0(decoded.src1!, decoded.literal, isInt);
     // v_cmpx_* writes to EXEC, v_cmp_* writes to VCC (or SGPR pair in VOP3)
     const isCmpx = mnemonic.startsWith('v_cmpx_');
     const dest = isCmpx ? 'exec' : 'vcc';
@@ -805,7 +809,7 @@ export function disassemble(
   }
 
   const dst = `v${decoded.dst}`;
-  let src0 = formatSrc0(decoded.src0Encoded, decoded.literal);
+  let src0 = formatSrc0(decoded.src0Encoded, decoded.literal, isInt);
   if (decoded.src0Abs) src0 = `abs(${src0})`;
   if (decoded.src0Neg) src0 = `-${src0}`;
 
@@ -818,15 +822,15 @@ export function disassemble(
   const suffix = suffixes.length > 0 ? ' ' + suffixes.join(' ') : '';
 
   if (decoded.format === InstructionFormat.VOP3 && decoded.src2 !== undefined) {
-    let src1 = formatSrc0(decoded.src1!, decoded.literal);
+    let src1 = formatSrc0(decoded.src1!, decoded.literal, isInt);
     if (decoded.src1Abs) src1 = `abs(${src1})`;
     if (decoded.src1Neg) src1 = `-${src1}`;
-    let src2 = formatSrc0(decoded.src2, decoded.literal);
+    let src2 = formatSrc0(decoded.src2, decoded.literal, isInt);
     if (decoded.src2Abs) src2 = `abs(${src2})`;
     if (decoded.src2Neg) src2 = `-${src2}`;
     return `${mnemonic} ${dst}, ${src0}, ${src1}, ${src2}${suffix}`;
   } else if (decoded.src1 !== undefined) {
-    let src1 = formatSrc0(decoded.src1, decoded.literal);
+    let src1 = formatSrc0(decoded.src1, decoded.literal, isInt);
     if (decoded.src1Abs) src1 = `abs(${src1})`;
     if (decoded.src1Neg) src1 = `-${src1}`;
     return `${mnemonic} ${dst}, ${src0}, ${src1}${suffix}`;
@@ -835,12 +839,16 @@ export function disassemble(
   }
 }
 
-function formatSrc0(encoded: number, literal?: number): string {
+function formatSrc0(encoded: number, literal?: number, isInt = false): string {
   if (encoded >= VGPR_SRC_MIN) return `v${encoded - VGPR_SRC_MIN}`;
   // Check special registers in the SGPR range
   if (encoded in SPECIAL_REG_NAMES) return SPECIAL_REG_NAMES[encoded];
   if (encoded <= 105) return `s${encoded}`;
   if (encoded === LITERAL_CONST && literal !== undefined) {
+    if (isInt) {
+      // Integer instruction: always show as hex
+      return '0x' + (literal >>> 0).toString(16).padStart(8, '0');
+    }
     f32Buf[0] = 0;
     u32Buf[0] = literal;
     const fval = f32Buf[0];
@@ -848,9 +856,7 @@ function formatSrc0(encoded: number, literal?: number): string {
     if (!Number.isFinite(fval) || Math.abs(fval) > 1e15 || Math.abs(fval) < 1e-6 && fval !== 0) {
       return '0x' + (literal >>> 0).toString(16).padStart(8, '0');
     }
-    // Show as float with reasonable precision
     const s = fval.toString();
-    // Ensure it looks like a float (has decimal point)
     if (!s.includes('.') && !s.includes('e')) return s + '.0';
     return s;
   }
