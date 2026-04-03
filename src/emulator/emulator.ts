@@ -31,8 +31,35 @@ export class Emulator {
     if (this.isComplete()) return false;
 
     const instr = this.program[this.state.pc];
+    const pcBefore = this.state.pc;
     executeInstruction(this.state, instr);
-    this.state.pc++;
+
+    // Handle SOPP branch instructions
+    if (instr.decoded.format === 'SOPP') {
+      const mnemonic = instr.opcodeInfo.mnemonic;
+      const simm16 = instr.decoded.simm16 ?? 0;
+      // Sign-extend 16-bit immediate
+      const offset = (simm16 << 16) >> 16;
+      let branched = false;
+
+      if (mnemonic === 's_branch') {
+        branched = true;
+      } else if (mnemonic === 's_cbranch_scc1') {
+        branched = this.state.scc === 1;
+      } else if (mnemonic === 's_cbranch_execz') {
+        branched = this.state.exec === 0;
+      }
+
+      if (branched) {
+        // Branch target: PC + 1 + SIMM16 (in instruction units)
+        this.state.pc = pcBefore + 1 + offset;
+      } else {
+        this.state.pc++;
+      }
+    } else {
+      this.state.pc++;
+    }
+
     this.state.cycleCount++;
 
     // Halting instruction (s_endpgm): set halted flag

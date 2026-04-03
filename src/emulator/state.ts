@@ -11,6 +11,7 @@ export interface GPUStateSnapshot {
   sgprs: Uint32Array;
   exec: number;
   vcc: number;
+  scc: number;
   pc: number;
   cycleCount: number;
 }
@@ -20,6 +21,7 @@ export class GPUState {
   sgprs: Uint32Array;
   exec: number;
   vcc: number;
+  scc: number;
   pc: number;
   cycleCount: number;
   modifiedRegs: Set<string>;
@@ -29,6 +31,7 @@ export class GPUState {
     this.sgprs = new Uint32Array(NUM_SGPRS);
     this.exec = 0xFFFFFFFF;
     this.vcc = 0;
+    this.scc = 0;
     this.pc = 0;
     this.cycleCount = 0;
     this.modifiedRegs = new Set();
@@ -45,6 +48,7 @@ export class GPUState {
     this.sgprs.fill(0);
     this.exec = 0xFFFFFFFF;
     this.vcc = 0;
+    this.scc = 0;
     this.pc = 0;
     this.cycleCount = 0;
     this.modifiedRegs.clear();
@@ -56,6 +60,7 @@ export class GPUState {
       sgprs: new Uint32Array(this.sgprs),
       exec: this.exec,
       vcc: this.vcc,
+      scc: this.scc,
       pc: this.pc,
       cycleCount: this.cycleCount,
     };
@@ -68,6 +73,7 @@ export class GPUState {
     this.sgprs.set(snap.sgprs);
     this.exec = snap.exec;
     this.vcc = snap.vcc;
+    this.scc = snap.scc;
     this.pc = snap.pc;
     this.cycleCount = snap.cycleCount;
     this.modifiedRegs.clear();

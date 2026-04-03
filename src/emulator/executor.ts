@@ -37,6 +37,12 @@ function floatBits(f: number): number {
   return reinterpretU32[0];
 }
 
+/** Clamp a float through f32 to match GPU precision. */
+function asFloat(v: number): number {
+  reinterpretF32[0] = v;
+  return reinterpretF32[0];
+}
+
 /**
  * Resolve a source operand to raw u32 bits.
  *
@@ -126,6 +132,33 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
   // SOP1: scalar instruction — values are already u32
   if (decoded.format === InstructionFormat.SOP1) {
     const src0Raw = resolveSsrc0(state, decoded.src0Encoded, decoded.literal);
+
+    // s_and_saveexec_b64: save EXEC to dst, then EXEC &= src0
+    if (opcodeInfo.mnemonic === 's_and_saveexec_b64') {
+      const oldExec = state.exec;
+      const dst = decoded.dst;
+      if (dst === VCC_LO) { state.vcc = oldExec; state.modifiedRegs.add('VCC'); }
+      else { state.writeSGPR(dst, oldExec); }
+      state.exec = (oldExec & src0Raw) >>> 0;
+      state.scc = state.exec !== 0 ? 1 : 0;
+      state.modifiedRegs.add('EXEC');
+      state.modifiedRegs.add('SCC');
+      return;
+    }
+
+    // s_or_saveexec_b64: save EXEC to dst, then EXEC |= src0
+    if (opcodeInfo.mnemonic === 's_or_saveexec_b64') {
+      const oldExec = state.exec;
+      const dst = decoded.dst;
+      if (dst === VCC_LO) { state.vcc = oldExec; state.modifiedRegs.add('VCC'); }
+      else { state.writeSGPR(dst, oldExec); }
+      state.exec = (oldExec | src0Raw) >>> 0;
+      state.scc = state.exec !== 0 ? 1 : 0;
+      state.modifiedRegs.add('EXEC');
+      state.modifiedRegs.add('SCC');
+      return;
+    }
+
     const result = (opcodeInfo.execute(src0Raw)) >>> 0;
 
     const dst = decoded.dst;
@@ -141,25 +174,99 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
-  // VOPC: float comparison instructions — bitcast to float, write result to VCC
+  // SOP2: 2-source scalar ALU
+  if (decoded.format === InstructionFormat.SOP2) {
+    const src0 = resolveSsrc0(state, decoded.src0Encoded, decoded.literal);
+    const src1 = resolveSsrc0(state, decoded.src1!, decoded.literal);
+
+    // s_cselect_b32: select src0 if SCC==1, else src1
+    if (opcodeInfo.mnemonic === 's_cselect_b32') {
+      const result = (state.scc ? src0 : src1) >>> 0;
+      const dst = decoded.dst;
+      if (dst === EXEC_LO) { state.exec = result; state.modifiedRegs.add('EXEC'); }
+      else if (dst === VCC_LO) { state.vcc = result; state.modifiedRegs.add('VCC'); }
+      else { state.writeSGPR(dst, result); }
+      return;
+    }
+
+    const result = (opcodeInfo.execute(src0, src1)) >>> 0;
+
+    // SCC: set for bitwise ops if result != 0, for add if overflow
+    if (opcodeInfo.mnemonic === 's_and_b32' || opcodeInfo.mnemonic === 's_and_b64' ||
+        opcodeInfo.mnemonic === 's_or_b64' || opcodeInfo.mnemonic === 's_xor_b64' ||
+        opcodeInfo.mnemonic === 's_andn2_b64') {
+      state.scc = result !== 0 ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+    } else if (opcodeInfo.mnemonic === 's_lshl_b32') {
+      state.scc = result !== 0 ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+    } else if (opcodeInfo.mnemonic === 's_add_i32') {
+      // Overflow: check if signs of inputs match but differ from result sign
+      const signA = (src0 >>> 31) & 1;
+      const signB = (src1 >>> 31) & 1;
+      const signR = (result >>> 31) & 1;
+      state.scc = (signA === signB && signA !== signR) ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+    }
+
+    const dst = decoded.dst;
+    if (dst === EXEC_LO) {
+      state.exec = result;
+      state.modifiedRegs.add('EXEC');
+    } else if (dst === VCC_LO) {
+      state.vcc = result;
+      state.modifiedRegs.add('VCC');
+    } else {
+      state.writeSGPR(dst, result);
+    }
+    return;
+  }
+
+  // SOPC: 2-source scalar compare — result goes to SCC
+  if (decoded.format === InstructionFormat.SOPC) {
+    const src0 = resolveSsrc0(state, decoded.src0Encoded, decoded.literal);
+    const src1 = resolveSsrc0(state, decoded.src1!, decoded.literal);
+    state.scc = opcodeInfo.execute(src0, src1) ? 1 : 0;
+    state.modifiedRegs.add('SCC');
+    return;
+  }
+
+  // SOPK: scalar with inline 16-bit constant — hardware config, NOP in emulator
+  if (decoded.format === InstructionFormat.SOPK) {
+    return;
+  }
+
+  // VOPC: float comparison instructions — write result to VCC or EXEC (v_cmpx_*)
   if (decoded.format === InstructionFormat.VOPC) {
-    let vcc = 0;
+    const isCmpx = opcodeInfo.mnemonic.startsWith('v_cmpx_');
+    const isIntCmp = opcodeInfo.mnemonic.includes('_i32') || opcodeInfo.mnemonic.includes('_u32');
+    let mask = 0;
     const exec = state.exec;
     for (let lane = 0; lane < WAVE_WIDTH; lane++) {
       if (((exec >>> lane) & 1) === 0) continue;
 
       const src0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, lane);
       const src1Raw = resolveRaw(state, decoded.src1!, decoded.literal, lane);
-      const src0Val = bitsToFloat(src0Raw);
-      const src1Val = bitsToFloat(src1Raw);
-      const cmpResult = opcodeInfo.execute(src0Val, src1Val);
+      let cmpResult: number;
+      if (isIntCmp) {
+        cmpResult = opcodeInfo.execute(src0Raw, src1Raw);
+      } else {
+        const src0Val = bitsToFloat(src0Raw);
+        const src1Val = bitsToFloat(src1Raw);
+        cmpResult = opcodeInfo.execute(src0Val, src1Val);
+      }
 
       if (cmpResult) {
-        vcc |= (1 << lane);
+        mask |= (1 << lane);
       }
     }
-    state.vcc = vcc >>> 0;
-    state.modifiedRegs.add('VCC');
+    if (isCmpx) {
+      state.exec = mask >>> 0;
+      state.modifiedRegs.add('EXEC');
+    } else {
+      state.vcc = mask >>> 0;
+      state.modifiedRegs.add('VCC');
+    }
     return;
   }
 
@@ -241,7 +348,13 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
         let src1Val = bitsToFloat(resolveRaw(state, decoded.src1, decoded.literal, lane));
         if (decoded.src1Abs) src1Val = Math.abs(src1Val);
         if (decoded.src1Neg) src1Val = -src1Val;
-        result = opcodeInfo.execute(src0Val, src1Val);
+        if (opcodeInfo.mnemonic === 'v_fmac_f32') {
+          // Fused multiply-accumulate: vdst += src0 * vsrc1
+          const dstVal = bitsToFloat(state.readVGPR_u32(decoded.dst, lane));
+          result = asFloat(src0Val * src1Val + dstVal);
+        } else {
+          result = opcodeInfo.execute(src0Val, src1Val);
+        }
       } else {
         result = opcodeInfo.execute(src0Val);
       }

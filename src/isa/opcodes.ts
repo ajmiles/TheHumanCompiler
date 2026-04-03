@@ -908,7 +908,12 @@ const SOP1_OPCODES: OpcodeInfo[] = [
     format: InstructionFormat.SOP1,
     opcode: 0x14,
     operandCount: 2,
-    execute: (a) => a,
+    execute: (a) => {
+      const v = a >>> 0;
+      if (v === 0) return 0xFFFFFFFF;
+      for (let i = 0; i < 32; i++) { if ((v >>> i) & 1) return i; }
+      return 0xFFFFFFFF;
+    },
     description: 'Find first one in a 64-bit value.\nsdst = findFirstOne(ssrc0)',
     syntax: 's_ff1_i32_b64 sdst, ssrc0',
   },
@@ -917,7 +922,11 @@ const SOP1_OPCODES: OpcodeInfo[] = [
     format: InstructionFormat.SOP1,
     opcode: 0x15,
     operandCount: 2,
-    execute: (a) => a,
+    execute: (a) => {
+      const v = a >>> 0;
+      if (v === 0) return 0xFFFFFFFF;
+      return Math.clz32(v);
+    },
     description: 'Find last bit (count leading zeros/ones) of a signed 32-bit integer.',
     syntax: 's_flbit_i32_b32 sdst, ssrc0',
   },
@@ -1013,22 +1022,22 @@ const SOPP_OPCODES: OpcodeInfo[] = [
 // ── SOP2 Instructions (scalar, 2-source) ──
 
 const SOP2_OPCODES: OpcodeInfo[] = [
-  { mnemonic: 's_add_i32', format: InstructionFormat.SOP2, opcode: 0x02, operandCount: 3, execute: (a) => a, description: 'Scalar add signed 32-bit.', syntax: 's_add_i32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_cselect_b32', format: InstructionFormat.SOP2, opcode: 0x0A, operandCount: 3, execute: (a) => a, description: 'Scalar conditional select based on SCC.', syntax: 's_cselect_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_and_b32', format: InstructionFormat.SOP2, opcode: 0x0E, operandCount: 3, execute: (a) => a, description: 'Scalar bitwise AND (32-bit).', syntax: 's_and_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_and_b64', format: InstructionFormat.SOP2, opcode: 0x0F, operandCount: 3, execute: (a) => a, description: 'Scalar bitwise AND (64-bit).', syntax: 's_and_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_or_b64', format: InstructionFormat.SOP2, opcode: 0x11, operandCount: 3, execute: (a) => a, description: 'Scalar bitwise OR (64-bit).', syntax: 's_or_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_xor_b64', format: InstructionFormat.SOP2, opcode: 0x13, operandCount: 3, execute: (a) => a, description: 'Scalar bitwise XOR (64-bit).', syntax: 's_xor_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_andn2_b64', format: InstructionFormat.SOP2, opcode: 0x15, operandCount: 3, execute: (a) => a, description: 'Scalar AND-NOT2 (64-bit): sdst = ssrc0 & ~ssrc1.', syntax: 's_andn2_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_lshl_b32', format: InstructionFormat.SOP2, opcode: 0x1E, operandCount: 3, execute: (a) => a, description: 'Scalar left shift (32-bit).', syntax: 's_lshl_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_mul_i32', format: InstructionFormat.SOP2, opcode: 0x26, operandCount: 3, execute: (a) => a, description: 'Scalar multiply signed 32-bit.', syntax: 's_mul_i32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_add_i32', format: InstructionFormat.SOP2, opcode: 0x02, operandCount: 3, execute: (a, b) => (a + (b ?? 0)) | 0, description: 'Scalar add signed 32-bit.', syntax: 's_add_i32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_cselect_b32', format: InstructionFormat.SOP2, opcode: 0x0A, operandCount: 3, execute: (a, _b) => a, description: 'Scalar conditional select based on SCC.', syntax: 's_cselect_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_and_b32', format: InstructionFormat.SOP2, opcode: 0x0E, operandCount: 3, execute: (a, b) => (a & (b ?? 0)) >>> 0, description: 'Scalar bitwise AND (32-bit).', syntax: 's_and_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_and_b64', format: InstructionFormat.SOP2, opcode: 0x0F, operandCount: 3, execute: (a, b) => (a & (b ?? 0)) >>> 0, description: 'Scalar bitwise AND (64-bit).', syntax: 's_and_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_or_b64', format: InstructionFormat.SOP2, opcode: 0x11, operandCount: 3, execute: (a, b) => (a | (b ?? 0)) >>> 0, description: 'Scalar bitwise OR (64-bit).', syntax: 's_or_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_xor_b64', format: InstructionFormat.SOP2, opcode: 0x13, operandCount: 3, execute: (a, b) => (a ^ (b ?? 0)) >>> 0, description: 'Scalar bitwise XOR (64-bit).', syntax: 's_xor_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_andn2_b64', format: InstructionFormat.SOP2, opcode: 0x15, operandCount: 3, execute: (a, b) => (a & ~(b ?? 0)) >>> 0, description: 'Scalar AND-NOT2 (64-bit): sdst = ssrc0 & ~ssrc1.', syntax: 's_andn2_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_lshl_b32', format: InstructionFormat.SOP2, opcode: 0x1E, operandCount: 3, execute: (a, b) => (a << ((b ?? 0) & 31)) >>> 0, description: 'Scalar left shift (32-bit).', syntax: 's_lshl_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_mul_i32', format: InstructionFormat.SOP2, opcode: 0x26, operandCount: 3, execute: (a, b) => Math.imul(a, b ?? 0) | 0, description: 'Scalar multiply signed 32-bit.', syntax: 's_mul_i32 sdst, ssrc0, ssrc1' },
 ];
 
 // ── SOPC Instructions (scalar compare) ──
 
 const SOPC_OPCODES: OpcodeInfo[] = [
-  { mnemonic: 's_cmp_eq_u32', format: InstructionFormat.SOPC, opcode: 0x06, operandCount: 2, execute: (a) => a, description: 'Scalar compare equal unsigned 32-bit. Sets SCC.', syntax: 's_cmp_eq_u32 ssrc0, ssrc1' },
-  { mnemonic: 's_cmp_lg_u32', format: InstructionFormat.SOPC, opcode: 0x07, operandCount: 2, execute: (a) => a, description: 'Scalar compare not-equal unsigned 32-bit. Sets SCC.', syntax: 's_cmp_lg_u32 ssrc0, ssrc1' },
+  { mnemonic: 's_cmp_eq_u32', format: InstructionFormat.SOPC, opcode: 0x06, operandCount: 2, execute: (a, b) => ((a >>> 0) === ((b ?? 0) >>> 0)) ? 1 : 0, description: 'Scalar compare equal unsigned 32-bit. Sets SCC.', syntax: 's_cmp_eq_u32 ssrc0, ssrc1' },
+  { mnemonic: 's_cmp_lg_u32', format: InstructionFormat.SOPC, opcode: 0x07, operandCount: 2, execute: (a, b) => ((a >>> 0) !== ((b ?? 0) >>> 0)) ? 1 : 0, description: 'Scalar compare not-equal unsigned 32-bit. Sets SCC.', syntax: 's_cmp_lg_u32 ssrc0, ssrc1' },
 ];
 
 // ── SOPK Instructions (scalar with inline constant) ──
