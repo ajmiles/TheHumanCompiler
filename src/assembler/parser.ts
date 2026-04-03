@@ -119,23 +119,52 @@ export function parse(tokens: Token[]): ParseResult {
       let neg = false;
       let expectClose: TokenType | null = null;
 
-      // Check for abs( or neg( modifier
+      // Check for abs( or neg( modifier — track order for validation
+      let outerMod: 'abs' | 'neg' | null = null;
       while (ri < rawTokens.length && rawTokens[ri].type === TokenType.MODIFIER) {
-        if (rawTokens[ri].value === 'abs') abs = true;
-        if (rawTokens[ri].value === 'neg') neg = true;
+        const modVal = rawTokens[ri].value;
+        if (modVal === 'abs') { abs = true; outerMod = 'abs'; }
+        if (modVal === 'neg') { neg = true; outerMod = 'neg'; }
         ri++;
         // Skip opening paren
         if (ri < rawTokens.length && rawTokens[ri].type === TokenType.LPAREN) {
           expectClose = TokenType.RPAREN;
           ri++;
+          // Check for nested modifier inside parens: abs(neg(...)) is invalid
+          if (ri < rawTokens.length && rawTokens[ri].type === TokenType.MODIFIER) {
+            const innerMod = rawTokens[ri].value;
+            if (outerMod === 'abs' && (innerMod === 'neg')) {
+              errors.push({
+                message: 'Invalid modifier order: hardware applies abs before neg. Use -abs(v) instead of abs(-v)',
+                line: rawTokens[ri].line,
+                column: rawTokens[ri].column,
+              });
+            }
+            if (innerMod === 'neg') neg = true;
+            if (innerMod === 'abs') abs = true;
+            ri++;
+            if (ri < rawTokens.length && rawTokens[ri].type === TokenType.LPAREN) ri++;
+          }
         }
       }
 
       // Check for | abs syntax
       if (ri < rawTokens.length && rawTokens[ri].type === TokenType.PIPE) {
         abs = true;
+        outerMod = 'abs';
         expectClose = TokenType.PIPE;
         ri++;
+        // Check for neg inside |...|: |neg(v)| or |-v| is invalid
+        if (ri < rawTokens.length && rawTokens[ri].type === TokenType.MODIFIER && rawTokens[ri].value === 'neg') {
+          errors.push({
+            message: 'Invalid modifier order: hardware applies abs before neg. Use -|v| instead of |-v|',
+            line: rawTokens[ri].line,
+            column: rawTokens[ri].column,
+          });
+          neg = true;
+          ri++;
+          if (ri < rawTokens.length && rawTokens[ri].type === TokenType.LPAREN) ri++;
+        }
       }
 
       // The actual operand token
