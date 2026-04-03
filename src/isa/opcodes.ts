@@ -312,6 +312,79 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     syntax: 'v_readfirstlane_b32 vdst, src0',
     isIntegerOp: true,
   },
+  {
+    mnemonic: 'v_rsq_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x2E,
+    operandCount: 2,
+    execute: (a) => asFloat(1.0 / Math.sqrt(a)),
+    description: 'Reciprocal square root of a 32-bit float.\nvdst = 1.0 / √src0',
+    syntax: 'v_rsq_f32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_not_b32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x37,
+    operandCount: 2,
+    execute: (a) => (~a) >>> 0,
+    description: 'Bitwise NOT of a 32-bit value.\nvdst = ~src0',
+    syntax: 'v_not_b32 vdst, src0',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_bfrev_b32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x38,
+    operandCount: 2,
+    execute: (a) => {
+      let v = a >>> 0;
+      let r = 0;
+      for (let i = 0; i < 32; i++) { r = (r << 1) | (v & 1); v >>>= 1; }
+      return r >>> 0;
+    },
+    description: 'Reverse the bits of a 32-bit value.\nvdst = bitreverse(src0)',
+    syntax: 'v_bfrev_b32 vdst, src0',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_ffbh_u32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x39,
+    operandCount: 2,
+    execute: (a) => {
+      const v = a >>> 0;
+      if (v === 0) return 0xFFFFFFFF;
+      return Math.clz32(v);
+    },
+    description: 'Find first bit high (leading zero count) of an unsigned 32-bit integer.\nvdst = position of highest set bit from MSB (0-31), or 0xFFFFFFFF if zero',
+    syntax: 'v_ffbh_u32 vdst, src0',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_ffbl_b32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x3A,
+    operandCount: 2,
+    execute: (a) => {
+      const v = a >>> 0;
+      if (v === 0) return 0xFFFFFFFF;
+      for (let i = 0; i < 32; i++) { if ((v >>> i) & 1) return i; }
+      return 0xFFFFFFFF;
+    },
+    description: 'Find first bit low (trailing zero count) of a 32-bit value.\nvdst = position of lowest set bit (0-31), or 0xFFFFFFFF if zero',
+    syntax: 'v_ffbl_b32 vdst, src0',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_swap_b32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x51,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Swap the contents of two VGPRs.\nvdst, src0 = src0, vdst (both registers are exchanged)',
+    syntax: 'v_swap_b32 vdst, vsrc0',
+    isIntegerOp: true,
+  },
 ];
 
 // ── VOP3-only Instructions (3-source, always 64-bit) ──

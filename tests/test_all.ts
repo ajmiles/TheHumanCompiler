@@ -782,6 +782,86 @@ group('Multi-lane Execution');
 }
 
 // ════════════════════════════════════════════
+//  New VOP1: v_rsq_f32, v_not_b32, v_bfrev_b32, v_ffbh_u32, v_ffbl_b32, v_swap_b32
+// ════════════════════════════════════════════
+group('VOP1 — Additional');
+
+// v_rsq_f32
+{
+  const r = assemble('v_rsq_f32 v1, v0\ns_endpgm');
+  assert(r.errors.length === 0, 'v_rsq_f32 assembles');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR(0, 0, 4.0); e.run();
+  assert(approx(e.state.readVGPR(1, 0), 0.5), 'v_rsq_f32: 1/sqrt(4) = 0.5');
+}
+
+// v_not_b32
+{
+  const r = assemble('v_not_b32 v1, v0\ns_endpgm');
+  assert(r.errors.length === 0, 'v_not_b32 assembles');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR_u32(0, 0, 0x00FF00FF); e.run();
+  assert(e.state.readVGPR_u32(1, 0) === 0xFF00FF00, 'v_not_b32: ~0x00FF00FF = 0xFF00FF00');
+}
+
+// v_bfrev_b32
+{
+  const r = assemble('v_bfrev_b32 v1, v0\ns_endpgm');
+  assert(r.errors.length === 0, 'v_bfrev_b32 assembles');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR_u32(0, 0, 0x80000000); e.run();
+  assert(e.state.readVGPR_u32(1, 0) === 1, 'v_bfrev_b32: rev(0x80000000) = 1');
+}
+{
+  const r = assemble('v_bfrev_b32 v1, v0\ns_endpgm');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR_u32(0, 0, 0x01); e.run();
+  assert(e.state.readVGPR_u32(1, 0) === 0x80000000, 'v_bfrev_b32: rev(0x01) = 0x80000000');
+}
+
+// v_ffbh_u32
+{
+  const r = assemble('v_ffbh_u32 v1, v0\ns_endpgm');
+  assert(r.errors.length === 0, 'v_ffbh_u32 assembles');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR_u32(0, 0, 0x00010000); e.run();
+  assert(e.state.readVGPR_u32(1, 0) === 15, 'v_ffbh_u32: clz(0x00010000) = 15');
+}
+{
+  const r = assemble('v_ffbh_u32 v1, v0\ns_endpgm');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR_u32(0, 0, 0); e.run();
+  assert(e.state.readVGPR_u32(1, 0) === 0xFFFFFFFF, 'v_ffbh_u32: clz(0) = 0xFFFFFFFF');
+}
+
+// v_ffbl_b32
+{
+  const r = assemble('v_ffbl_b32 v1, v0\ns_endpgm');
+  assert(r.errors.length === 0, 'v_ffbl_b32 assembles');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR_u32(0, 0, 0x00001000); e.run();
+  assert(e.state.readVGPR_u32(1, 0) === 12, 'v_ffbl_b32: ctz(0x1000) = 12');
+}
+{
+  const r = assemble('v_ffbl_b32 v1, v0\ns_endpgm');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR_u32(0, 0, 0); e.run();
+  assert(e.state.readVGPR_u32(1, 0) === 0xFFFFFFFF, 'v_ffbl_b32: ctz(0) = 0xFFFFFFFF');
+}
+
+// v_swap_b32
+{
+  const r = assemble('v_swap_b32 v0, v1\ns_endpgm');
+  assert(r.errors.length === 0, 'v_swap_b32 assembles');
+  const e = new Emulator(); e.load(r.binary);
+  e.state.writeVGPR_u32(0, 0, 0xAAAAAAAA);
+  e.state.writeVGPR_u32(1, 0, 0xBBBBBBBB);
+  e.run();
+  assert(e.state.readVGPR_u32(0, 0) === 0xBBBBBBBB, 'v_swap_b32: v0 gets old v1');
+  assert(e.state.readVGPR_u32(1, 0) === 0xAAAAAAAA, 'v_swap_b32: v1 gets old v0');
+}
+
+// ════════════════════════════════════════════
 //  Edge Cases
 // ════════════════════════════════════════════
 group('Edge Cases');

@@ -179,6 +179,20 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
+  // v_swap_b32: swap two VGPRs
+  if (opcodeInfo.mnemonic === 'v_swap_b32') {
+    const exec = state.exec;
+    const src0Reg = decoded.src0Encoded >= 256 ? decoded.src0Encoded - 256 : decoded.src0Encoded;
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+      const dstVal = state.readVGPR_u32(decoded.dst, lane);
+      const srcVal = state.readVGPR_u32(src0Reg, lane);
+      state.writeVGPR_u32(decoded.dst, lane, srcVal);
+      state.writeVGPR_u32(src0Reg, lane, dstVal);
+    }
+    return;
+  }
+
   // Vector instructions: execute per active lane
   const exec = state.exec;
   for (let lane = 0; lane < WAVE_WIDTH; lane++) {
