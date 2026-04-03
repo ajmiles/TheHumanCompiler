@@ -217,6 +217,19 @@ export function parse(tokens: Token[]): ParseResult {
     );
     if (!parsed) continue;
 
+    // Reject modifiers on destination operand
+    if (info.format !== InstructionFormat.VOPC && operandGroups.length > 0) {
+      const dstGroup = operandGroups[0];
+      if (dstGroup.abs || dstGroup.neg) {
+        errors.push({
+          message: 'Source modifiers (abs/neg) cannot be applied to the destination register',
+          line: dstGroup.token.line,
+          column: dstGroup.token.column,
+        });
+        continue;
+      }
+    }
+
     // Apply modifiers to source operands
     // For VOPC: both operands are sources (stored in dst/src0 of OperandSet)
     const src0Group = info.format === InstructionFormat.VOPC ? 0 : 1;
