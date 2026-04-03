@@ -45,6 +45,8 @@ import {
   VOP3_SRC0_MASK,
   VOP3_SRC1_SHIFT,
   VOP3_SRC1_MASK,
+  VOP3_SRC2_SHIFT,
+  VOP3_SRC2_MASK,
   VOP3_NEG_SHIFT,
   VOP3_NEG_MASK,
   VOP3_ABS_MASK,
@@ -53,7 +55,7 @@ import {
   VOP3_CLAMP_BIT,
   VOP3_VOP1_OFFSET,
 } from './constants';
-import { lookupByMnemonic } from './opcodes';
+import { lookupByMnemonic, lookupByOpcode } from './opcodes';
 
 /** Check if an instruction needs VOP3 promotion (has modifiers). */
 function needsVOP3(instr: ParsedInstruction): boolean {
@@ -66,6 +68,11 @@ function needsVOP3(instr: ParsedInstruction): boolean {
 export function encodeInstruction(instr: ParsedInstruction): number[] {
   const info = lookupByMnemonic(instr.mnemonic);
   if (!info) throw new Error(`Unknown mnemonic: ${instr.mnemonic}`);
+
+  // VOP3-only instructions (e.g. v_fma_f32) always use VOP3 encoding
+  if (info.format === InstructionFormat.VOP3) {
+    return encodeVOP3(InstructionFormat.VOP3, info.opcode, instr);
+  }
 
   // Auto-promote to VOP3 if modifiers are present
   if ((info.format === InstructionFormat.VOP1 || info.format === InstructionFormat.VOP2) && needsVOP3(instr)) {
@@ -167,42 +174,45 @@ function encodeSOP1(opcode: number, instr: ParsedInstruction): number[] {
 }
 
 function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: ParsedInstruction): number[] {
-  // Compute VOP3 opcode: VOP2 stays same, VOP1 gets +0x100 offset
-  const vop3Opcode = baseFormat === InstructionFormat.VOP1
-    ? baseOpcode + VOP3_VOP1_OFFSET
-    : baseOpcode;
+  // Compute VOP3 opcode
+  let vop3Opcode: number;
+  if (baseFormat === InstructionFormat.VOP3) {
+    vop3Opcode = baseOpcode; // native VOP3 opcode
+  } else if (baseFormat === InstructionFormat.VOP1) {
+    vop3Opcode = baseOpcode + VOP3_VOP1_OFFSET;
+  } else {
+    vop3Opcode = baseOpcode;
+  }
 
   const vdst = instr.dst.encoded & VOP3_VDST_MASK;
 
-  // ABS bits: bit0=src0, bit1=src1, bit2=src2
   let absBits = 0;
   if (instr.src0.abs) absBits |= 1;
   if (instr.src1?.abs) absBits |= 2;
+  if (instr.src2?.abs) absBits |= 4;
 
-  // NEG bits: bit0=src0, bit1=src1, bit2=src2
   let negBits = 0;
   if (instr.src0.neg) negBits |= 1;
   if (instr.src1?.neg) negBits |= 2;
+  if (instr.src2?.neg) negBits |= 4;
 
   const clampBit = instr.clamp ? 1 : 0;
   const omodBits = (instr.omod ?? 0) & VOP3_OMOD_MASK;
 
-  // Dword 0: [31:26]=prefix, [25:16]=OP, [11]=CLAMP, [10:8]=ABS, [7:0]=VDST
   const dword0 = (VOP3_ENCODING_PREFIX << VOP3_PREFIX_SHIFT)
     | ((vop3Opcode & VOP3_OP_MASK) << VOP3_OP_SHIFT)
     | (clampBit << VOP3_CLAMP_BIT)
     | ((absBits & VOP3_ABS_MASK) << VOP3_ABS_SHIFT)
     | (vdst & VOP3_VDST_MASK);
 
-  // Source operands (all 9-bit in VOP3)
   const src0 = encodeSrc0(instr.src0);
-  const src1Encoded = instr.src1
-    ? encodeVGPR(instr.src1.value) // in VOP3, src1 is also 9-bit
-    : 0;
+  const src1Encoded = instr.src1 ? encodeSrc0(instr.src1).encoded : 0;
+  const src2Encoded = instr.src2 ? encodeSrc0(instr.src2).encoded : 0;
 
-  // Dword 1: [31:29]=NEG, [28:27]=OMOD, [17:9]=SRC1, [8:0]=SRC0
+  // Dword 1: [31:29]=NEG, [28:27]=OMOD, [26:18]=SRC2, [17:9]=SRC1, [8:0]=SRC0
   const dword1 = ((negBits & VOP3_NEG_MASK) << VOP3_NEG_SHIFT)
     | ((omodBits & VOP3_OMOD_MASK) << VOP3_OMOD_SHIFT)
+    | ((src2Encoded & VOP3_SRC2_MASK) << VOP3_SRC2_SHIFT)
     | ((src1Encoded & VOP3_SRC1_MASK) << VOP3_SRC1_SHIFT)
     | (src0.encoded & VOP3_SRC0_MASK);
 
@@ -303,32 +313,44 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
 
       const src0 = dword1 & VOP3_SRC0_MASK;
       const src1 = (dword1 >>> VOP3_SRC1_SHIFT) & VOP3_SRC1_MASK;
+      const src2 = (dword1 >>> VOP3_SRC2_SHIFT) & VOP3_SRC2_MASK;
       const negBits = (dword1 >>> VOP3_NEG_SHIFT) & VOP3_NEG_MASK;
       const omodBits = (dword1 >>> VOP3_OMOD_SHIFT) & VOP3_OMOD_MASK;
       const clampBit = (dword0 >>> VOP3_CLAMP_BIT) & 1;
 
       // Determine original format and base opcode
+      // Try each possible interpretation and see which has a registered opcode
       let baseOpcode: number;
       let origFormat: InstructionFormat;
-      if (vop3Opcode >= VOP3_VOP1_OFFSET) {
+
+      // First try as native VOP3 (e.g. v_fma_f32 = 0x13B)
+      if (lookupByOpcode(InstructionFormat.VOP3, vop3Opcode)) {
+        origFormat = InstructionFormat.VOP3;
+        baseOpcode = vop3Opcode;
+      } else if (vop3Opcode >= VOP3_VOP1_OFFSET) {
+        // Promoted VOP1
         origFormat = InstructionFormat.VOP1;
         baseOpcode = vop3Opcode - VOP3_VOP1_OFFSET;
       } else {
+        // Promoted VOP2
         origFormat = InstructionFormat.VOP2;
         baseOpcode = vop3Opcode;
       }
 
       const decoded: DecodedInstruction = {
-        format: origFormat, // store as original format for opcode lookup
+        format: origFormat,
         opcode: baseOpcode,
         dst: vdst,
         src0Encoded: src0,
-        src1: origFormat === InstructionFormat.VOP2 ? (src1 & 0xFF) : undefined,
+        src1: src1 || undefined,
+        src2: src2 || undefined,
         address,
         src0Abs: !!(absBits & 1),
         src0Neg: !!(negBits & 1),
         src1Abs: !!(absBits & 2),
         src1Neg: !!(negBits & 2),
+        src2Abs: !!(absBits & 4),
+        src2Neg: !!(negBits & 4),
         omod: omodBits || undefined,
         clamp: clampBit ? true : undefined,
       };
@@ -466,8 +488,17 @@ export function disassemble(
   if (decoded.omod === 3) suffixes.push('div:2');
   const suffix = suffixes.length > 0 ? ' ' + suffixes.join(' ') : '';
 
-  if (decoded.format === InstructionFormat.VOP2) {
-    let src1 = `v${decoded.src1}`;
+  if (decoded.format === InstructionFormat.VOP3 && decoded.src2 !== undefined) {
+    let src1 = formatSrc0(decoded.src1!, decoded.literal);
+    if (decoded.src1Abs) src1 = `abs(${src1})`;
+    if (decoded.src1Neg) src1 = `-${src1}`;
+    let src2 = formatSrc0(decoded.src2, decoded.literal);
+    if (decoded.src2Abs) src2 = `abs(${src2})`;
+    if (decoded.src2Neg) src2 = `-${src2}`;
+    return `${mnemonic} ${dst}, ${src0}, ${src1}, ${src2}${suffix}`;
+  } else if (decoded.format === InstructionFormat.VOP2 || decoded.src1 !== undefined) {
+    let src1 = decoded.format === InstructionFormat.VOP2
+      ? `v${decoded.src1}` : formatSrc0(decoded.src1!, decoded.literal);
     if (decoded.src1Abs) src1 = `abs(${src1})`;
     if (decoded.src1Neg) src1 = `-${src1}`;
     return `${mnemonic} ${dst}, ${src0}, ${src1}${suffix}`;

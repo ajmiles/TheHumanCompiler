@@ -187,12 +187,18 @@ export function parse(tokens: Token[]): ParseResult {
       if (operandGroups[src1Group].abs) parsed.src1.abs = true;
       if (operandGroups[src1Group].neg) parsed.src1.neg = true;
     }
+    const src2Group = 3;
+    if (operandGroups.length > src2Group && parsed.src2) {
+      if (operandGroups[src2Group].abs) parsed.src2.abs = true;
+      if (operandGroups[src2Group].neg) parsed.src2.neg = true;
+    }
 
     instructions.push({
       mnemonic: mnemonicToken.value,
       dst: parsed.dst,
       src0: parsed.src0,
       src1: parsed.src1,
+      src2: parsed.src2,
       line: mnemonicToken.line,
       column: mnemonicToken.column,
       omod: omod || undefined,
@@ -207,6 +213,7 @@ interface OperandSet {
   dst: Operand;
   src0: Operand;
   src1?: Operand;
+  src2?: Operand;
 }
 
 function parseOperands(
@@ -215,6 +222,19 @@ function parseOperands(
   tokens: Token[],
   errors: AssemblyError[],
 ): OperandSet | null {
+  if (format === InstructionFormat.VOP3) {
+    // VOP3-only: dst, src0, src1, src2 (all 9-bit sources)
+    const dst = parseDestOperand(tokens[0], errors);
+    if (!dst) return null;
+    const src0 = parseSrc0Operand(tokens[1], errors);
+    if (!src0) return null;
+    const src1 = parseSrc0Operand(tokens[2], errors); // all sources are 9-bit in VOP3
+    if (!src1) return null;
+    const src2 = parseSrc0Operand(tokens[3], errors);
+    if (!src2) return null;
+    return { dst, src0, src1, src2 };
+  }
+
   if (format === InstructionFormat.VOPC) {
     // VOPC: src0, vsrc1 (no destination — result to VCC)
     const src0 = parseSrc0Operand(tokens[0], errors);

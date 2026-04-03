@@ -118,12 +118,22 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
 
     let result: number;
 
-    if (decoded.format === InstructionFormat.VOP2) {
-      let src1Val = state.readVGPR(decoded.src1!, lane);
+    if (decoded.format === InstructionFormat.VOP3 && decoded.src2 !== undefined) {
+      // 3-source VOP3 (e.g. v_fma_f32)
+      let src1Val = resolveSrc0(state, decoded.src1!, decoded.literal, lane);
+      if (decoded.src1Abs) src1Val = Math.abs(src1Val);
+      if (decoded.src1Neg) src1Val = -src1Val;
+      let src2Val = resolveSrc0(state, decoded.src2, decoded.literal, lane);
+      if (decoded.src2Abs) src2Val = Math.abs(src2Val);
+      if (decoded.src2Neg) src2Val = -src2Val;
+      result = opcodeInfo.execute(src0Val, src1Val, src2Val);
+    } else if (decoded.format === InstructionFormat.VOP2 || decoded.src1 !== undefined) {
+      let src1Val = decoded.format === InstructionFormat.VOP2
+        ? state.readVGPR(decoded.src1!, lane)
+        : resolveSrc0(state, decoded.src1!, decoded.literal, lane);
       if (decoded.src1Abs) src1Val = Math.abs(src1Val);
       if (decoded.src1Neg) src1Val = -src1Val;
 
-      // v_cndmask_b32: select based on VCC
       if (opcodeInfo.readsVCC) {
         const vccBit = (state.vcc >>> lane) & 1;
         result = vccBit ? src1Val : src0Val;

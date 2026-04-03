@@ -29,7 +29,8 @@ export interface ParsedInstruction {
   mnemonic: string;
   dst: Operand;
   src0: Operand;
-  src1?: Operand;      // Only for VOP2
+  src1?: Operand;
+  src2?: Operand;      // VOP3-only (3-source instructions like FMA)
   line: number;
   column: number;
   omod?: number;       // Output modifier: 0=none, 1=×2, 2=×4, 3=÷2
@@ -41,7 +42,8 @@ export interface DecodedInstruction {
   opcode: number;
   dst: number;         // VGPR index (0-255)
   src0Encoded: number; // 9-bit encoded source
-  src1?: number;       // 8-bit VGPR index (VOP2 only)
+  src1?: number;       // 8-bit VGPR index (VOP2) or 9-bit (VOP3)
+  src2?: number;       // 9-bit (VOP3 3-source only)
   literal?: number;    // 32-bit literal if SRC0 == 255
   address: number;     // Word offset in the binary
   // Source modifiers (applied before the operation)
@@ -49,12 +51,14 @@ export interface DecodedInstruction {
   src0Neg?: boolean;
   src1Abs?: boolean;
   src1Neg?: boolean;
+  src2Abs?: boolean;
+  src2Neg?: boolean;
   // Output modifiers
   omod?: number;       // 0=none, 1=×2, 2=×4, 3=÷2
   clamp?: boolean;
 }
 
-export type SemanticFn = (a: number, b?: number) => number;
+export type SemanticFn = (a: number, b?: number, c?: number) => number;
 
 export interface OpcodeInfo {
   mnemonic: string;

@@ -182,7 +182,21 @@ const VOP1_OPCODES: OpcodeInfo[] = [
   },
 ];
 
-// ── VOPC Instructions (comparisons, write to VCC) ──
+// ── VOP3-only Instructions (3-source, always 64-bit) ──
+
+const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
+  {
+    mnemonic: 'v_fma_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x13B,
+    operandCount: 4, // dst, src0, src1, src2
+    execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
+    description: 'Fused multiply-add: computes src0 × src1 + src2 with a single rounding.\nvdst = src0 × src1 + src2',
+    syntax: 'v_fma_f32 vdst, src0, src1, src2',
+  },
+];
+
+// ── VOPC Instructions(comparisons, write to VCC) ──
 
 const VOPC_OPCODES: OpcodeInfo[] = [
   {
@@ -275,6 +289,7 @@ function register(opcodes: OpcodeInfo[]) {
 
 register(VOP2_OPCODES);
 register(VOP1_OPCODES);
+register(VOP3_ONLY_OPCODES);
 register(VOPC_OPCODES);
 register(SOP1_OPCODES);
 
