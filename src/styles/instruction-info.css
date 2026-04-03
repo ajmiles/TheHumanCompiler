@@ -1,0 +1,167 @@
+/* ── Instruction Info Panel ── */
+
+.instr-info-panel {
+  border-top: 1px solid var(--border-default);
+  flex-shrink: 0;
+  max-height: 260px;
+  overflow: hidden;
+}
+
+.instr-info-body {
+  padding: 6px 12px 8px;
+}
+
+.instr-info-placeholder {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 0;
+  text-align: center;
+}
+
+/* ── Meta line ── */
+
+.instr-info-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.instr-info-format {
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.instr-info-sep {
+  color: var(--text-muted);
+}
+
+.instr-info-opcode {
+  color: var(--accent-yellow);
+  font-variant-numeric: tabular-nums;
+}
+
+.instr-info-mnemonic {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+/* ── Description ── */
+
+.instr-info-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+
+/* ── Formula ── */
+
+.instr-info-formula {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  padding: 4px 0 6px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.3px;
+}
+
+/* ── Bit field diagram ── */
+
+.instr-info-diagram {
+  margin-bottom: 4px;
+}
+
+.instr-info-diagram-label {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 2px;
+}
+
+.instr-info-bitfield {
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.instr-info-ruler {
+  display: flex;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.instr-info-ruler-cell {
+  display: flex;
+  justify-content: space-between;
+  padding: 1px 3px;
+  font-size: 8px;
+  color: var(--text-muted);
+  border-right: 1px solid var(--border-muted);
+  min-width: 0;
+}
+
+.instr-info-ruler-cell:last-child {
+  border-right: none;
+}
+
+.instr-info-fields {
+  display: flex;
+}
+
+.instr-info-bit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 2px;
+  border-right: 1px solid var(--border-muted);
+  min-width: 0;
+  gap: 1px;
+}
+
+.instr-info-bit:last-child {
+  border-right: none;
+}
+
+.instr-info-field-name {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.instr-info-field-value {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ── Raw hex ── */
+
+.instr-info-hex {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-muted);
+}
+
+.instr-info-hex span {
+  color: var(--accent-yellow);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

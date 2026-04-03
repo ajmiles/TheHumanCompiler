@@ -4,6 +4,7 @@ import { AsmEditor } from './editor';
 import { RegisterDisplay } from './registers';
 import { IOPanel } from './io-panel';
 import { BinaryView } from './binary-view';
+import { InstructionInfo } from './instruction-info';
 import { Controls } from './controls';
 import { PuzzleSelect } from './puzzle-select';
 import { StatusBar } from './status-bar';
@@ -27,6 +28,7 @@ export class App {
   private registers!: RegisterDisplay;
   private ioPanel!: IOPanel;
   private binaryView!: BinaryView;
+  private instructionInfo!: InstructionInfo;
   private controls!: Controls;
   private puzzleSelect!: PuzzleSelect;
   private statusBar!: StatusBar;
@@ -127,10 +129,13 @@ export class App {
     const editorContainer = document.createElement('div');
     editorContainer.className = 'editor-container';
 
+    const instrInfoContainer = document.createElement('div');
+    instrInfoContainer.style.flexShrink = '0';
+
     const binaryContainer = document.createElement('div');
     binaryContainer.style.flexShrink = '0';
 
-    centerPanel.append(this.revisionBar, editorContainer, binaryContainer);
+    centerPanel.append(this.revisionBar, editorContainer, instrInfoContainer, binaryContainer);
 
     // Right column: I/O panel
     const rightPanel = document.createElement('div');
@@ -163,6 +168,7 @@ export class App {
     this.registers = new RegisterDisplay(regContainer);
     this.ioPanel = new IOPanel(ioContainer);
     this.binaryView = new BinaryView(binaryContainer);
+    this.instructionInfo = new InstructionInfo(instrInfoContainer);
     this.controls = new Controls(controlsBar);
 
     // Append status bar into controls bar area
@@ -196,6 +202,11 @@ export class App {
         this.doAssemble();
         this.saveSolution();
       }, DEBOUNCE_MS);
+    });
+
+    // Update instruction info on cursor change
+    this.editor.onCursorChange((line) => {
+      this.instructionInfo.update(this.assemblyResult, line);
     });
 
     // Controls
@@ -268,6 +279,9 @@ export class App {
     } else {
       this.binaryView.clear();
     }
+
+    // Update instruction info panel with current cursor position
+    this.instructionInfo.update(this.assemblyResult, this.editor.getCursorLine());
 
     // Update VGPR display range based on registers used
     this.registers.setUsedVGPRs(this.computeMaxVGPR());

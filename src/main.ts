@@ -3,6 +3,7 @@
 import './styles/main.css';
 import './styles/registers.css';
 import './styles/editor.css';
+import './styles/instruction-info.css';
 import './styles/puzzle.css';
 import './styles/leaderboard.css';
 import './styles/encyclopedia.css';

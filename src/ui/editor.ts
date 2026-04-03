@@ -241,6 +241,16 @@ export class AsmEditor {
     this.editor.onDidChangeModelContent(() => callback());
   }
 
+  onCursorChange(callback: (line: number) => void): void {
+    this.editor.onDidChangeCursorPosition((e) => {
+      callback(e.position.lineNumber);
+    });
+  }
+
+  getCursorLine(): number {
+    return this.editor.getPosition()?.lineNumber ?? 1;
+  }
+
   setErrors(errors: { line: number; column: number; message: string }[]): void {
     const model = this.editor.getModel();
     if (!model) return;
