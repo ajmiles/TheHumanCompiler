@@ -95,6 +95,13 @@ function needsVOP3(instr: ParsedInstruction): boolean {
   return hasMods || !!src1NeedsPromotion;
 }
 
+function vopcNeedsVOP3(instr: ParsedInstruction): boolean {
+  // VOPC VSRC1 (stored as instr.src0 by parser) must be a VGPR in plain encoding
+  const hasMods = !!(instr.dst.abs || instr.dst.neg || instr.src0.abs || instr.src0.neg);
+  const vsrc1NotVGPR = instr.src0.type !== OperandType.VGPR;
+  return hasMods || vsrc1NotVGPR;
+}
+
 /**
  * Encode a single parsed instruction into 1-2 32-bit words (or 2 for VOP3).
  */
@@ -125,8 +132,18 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
   }
 
   if (info.format === InstructionFormat.VOPC) {
+    if (vopcNeedsVOP3(instr)) {
+      // VOPC promoted to VOP3: remap parser layout (dst=src0, src0=vsrc1) to VOP3 layout
+      const vop3Instr: ParsedInstruction = {
+        ...instr,
+        dst: { type: OperandType.SGPR, value: 106, encoded: 106 }, // VCC_LO placeholder
+        src0: instr.dst,   // first compare operand → VOP3 SRC0
+        src1: instr.src0,  // second compare operand → VOP3 SRC1
+      };
+      return encodeVOP3(InstructionFormat.VOPC, info.opcode, vop3Instr);
+    }
     return encodeVOPC(info.opcode, instr);
-  } else if (info.format === InstructionFormat.VOP2) {
+  }else if (info.format === InstructionFormat.VOP2) {
     return encodeVOP2(info.opcode, instr);
   } else if (info.format === InstructionFormat.SOP1) {
     return encodeSOP1(info.opcode, instr);
@@ -284,6 +301,8 @@ function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: Pa
     vop3Opcode = baseOpcode; // native VOP3 opcode
   } else if (baseFormat === InstructionFormat.VOP1) {
     vop3Opcode = baseOpcode + VOP3_VOP1_OFFSET;
+  } else if (baseFormat === InstructionFormat.VOPC) {
+    vop3Opcode = baseOpcode; // VOPC promoted: no offset
   } else {
     // VOP2 promotion
     vop3Opcode = baseOpcode + VOP3_VOP2_OFFSET;
