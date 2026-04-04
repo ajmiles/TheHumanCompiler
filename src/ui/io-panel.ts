@@ -177,7 +177,7 @@ export class IOPanel {
       for (const inp of inputs) {
         const td = document.createElement('td');
         td.className = 'io-table__input';
-        td.textContent = formatValue(inp.values[i]);
+        td.textContent = formatValue(inp.values[i], inp.isInteger);
         row.appendChild(td);
       }
 
@@ -193,15 +193,17 @@ export class IOPanel {
         const collected = collectedOutputs?.get(out.register);
         const hasActual = collected !== undefined && i < collected.length;
         const act = hasActual ? collected[i] : NaN;
-        const match = hasActual && Math.abs(act - exp) < 1e-4;
+        const match = hasActual && (out.isInteger
+          ? (act >>> 0) === (exp >>> 0)
+          : Math.abs(act - exp) < 0.01);
 
         const tdExp = document.createElement('td');
         tdExp.className = 'io-table__expected';
-        tdExp.textContent = formatValue(exp);
+        tdExp.textContent = formatValue(exp, out.isInteger);
         row.appendChild(tdExp);
 
         const tdAct = document.createElement('td');
-        tdAct.textContent = hasActual ? formatValue(act) : '—';
+        tdAct.textContent = hasActual ? formatValue(act, out.isInteger) : '—';
         if (!hasActual) {
           tdAct.className = 'io-table__actual io-table__actual--pending';
         } else if (match) {
@@ -258,8 +260,9 @@ export class IOPanel {
   }
 }
 
-function formatValue(val: number): string {
+function formatValue(val: number, isInteger?: boolean): string {
   if (Number.isNaN(val)) return 'NaN';
+  if (isInteger) return (val >>> 0).toString();
   if (Number.isInteger(val)) return val.toFixed(1);
   return val.toFixed(2);
 }
