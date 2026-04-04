@@ -430,8 +430,8 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
         opcode: baseOpcode,
         dst: vdst,
         src0Encoded: src0,
-        src1: src1 || undefined,
-        src2: src2 || undefined,
+        src1: src1,  // always present in VOP3
+        src2: src2,  // always present in VOP3 encoding (may be unused)
         address,
         src0Abs: !!(absBits & 1),
         src0Neg: !!(negBits & 1),
@@ -881,7 +881,13 @@ export function disassemble(
   if (decoded.omod === 3) suffixes.push('div:2');
   const suffix = suffixes.length > 0 ? ' ' + suffixes.join(' ') : '';
 
-  if (decoded.format === InstructionFormat.VOP3 && decoded.src2 !== undefined) {
+  // Determine how many source operands to show based on opcode info
+  const opInfo = info as { operandCount?: number } | undefined;
+  const srcCount = opInfo?.operandCount ? opInfo.operandCount - 1 : // subtract dst
+    (decoded.src2 !== undefined && decoded.src2 !== 0 ? 3 :
+     decoded.src1 !== undefined ? 2 : 1);
+
+  if (srcCount >= 3 && decoded.src2 !== undefined) {
     let src1 = formatSrc0(decoded.src1!, decoded.literal, isInt);
     if (decoded.src1Abs) src1 = `abs(${src1})`;
     if (decoded.src1Neg) src1 = `-${src1}`;
@@ -889,7 +895,7 @@ export function disassemble(
     if (decoded.src2Abs) src2 = `abs(${src2})`;
     if (decoded.src2Neg) src2 = `-${src2}`;
     return `${mnemonic} ${dst}, ${src0}, ${src1}, ${src2}${suffix}`;
-  } else if (decoded.src1 !== undefined) {
+  } else if (srcCount >= 2 && decoded.src1 !== undefined) {
     let src1 = formatSrc0(decoded.src1, decoded.literal, isInt);
     if (decoded.src1Abs) src1 = `abs(${src1})`;
     if (decoded.src1Neg) src1 = `-${src1}`;
