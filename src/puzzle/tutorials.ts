@@ -85,10 +85,166 @@ const WELCOME_TO_GPU: Tutorial = {
   ],
 };
 
+// ── Tutorial 03: Branching ──
+
+const BRANCHING: Tutorial = {
+  id: 'tut-branching',
+  title: 'Branching',
+  description: 'Learn how GPUs handle conditional execution, the EXEC mask, and divergent control flow.',
+  steps: [
+    {
+      title: 'Branching on a GPU',
+      text:
+        'On a CPU, an <code>if/else</code> simply jumps to one path or the other. On a GPU, it\'s more complicated — 32 lanes execute in lockstep. What happens when some lanes want to take the <code>if</code> and others want the <code>else</code>?\n\n' +
+        'The answer involves two mechanisms:\n' +
+        '• <strong>Scalar branches</strong> — the whole wavefront jumps (or doesn\'t). Used when the condition is the same for all lanes.\n' +
+        '• <strong>The EXEC mask</strong> — individual lanes are disabled while the rest keep running. Used when lanes disagree.',
+    },
+    {
+      title: 'The Scalar Condition Code (SCC)',
+      text:
+        'Scalar ALU instructions can set a 1-bit flag called <strong>SCC</strong> (Scalar Condition Code). The <code>s_cmp_*</code> family compares two scalar values and writes the result to SCC.\n\n' +
+        'Try stepping through this code. After <code>s_cmp_eq_u32 s0, 5</code>, SCC becomes <strong>1</strong> (true — s0 equals 5). After <code>s_cmp_eq_u32 s0, 3</code>, SCC becomes <strong>0</strong> (false — s0 is not 3).\n\n' +
+        'Watch the <strong>SCC</strong> value in the scalar register panel as you step.',
+      code: '; Load 5 into scalar register s0\ns_mov_b32 s0, 5\n; Compare s0 == 5 → SCC = 1 (true)\ns_cmp_eq_u32 s0, 5\n; Compare s0 == 3 → SCC = 0 (false)\ns_cmp_eq_u32 s0, 3\ns_endpgm',
+    },
+    {
+      title: 'Conditional Scalar Branches',
+      text:
+        'Once SCC is set, you can conditionally jump with <code>s_cbranch_scc0</code> (jump if SCC=0) or <code>s_cbranch_scc1</code> (jump if SCC=1). The branch target is a PC-relative offset encoded in the instruction.\n\n' +
+        'A typical pattern looks like:\n\n' +
+        '<code>s_cmp_gt_u32 s0, 10</code> — is s0 > 10?\n' +
+        '<code>s_cbranch_scc0 skip</code> — if not, skip ahead\n' +
+        '<code>v_mul_f32 v0, v0, 2.0</code> — only runs if s0 > 10\n' +
+        '<code>skip:</code>\n\n' +
+        'Since the condition is <em>scalar</em> (same for all lanes), the entire wavefront either takes the branch or doesn\'t. No lanes are left behind.\n\n' +
+        '<em>Note: The assembler doesn\'t support labels yet, so branch offsets must be computed manually. This tutorial focuses on the concepts.</em>',
+    },
+    {
+      title: 'The EXEC Mask',
+      text:
+        'The <strong>EXEC</strong> register is a 32-bit mask where each bit controls whether the corresponding lane is <em>active</em>. When a bit is 0, that lane\'s vector instructions still execute but their results are <strong>discarded</strong> — no register writes occur.\n\n' +
+        'Step through this code. After <code>v_mov_b32 v0, 1.0</code>, all 32 lanes have 1.0. Then we set EXEC to <code>0x0000FFFF</code> — only the lower 16 lanes (L0–L15) are active. The final <code>v_mov_b32 v1, 2.0</code> only writes to those 16 lanes.\n\n' +
+        'Check the VGPR panel: <strong>v1</strong> should be 2.0 for L0–L15 and 0.0 for L16–L31.',
+      code: '; All 32 lanes write v0\nv_mov_b32 v0, 1.0\n; Disable upper 16 lanes\ns_mov_b32 exec_lo, 0x0000FFFF\n; Only lower 16 lanes write v1\nv_mov_b32 v1, 2.0\ns_endpgm',
+    },
+    {
+      title: 'Vector Comparison',
+      text:
+        'Scalar comparisons test one value against another. <strong>Vector comparisons</strong> test each lane independently, producing a bitmask result.\n\n' +
+        '<code>v_cmp_gt_f32</code> compares per-lane and writes the result to <strong>VCC</strong> (Vector Condition Code) — a 32-bit mask where bit N = 1 if lane N\'s comparison was true.\n\n' +
+        '<code>v_cmpx_gt_f32</code> does the same but writes directly to <strong>EXEC</strong>, immediately masking off lanes that fail the test.\n\n' +
+        'Try this example: every lane has 1.0 in v0. <code>v_cmpx_gt_f32</code> tests if 1.0 > 2.0 — it\'s false for <em>all</em> lanes, so EXEC becomes 0. The next instruction has no effect because no lanes are active.',
+      code: '; All lanes: v0 = 1.0\nv_mov_b32 v0, 1.0\n; Test v0 > 2.0 → false for all lanes → EXEC = 0\nv_cmpx_gt_f32 v0, 2.0\n; No lanes active — v1 stays at 0\nv_mov_b32 v1, 99.0\ns_endpgm',
+    },
+    {
+      title: 'The Divergent If/Else Pattern',
+      text:
+        'When different lanes need different code paths, the GPU uses a <strong>save-and-mask</strong> pattern:\n\n' +
+        '<code>1.</code> Compute a per-lane condition into VCC using <code>v_cmp_*</code>\n' +
+        '<code>2.</code> <code>s_and_saveexec_b64 s[0:1], vcc</code> — saves the current EXEC to s[0:1], then ANDs VCC into EXEC. Now only "true" lanes are active.\n' +
+        '<code>3.</code> Execute the "if" body — only true lanes participate.\n' +
+        '<code>4.</code> Flip the mask for the "else" body (XOR saved EXEC with current).\n' +
+        '<code>5.</code> Restore EXEC from the saved value — all lanes are active again.\n\n' +
+        'This is how GPU compilers implement <code>if/else</code> in shaders. Both paths execute sequentially, but with different lanes active for each. The hardware doesn\'t truly "skip" inactive lanes — it runs the instruction but suppresses their writes.',
+    },
+    {
+      title: 'Key takeaways',
+      text:
+        'GPU branching in summary:\n\n' +
+        '• <strong>Scalar branches</strong> (<code>s_cbranch_*</code>) jump the entire wavefront. Used for uniform conditions (loop counters, constants).\n\n' +
+        '• <strong>EXEC masking</strong> handles per-lane divergence. Lanes are disabled, not skipped — the instruction still executes, but masked lanes don\'t write results.\n\n' +
+        '• <strong>Divergent code costs both paths</strong>. If half the lanes take the "if" and half take the "else", the GPU runs both blocks sequentially. This is why GPU code avoids divergent branches when possible.\n\n' +
+        '• <code>v_cmpx_*</code> is a shortcut that writes directly to EXEC, combining comparison and masking in one instruction.',
+    },
+  ],
+};
+
+// ── Tutorial 04: Intra-wave Communication ──
+
+const INTRA_WAVE: Tutorial = {
+  id: 'tut-intra-wave',
+  title: 'Intra-wave Communication',
+  description: 'Share data between lanes using readlane, ds_swizzle, and DPP instructions.',
+  steps: [
+    {
+      title: 'Communication Between Lanes',
+      text:
+        'Normally, each lane works on its own data in isolation. But many algorithms need lanes to <strong>share</strong> data with each other — reductions (sum all values), prefix sums, sorting, and broadcasting a value to all lanes.\n\n' +
+        'AMD RDNA2 provides several mechanisms for intra-wave communication, from simple scalar broadcasts to powerful lane permutation instructions. These operations happen <em>within a single wavefront</em> — no memory access required.',
+    },
+    {
+      title: 'v_readfirstlane_b32 — Broadcast to Scalar',
+      text:
+        'The simplest form of lane communication: <code>v_readfirstlane_b32</code> reads the value from <strong>lane 0</strong> (the first active lane) of a VGPR and writes it to a <strong>scalar register</strong>.\n\n' +
+        'This is used when you need a per-lane value promoted to a scalar — for example, to use as a branch condition or a memory address that must be uniform.\n\n' +
+        'Step through the code below. We first load different values into the upper and lower halves using EXEC masking, then <code>v_readfirstlane_b32</code> reads lane 0\'s value (1.0) into s0.',
+      code: '; Load 1.0 into all lanes\nv_mov_b32 v0, 1.0\n; Mask: only upper 16 lanes\ns_mov_b32 exec_lo, 0xFFFF0000\n; Upper lanes get 2.0\nv_mov_b32 v0, 2.0\n; Restore all lanes\ns_mov_b32 exec_lo, 0xFFFFFFFF\n; Read lane 0 (value=1.0) into s0\nv_readfirstlane_b32 s0, v0\ns_endpgm',
+    },
+    {
+      title: 'v_readlane_b32 — Read a Specific Lane',
+      text:
+        'While <code>v_readfirstlane_b32</code> always reads the first active lane, <code>v_readlane_b32</code> lets you read from <strong>any lane by index</strong>.\n\n' +
+        'Syntax: <code>v_readlane_b32 sdst, vsrc, ssrc_lane</code>\n\n' +
+        'The lane index comes from a scalar register or inline constant. The result is written to a scalar register.\n\n' +
+        'Common uses:\n' +
+        '• Extracting a specific lane\'s result for scalar decision-making\n' +
+        '• Implementing wave-level voting (check what lane N computed)\n' +
+        '• Building reduction trees by reading specific partial results\n\n' +
+        'In HLSL, this maps to <code>WaveReadLaneAt(value, laneIndex)</code>.',
+    },
+    {
+      title: 'ds_swizzle_b32 — Lane Permutation',
+      text:
+        '<code>ds_swizzle_b32</code> permutes data between lanes <strong>without touching LDS memory</strong>, despite the "ds" prefix. It\'s a pure register-to-register lane shuffle.\n\n' +
+        'The permutation is controlled by a 16-bit <em>swizzle control word</em> with two modes:\n\n' +
+        '<strong>QDM mode</strong> (bit 15 = 1): Treats lanes in groups of 32 and applies an XOR, OR, and AND pattern for flexible permutations.\n\n' +
+        '<strong>Bitwise mode</strong> (bit 15 = 0): Uses a 5-bit <code>xor_mask</code>, <code>or_mask</code>, and <code>and_mask</code> to compute the source lane: <code>src_lane = (lane_id & and_mask) | or_mask ^ xor_mask</code>.\n\n' +
+        'This single instruction can express swaps, rotates, broadcasts, and reversal patterns with zero latency — it\'s one of the fastest ways to shuffle data on AMD hardware.',
+    },
+    {
+      title: 'DPP — Data Parallel Primitives',
+      text:
+        '<strong>DPP</strong> (Data Parallel Primitives) is not a separate instruction — it\'s a <em>modifier</em> on existing VALU instructions. It lets you read a source operand from a <strong>neighbouring lane</strong> instead of the current lane.\n\n' +
+        'DPP operations include:\n' +
+        '• <strong>Row shift</strong> — shift data left/right by 1–15 lanes within a row of 16\n' +
+        '• <strong>Row rotate</strong> — circular shift within a row\n' +
+        '• <strong>Row broadcast</strong> — copy one lane\'s value to all lanes in the row\n' +
+        '• <strong>quad_perm</strong> — arbitrary 4-lane permutation within each group of 4 lanes\n' +
+        '• <strong>Wave shift/rotate</strong> — shift across the full 32-lane wavefront\n\n' +
+        'DPP is the workhorse behind <code>WavePrefixSum</code>, <code>WaveActiveSum</code>, and other subgroup operations in HLSL/GLSL.',
+    },
+    {
+      title: 'Building a Parallel Reduction',
+      text:
+        'A classic use of lane communication: summing all 32 lanes\' values into a single result. Using DPP row-shifts, a full reduction takes just 5 steps:\n\n' +
+        '<code>Step 1:</code> Add each lane with its neighbour 1 apart (DPP row_shr:1) → 16 partial sums\n' +
+        '<code>Step 2:</code> Add with neighbour 2 apart (DPP row_shr:2) → 8 partial sums\n' +
+        '<code>Step 3:</code> Add with neighbour 4 apart (DPP row_shr:4) → 4 partial sums\n' +
+        '<code>Step 4:</code> Add with neighbour 8 apart (DPP row_shr:8) → 2 partial sums\n' +
+        '<code>Step 5:</code> Add the two halves (DPP row_shr:16 or ds_swizzle) → 1 final sum\n\n' +
+        'Each step halves the number of active partial sums. After 5 iterations, lane 0 holds the sum of all 32 values — computed in 5 cycles with no memory access.\n\n' +
+        'This log₂(N) reduction pattern is fundamental to GPU parallel programming.',
+    },
+    {
+      title: 'Key takeaways',
+      text:
+        'Intra-wave communication in summary:\n\n' +
+        '• <code>v_readfirstlane_b32</code> broadcasts lane 0\'s value to a scalar register — the simplest lane→scalar bridge.\n\n' +
+        '• <code>v_readlane_b32</code> reads any lane by index — useful for targeted data extraction.\n\n' +
+        '• <code>ds_swizzle_b32</code> permutes data between lanes using a control word — flexible and fast, despite the "ds" name.\n\n' +
+        '• <strong>DPP</strong> modifiers on VALU instructions enable neighbouring-lane access for reductions, scans, and shuffles.\n\n' +
+        'These primitives map to HLSL\'s <code>Wave*</code> intrinsics and are essential for high-performance GPU programming.',
+    },
+  ],
+};
+
 // ── All Tutorials ──
 
 export const ALL_TUTORIALS: Tutorial[] = [
   WELCOME_TO_GPU,
+  BRANCHING,
+  INTRA_WAVE,
 ];
 
 export function getTutorialById(id: string): Tutorial | undefined {

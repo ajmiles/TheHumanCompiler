@@ -18,13 +18,15 @@ import { ALL_PUZZLES, getPuzzleById } from '../puzzle/puzzles';
 import { ALL_TUTORIALS, getTutorialById, Tutorial } from '../puzzle/tutorials';
 import { getLeaderboard } from '../puzzle/leaderboard';
 
-// Build the level order: T1, P1, P2, T2, then remaining puzzles
+// Build the level order: T1, P1, P2, [T2], remaining puzzles, remaining tutorials
 function buildLevelOrder(): LevelItem[] {
   const levels: LevelItem[] = [];
   const usedPuzzleIds = new Set<string>();
+  const usedTutorialIds = new Set<string>();
 
   // T1: Welcome to the GPU
-  if (ALL_TUTORIALS[0]) levels.push({ kind: 'tutorial', data: ALL_TUTORIALS[0] });
+  const t1 = getTutorialById('tut-welcome');
+  if (t1) { levels.push({ kind: 'tutorial', data: t1 }); usedTutorialIds.add(t1.id); }
 
   // P1: Signal Boost, P2: Merge Streams
   for (const id of ['signal-boost', 'merge-streams']) {
@@ -33,16 +35,17 @@ function buildLevelOrder(): LevelItem[] {
   }
 
   // T2: Input/Output Modifiers (if it exists)
-  if (ALL_TUTORIALS[1]) levels.push({ kind: 'tutorial', data: ALL_TUTORIALS[1] });
+  const t2 = getTutorialById('tut-modifiers');
+  if (t2) { levels.push({ kind: 'tutorial', data: t2 }); usedTutorialIds.add(t2.id); }
 
   // Remaining puzzles in original order
   for (const p of ALL_PUZZLES) {
     if (!usedPuzzleIds.has(p.id)) levels.push({ kind: 'puzzle', data: p });
   }
 
-  // Any remaining tutorials
-  for (let i = 2; i < ALL_TUTORIALS.length; i++) {
-    levels.push({ kind: 'tutorial', data: ALL_TUTORIALS[i] });
+  // Remaining tutorials in array order
+  for (const t of ALL_TUTORIALS) {
+    if (!usedTutorialIds.has(t.id)) levels.push({ kind: 'tutorial', data: t });
   }
 
   return levels;
