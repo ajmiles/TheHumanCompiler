@@ -5,6 +5,7 @@ export interface TutorialStep {
   text: string;        // Rendered as HTML paragraphs
   code?: string;       // Pre-filled code for this step (sets editor content)
   highlight?: number;  // Line to highlight in the editor
+  highlightSpecial?: string;  // Name of a special register to pulse (e.g. 'SCC', 'EXEC')
 }
 
 export interface Tutorial {
@@ -107,6 +108,7 @@ const BRANCHING: Tutorial = {
         'Try stepping through this code. After <code>s_cmp_eq_u32 s0, 5</code>, SCC becomes <strong>1</strong> (true — s0 equals 5). After <code>s_cmp_eq_u32 s0, 3</code>, SCC becomes <strong>0</strong> (false — s0 is not 3).\n\n' +
         'Watch the <strong>SCC</strong> value in the scalar register panel as you step.',
       code: '; Load 5 into scalar register s0\ns_mov_b32 s0, 5\n; Compare s0 == 5 → SCC = 1 (true)\ns_cmp_eq_u32 s0, 5\n; Compare s0 == 3 → SCC = 0 (false)\ns_cmp_eq_u32 s0, 3\ns_endpgm',
+      highlightSpecial: 'SCC',
     },
     {
       title: 'Conditional Scalar Branches',
@@ -127,6 +129,7 @@ const BRANCHING: Tutorial = {
         'Step through this code. After <code>v_mov_b32 v0, 1.0</code>, all 32 lanes have 1.0. Then we set EXEC to <code>0x0000FFFF</code> — only the lower 16 lanes (L0–L15) are active. The final <code>v_mov_b32 v1, 2.0</code> only writes to those 16 lanes.\n\n' +
         'Check the VGPR panel: <strong>v1</strong> should be 2.0 for L0–L15 and 0.0 for L16–L31.',
       code: '; All 32 lanes write v0\nv_mov_b32 v0, 1.0\n; Disable upper 16 lanes\ns_mov_b32 exec_lo, 0x0000FFFF\n; Only lower 16 lanes write v1\nv_mov_b32 v1, 2.0\ns_endpgm',
+      highlightSpecial: 'EXEC',
     },
     {
       title: 'Vector Comparison',
@@ -136,6 +139,7 @@ const BRANCHING: Tutorial = {
         '<code>v_cmpx_gt_f32</code> does the same but writes directly to <strong>EXEC</strong>, immediately masking off lanes that fail the test.\n\n' +
         'Try this example: every lane has 1.0 in v0. <code>v_cmpx_gt_f32</code> tests if 1.0 > 2.0 — it\'s false for <em>all</em> lanes, so EXEC becomes 0. The next instruction has no effect because no lanes are active.',
       code: '; All lanes: v0 = 1.0\nv_mov_b32 v0, 1.0\n; Test v0 > 2.0 → false for all lanes → EXEC = 0\nv_cmpx_gt_f32 v0, 2.0\n; No lanes active — v1 stays at 0\nv_mov_b32 v1, 99.0\ns_endpgm',
+      highlightSpecial: 'EXEC',
     },
     {
       title: 'The Divergent If/Else Pattern',

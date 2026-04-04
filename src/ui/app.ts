@@ -311,6 +311,7 @@ export class App {
         this.doAssemble();
         this.doReset();
       }
+      this.registers.pulseSpecial(step.highlightSpecial);
     });
   }
 
@@ -804,6 +805,7 @@ export class App {
     this.isTutorialMode = false;
     this.currentTutorial = null;
     this.tutorialPanel.hide();
+    this.registers.pulseSpecial(undefined);
 
     // Re-show I/O panel content, hide tutorial panel
     for (const child of Array.from(this.ioContainer.children)) {

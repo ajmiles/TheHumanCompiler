@@ -341,6 +341,7 @@ export class RegisterDisplay {
     for (const [name, value] of regs) {
       const el = document.createElement('div');
       el.className = 'special-reg';
+      el.dataset.regName = name;
 
       const nameEl = document.createElement('span');
       nameEl.className = 'special-reg__name';
@@ -353,5 +354,16 @@ export class RegisterDisplay {
       el.append(nameEl, valEl);
       this.specialRegsEl.appendChild(el);
     }
+  }
+
+  /** Pulse a special register row to draw attention (e.g. 'SCC', 'EXEC'). */
+  pulseSpecial(name: string | undefined): void {
+    // Clear any existing pulse
+    this.specialRegsEl.querySelectorAll('.special-reg--pulse').forEach(el =>
+      el.classList.remove('special-reg--pulse')
+    );
+    if (!name) return;
+    const el = this.specialRegsEl.querySelector(`[data-reg-name="${name}"]`);
+    if (el) el.classList.add('special-reg--pulse');
   }
 }

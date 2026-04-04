@@ -204,6 +204,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Pulse animation for tutorial highlights */
+.special-reg--pulse {
+  animation: special-pulse 1.5s ease-in-out infinite;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin: -1px -4px;
+}
+
+@keyframes special-pulse {
+  0%, 100% { background: transparent; }
+  50% { background: rgba(0, 200, 255, 0.2); }
+}
+
 /* ── Hex/Float toggle ── */
 
 .format-toggle {
