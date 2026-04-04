@@ -56,6 +56,7 @@ import {
   VOP3_CLAMP_BIT,
   VOP3_VOP2_OFFSET,
   VOP3_VOP1_OFFSET,
+  SOPC_ENCODING_PREFIX,
   SOPC_OP_SHIFT,
   SOPC_OP_MASK,
   SOP2_OP_SHIFT,
@@ -113,6 +114,14 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
 
   if (info.format === InstructionFormat.SOPP) {
     return encodeSOPP(info.opcode);
+  }
+
+  if (info.format === InstructionFormat.SOP2) {
+    return encodeSOP2(info.opcode, instr);
+  }
+
+  if (info.format === InstructionFormat.SOPC) {
+    return encodeSOPC(info.opcode, instr);
   }
 
   if (info.format === InstructionFormat.VOPC) {
@@ -214,6 +223,56 @@ function encodeSOPP(opcode: number): number[] {
   const word = (SOPP_ENCODING_PREFIX << SOP1_PREFIX_SHIFT)
     | ((opcode & SOPP_OP_MASK) << SOPP_OP_SHIFT);
   return [(word >>> 0)];
+}
+
+function encodeSOP2(opcode: number, instr: ParsedInstruction): number[] {
+  // SOP2: [31:30]=0b10, [29:23]=OP, [22:16]=SDST, [15:8]=SSRC1, [7:0]=SSRC0
+  const sdst = instr.dst.encoded & SOP2_SDST_MASK;
+  const ssrc1 = (instr.src1?.encoded ?? 0) & SOP2_SSRC1_MASK;
+  const ssrc0 = instr.src0.encoded & SOP2_SSRC0_MASK;
+
+  const word = (0b10 << 30)
+    | ((opcode & SOP2_OP_MASK) << SOP2_OP_SHIFT)
+    | ((sdst & SOP2_SDST_MASK) << SOP2_SDST_SHIFT)
+    | ((ssrc1 & SOP2_SSRC1_MASK) << SOP2_SSRC1_SHIFT)
+    | (ssrc0 & SOP2_SSRC0_MASK);
+
+  const words = [(word >>> 0)];
+  // Append literal if either source uses literal constant (0xFF)
+  if (instr.src0.encoded === LITERAL_CONST && instr.src0.type === OperandType.LITERAL) {
+    words.push(literalToU32(instr.src0.value));
+  } else if (instr.src1 && instr.src1.encoded === LITERAL_CONST && instr.src1.type === OperandType.LITERAL) {
+    words.push(literalToU32(instr.src1.value));
+  }
+  return words;
+}
+
+function encodeSOPC(opcode: number, instr: ParsedInstruction): number[] {
+  // SOPC: [31:23]=0x17E, [22:16]=OP, [15:8]=SSRC1, [7:0]=SSRC0
+  // No dest (writes SCC). Parser puts operands in dst (ssrc0) and src0 (ssrc1).
+  const ssrc0 = instr.dst.encoded & SOP2_SSRC0_MASK;
+  const ssrc1 = instr.src0.encoded & SOP2_SSRC1_MASK;
+
+  const word = (SOPC_ENCODING_PREFIX << SOP1_PREFIX_SHIFT)
+    | ((opcode & SOPC_OP_MASK) << SOPC_OP_SHIFT)
+    | ((ssrc1 & SOP2_SSRC1_MASK) << SOP2_SSRC1_SHIFT)
+    | (ssrc0 & SOP2_SSRC0_MASK);
+
+  const words = [(word >>> 0)];
+  if (instr.dst.encoded === LITERAL_CONST && instr.dst.type === OperandType.LITERAL) {
+    words.push(literalToU32(instr.dst.value));
+  } else if (instr.src0.encoded === LITERAL_CONST && instr.src0.type === OperandType.LITERAL) {
+    words.push(literalToU32(instr.src0.value));
+  }
+  return words;
+}
+
+function literalToU32(val: number): number {
+  if (Number.isInteger(val)) return val >>> 0;
+  const f32 = new Float32Array(1);
+  const u32 = new Uint32Array(f32.buffer);
+  f32[0] = val;
+  return u32[0] >>> 0;
 }
 
 function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: ParsedInstruction): number[] {
