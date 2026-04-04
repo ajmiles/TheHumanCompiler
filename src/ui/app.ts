@@ -446,10 +446,16 @@ export class App {
     this.totalCycles = 0;
     this.collectedOutputs.clear();
 
-    if (this.currentPuzzle) {
-      this.setupInvocation(this.currentPuzzle, 0);
+    // Always reload the binary from the current assembly result
+    if (this.assemblyResult && this.assemblyResult.errors.length === 0 &&
+        this.assemblyResult.binary.length > 0) {
+      this.emulator.load(this.assemblyResult.binary);
     } else {
       this.emulator.reset();
+    }
+
+    if (this.currentPuzzle) {
+      this.loadInputsForInvocation(this.currentPuzzle, this.currentInvocation);
     }
 
     this.updateAllDisplays();
