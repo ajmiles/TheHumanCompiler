@@ -875,6 +875,11 @@ export function disassemble(
     return `${mnemonic} ${dest}, ${src0}, ${src1}`;
   }
 
+  // v_nop: always show with no operands regardless of encoding
+  if (mnemonic === 'v_nop') {
+    return 'v_nop';
+  }
+
   const dst = `v${decoded.dst}`;
   let src0 = formatSrc0(decoded.src0Encoded, decoded.literal, isInt);
   if (decoded.src0Abs) src0 = `abs(${src0})`;
