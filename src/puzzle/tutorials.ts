@@ -188,13 +188,10 @@ const INTRA_WAVE: Tutorial = {
       title: 'v_readlane_b32 — Read a Specific Lane',
       text:
         'While <code>v_readfirstlane_b32</code> always reads the first active lane, <code>v_readlane_b32</code> lets you read from <strong>any lane by index</strong>.\n\n' +
-        'Syntax: <code>v_readlane_b32 sdst, vsrc, ssrc_lane</code>\n\n' +
-        'The lane index comes from a scalar register or inline constant. The result is written to a scalar register.\n\n' +
-        'Common uses:\n' +
-        '• Extracting a specific lane\'s result for scalar decision-making\n' +
-        '• Implementing wave-level voting (check what lane N computed)\n' +
-        '• Building reduction trees by reading specific partial results\n\n' +
-        'In HLSL, this maps to <code>WaveReadLaneAt(value, laneIndex)</code>.',
+        'In this example, lanes 0–15 hold 1.0 and lanes 16–31 hold 4.0. We use <code>v_readlane_b32</code> to read lane 0 into s0 (gets 1.0) and lane 16 into s1 (gets 4.0). The lane index comes from a scalar register or inline constant.\n\n' +
+        'Step through and check s0 and s1 in the SGPRs panel (switch to F32 mode to see the float values).\n\n' +
+        '<em>In HLSL, this maps to <code>WaveReadLaneAt(value, laneIndex)</code>.</em>',
+      code: '; Setup: lanes 0-15 = 1.0, lanes 16-31 = 4.0\nv_mov_b32 v0, 1.0\ns_mov_b32 exec_lo, 0xFFFF0000\nv_mov_b32 v0, 4.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; Read lane 0 → s0 (should be 1.0)\nv_readlane_b32 s0, v0, 0\n; Read lane 16 → s1 (should be 4.0)\nv_readlane_b32 s1, v0, 16\ns_endpgm',
     },
     {
       title: 'ds_swizzle_b32 — Lane Permutation',

@@ -292,6 +292,23 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
+  // v_readlane_b32: read a specific lane into a scalar register
+  if (opcodeInfo.mnemonic === 'v_readlane_b32') {
+    // VOP3: sdst, vsrc0, ssrc1 (lane index)
+    const src0Reg = decoded.src0Encoded >= 256 ? decoded.src0Encoded - 256 : decoded.src0Encoded;
+    const laneIdx = resolveSsrc0(state, decoded.src1!, decoded.literal) & 31;
+    const val = state.readVGPR_u32(src0Reg, laneIdx);
+    const dst = decoded.dst;
+    if (dst === EXEC_LO) {
+      state.exec = val; state.modifiedRegs.add('EXEC');
+    } else if (dst === VCC_LO) {
+      state.vcc = val; state.modifiedRegs.add('VCC');
+    } else {
+      state.writeSGPR(dst, val);
+    }
+    return;
+  }
+
   // v_swap_b32: swap two VGPRs
   if (opcodeInfo.mnemonic === 'v_swap_b32') {
     const exec = state.exec;

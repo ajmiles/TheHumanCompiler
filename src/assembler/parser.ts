@@ -316,8 +316,11 @@ function parseOperands(
   mnemonic?: string,
 ): OperandSet | null {
   if (format === InstructionFormat.VOP3) {
-    // VOP3: can be 3-source (dst, src0, src1, src2) or 2-source (dst, src0, src1)
-    const dst = parseDestOperand(tokens[0], errors);
+    // v_readlane_b32 writes to an SGPR, not a VGPR
+    const isReadLane = mnemonic === 'v_readlane_b32';
+    const dst = isReadLane
+      ? parseSrc0Operand(tokens[0], errors)  // accept SGPR or VGPR
+      : parseDestOperand(tokens[0], errors);
     if (!dst) return null;
     const src0 = parseSrc0Operand(tokens[1], errors);
     if (!src0) return null;
