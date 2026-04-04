@@ -480,6 +480,48 @@ const WAVE_AVERAGE: Puzzle = {
   optimalInstructions: 7,
 };
 
+// ── Puzzle 11: Power Raise ──
+// Compute base^exp using a scalar loop. Exponent is uniform across lanes per invocation.
+
+const powerBase = seededValues(55, 64, 1, 3).map(v => Math.round(v * 10) / 10);
+// Exponents: 3 for first invocation (lanes 0-31), 5 for second (lanes 32-63)
+const powerExp = [
+  ...Array(32).fill(3),
+  ...Array(32).fill(5),
+];
+const powerExpected: number[] = [];
+for (let i = 0; i < 64; i++) {
+  let result = asF32(1.0);
+  const base = asF32(powerBase[i]);
+  for (let e = 0; e < powerExp[i]; e++) {
+    result = asF32(result * base);
+  }
+  powerExpected.push(result);
+}
+
+const POWER_RAISE: Puzzle = {
+  id: 'power-raise',
+  title: 'Power Raise',
+  description:
+    'Compute base^exponent for each lane. The base is a float in v0 (varies per lane). ' +
+    'The exponent is an integer in v1 (uniform across all lanes in each invocation, but different between invocations). ' +
+    'You cannot hardcode the exponent — use a scalar loop with s_cbranch.',
+  inputs: [
+    { name: 'Base', register: 0, values: powerBase },
+    { name: 'Exp', register: 1, values: powerExp, isInteger: true },
+  ],
+  outputs: [
+    { name: 'Result', register: 2, values: powerExpected },
+  ],
+  hints: [
+    'Read the exponent from any lane into a scalar: v_readfirstlane_b32 s0, v1',
+    'Initialize v2 = 1.0 (the identity for multiplication).',
+    'Loop: v_mul_f32 v2, v2, v0 then decrement s0 and branch if not zero.',
+    's_add_i32 s0, s0, -1 / s_cmp_lg_u32 s0, 0 / s_cbranch_scc1 loop',
+  ],
+  optimalInstructions: 7,
+};
+
 // ── All Puzzles ──
 
 export const ALL_PUZZLES: Puzzle[] = [
@@ -493,6 +535,7 @@ export const ALL_PUZZLES: Puzzle[] = [
   BYTE_SHUFFLE,
   QUAD_AVERAGE,
   WAVE_AVERAGE,
+  POWER_RAISE,
 ];
 
 export function getPuzzleById(id: string): Puzzle | undefined {

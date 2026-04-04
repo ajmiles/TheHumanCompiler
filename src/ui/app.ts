@@ -38,8 +38,8 @@ function buildLevelOrder(): LevelItem[] {
   const t2 = getTutorialById('tut-modifiers');
   if (t2) { levels.push({ kind: 'tutorial', data: t2 }); usedTutorialIds.add(t2.id); }
 
-  // Remaining puzzles except wave-comm puzzles (placed after intra-wave tutorial)
-  const deferredPuzzles = new Set(['quad-average', 'wave-average']);
+  // Remaining puzzles except deferred ones (placed after their tutorials)
+  const deferredPuzzles = new Set(['quad-average', 'wave-average', 'power-raise']);
   for (const p of ALL_PUZZLES) {
     if (!usedPuzzleIds.has(p.id) && !deferredPuzzles.has(p.id)) {
       levels.push({ kind: 'puzzle', data: p });
@@ -52,6 +52,14 @@ function buildLevelOrder(): LevelItem[] {
     if (!usedTutorialIds.has(t.id)) {
       levels.push({ kind: 'tutorial', data: t });
       usedTutorialIds.add(t.id);
+      // Place power-raise after branching tutorial
+      if (t.id === 'tut-branching') {
+        const pr = getPuzzleById('power-raise');
+        if (pr && !usedPuzzleIds.has(pr.id)) {
+          levels.push({ kind: 'puzzle', data: pr });
+          usedPuzzleIds.add(pr.id);
+        }
+      }
       // Place wave-comm puzzles right after intra-wave tutorial
       if (t.id === 'tut-intra-wave') {
         for (const pid of ['quad-average', 'wave-average']) {
