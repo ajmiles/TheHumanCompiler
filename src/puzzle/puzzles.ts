@@ -391,6 +391,39 @@ const BYTE_SHUFFLE: Puzzle = {
   optimalInstructions: 7,
 };
 
+// ── Puzzle 9: Quad Average ──
+
+const quadAvgInput = seededValues(99, 64, 0, 100);
+// Expected: for each group of 4 lanes, output the average of those 4 values
+const quadAvgExpected: number[] = [];
+for (let i = 0; i < quadAvgInput.length; i += 4) {
+  const avg = Math.round(((quadAvgInput[i] + quadAvgInput[i + 1] + quadAvgInput[i + 2] + quadAvgInput[i + 3]) / 4) * 100) / 100;
+  quadAvgExpected.push(avg, avg, avg, avg);
+}
+
+const QUAD_AVERAGE: Puzzle = {
+  id: 'quad-average',
+  title: 'Quad Average',
+  description:
+    'For each group of 4 lanes (0–3, 4–7, 8–11, …), compute the average of the ' +
+    'four input values and write it to every lane in that group. ' +
+    'This is a common subgroup operation used in image filtering and AA resolve.',
+  inputs: [
+    { name: 'Input', register: 0, values: quadAvgInput },
+  ],
+  outputs: [
+    { name: 'Average', register: 1, values: quadAvgExpected },
+  ],
+  hints: [
+    'You need to sum all 4 lanes in each quad, then divide by 4.',
+    'DPP quad_perm can shuffle values within each group of 4 lanes.',
+    'Add v0 with v0 shifted by quad_perm:[1,0,3,2] to get pairwise sums.',
+    'Then add those partial sums shifted by quad_perm:[2,3,0,1] for the full sum.',
+    'Multiply by 0.25 (or use mul:4 with div:2 tricks) to get the average.',
+  ],
+  optimalInstructions: 4,
+};
+
 // ── All Puzzles ──
 
 export const ALL_PUZZLES: Puzzle[] = [
@@ -402,6 +435,7 @@ export const ALL_PUZZLES: Puzzle[] = [
   REFLECT_VECTOR,
   DOT_PRODUCT_3D,
   BYTE_SHUFFLE,
+  QUAD_AVERAGE,
 ];
 
 export function getPuzzleById(id: string): Puzzle | undefined {

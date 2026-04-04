@@ -38,14 +38,28 @@ function buildLevelOrder(): LevelItem[] {
   const t2 = getTutorialById('tut-modifiers');
   if (t2) { levels.push({ kind: 'tutorial', data: t2 }); usedTutorialIds.add(t2.id); }
 
-  // Remaining puzzles in original order
+  // Remaining puzzles except quad-average (placed after intra-wave tutorial)
   for (const p of ALL_PUZZLES) {
-    if (!usedPuzzleIds.has(p.id)) levels.push({ kind: 'puzzle', data: p });
+    if (!usedPuzzleIds.has(p.id) && p.id !== 'quad-average') {
+      levels.push({ kind: 'puzzle', data: p });
+      usedPuzzleIds.add(p.id);
+    }
   }
 
   // Remaining tutorials in array order
   for (const t of ALL_TUTORIALS) {
-    if (!usedTutorialIds.has(t.id)) levels.push({ kind: 'tutorial', data: t });
+    if (!usedTutorialIds.has(t.id)) {
+      levels.push({ kind: 'tutorial', data: t });
+      usedTutorialIds.add(t.id);
+      // Place quad-average right after intra-wave tutorial
+      if (t.id === 'tut-intra-wave') {
+        const qa = getPuzzleById('quad-average');
+        if (qa && !usedPuzzleIds.has(qa.id)) {
+          levels.push({ kind: 'puzzle', data: qa });
+          usedPuzzleIds.add(qa.id);
+        }
+      }
+    }
   }
 
   return levels;
