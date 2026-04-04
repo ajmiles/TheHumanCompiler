@@ -131,6 +131,10 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
     return encodeSOPC(info.opcode, instr);
   }
 
+  if (info.format === InstructionFormat.DS) {
+    return encodeDS(info.opcode, instr);
+  }
+
   if (info.format === InstructionFormat.VOPC) {
     if (vopcNeedsVOP3(instr)) {
       // VOPC promoted to VOP3: remap parser layout (dst=src0, src0=vsrc1) to VOP3 layout
@@ -290,6 +294,27 @@ function literalToU32(val: number): number {
   const u32 = new Uint32Array(f32.buffer);
   f32[0] = val;
   return u32[0] >>> 0;
+}
+
+function encodeDS(opcode: number, instr: ParsedInstruction): number[] {
+  // DS: 2 dwords
+  // Dword 0: [31:26]=0x36, [25:18]=OP, [17]=GDS, [15:8]=OFFSET1, [7:0]=OFFSET0
+  // Dword 1: [31:24]=VDST, [23:16]=DATA1, [15:8]=DATA0, [7:0]=ADDR
+  const offset = instr.offset ?? 0;
+  const offset0 = offset & 0xFF;
+  const offset1 = (offset >>> 8) & 0xFF;
+  const vdst = instr.dst.encoded & 0xFF;
+  const data0 = instr.src0.encoded & 0xFF;  // source VGPR
+  const addr = 0; // unused for ds_swizzle
+
+  const dword0 = (DS_ENCODING_PREFIX << 26)
+    | ((opcode & DS_OP_MASK) << DS_OP_SHIFT)
+    | (offset1 << 8)
+    | offset0;
+
+  const dword1 = (vdst << 24) | (data0 << 8) | addr;
+
+  return [(dword0 >>> 0), (dword1 >>> 0)];
 }
 
 function encodeVOP3(baseFormat: InstructionFormat, baseOpcode: number, instr: ParsedInstruction): number[] {

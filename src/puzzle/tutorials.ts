@@ -197,10 +197,17 @@ const INTRA_WAVE: Tutorial = {
       title: 'ds_swizzle_b32 — Lane Permutation',
       text:
         '<code>ds_swizzle_b32</code> permutes data between lanes <strong>without touching LDS memory</strong>, despite the "ds" prefix. It\'s a pure register-to-register lane shuffle.\n\n' +
-        'The permutation is controlled by a 16-bit <em>swizzle control word</em> with two modes:\n\n' +
-        '<strong>QDM mode</strong> (bit 15 = 1): Treats lanes in groups of 32 and applies an XOR, OR, and AND pattern for flexible permutations.\n\n' +
-        '<strong>Bitwise mode</strong> (bit 15 = 0): Uses a 5-bit <code>xor_mask</code>, <code>or_mask</code>, and <code>and_mask</code> to compute the source lane: <code>src_lane = (lane_id & and_mask) | or_mask ^ xor_mask</code>.\n\n' +
-        'This single instruction can express swaps, rotates, broadcasts, and reversal patterns with zero latency — it\'s one of the fastest ways to shuffle data on AMD hardware.',
+        'The permutation is controlled by a 16-bit <em>offset</em> word. When bit 15 is set, it uses <strong>bitwise mode</strong>:\n\n' +
+        '<code style="font-family:monospace;letter-spacing:1px">┌──────────┬──────────┬──────────┬───┐\n' +
+        '│  bit 15  │ [14:10]  │  [9:5]   │[4:0]│\n' +
+        '│  mode=1  │ xor_mask │ or_mask  │and_mask│\n' +
+        '└──────────┴──────────┴──────────┴───┘</code>\n\n' +
+        'The source lane is computed as: <code>src = ((lane & and_mask) | or_mask) ^ xor_mask</code>\n\n' +
+        'When bit 15 is clear, it uses <strong>QDM (Quad Distribute Mode)</strong> — each group of 4 lanes gets independent 2-bit selectors to pick a source lane within its quad.\n\n' +
+        'Try this example. First, even lanes get 0.0 and odd lanes get 1.0. Then:\n' +
+        '• <strong>XOR swap</strong> (<code>0x841F</code>): xor=1, and=0x1F → swaps adjacent pairs (0↔1, 2↔3, …)\n' +
+        '• <strong>AND round-down</strong> (<code>0x801E</code>): and=0x1E → rounds lane index to even, so every lane reads its even neighbour',
+      code: '; Setup: even lanes=0.0, odd lanes=1.0\nv_mov_b32 v0, 0.0\ns_mov_b32 exec_lo, 0xAAAAAAAA\nv_mov_b32 v0, 1.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; XOR swap: xor=1, or=0, and=0x1F → 0x841F\n; Lane 0 reads lane 1, lane 1 reads lane 0, etc.\nds_swizzle_b32 v1, v0 offset:0x841F\n;\n; AND round-down: xor=0, or=0, and=0x1E → 0x801E\n; Lane 1→lane 0, lane 3→lane 2, etc.\nds_swizzle_b32 v2, v0 offset:0x801E\ns_endpgm',
     },
     {
       title: 'DPP — Data Parallel Primitives',

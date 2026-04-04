@@ -136,7 +136,13 @@ export function tokenize(source: string): Token[] {
           // Compound output modifier: mul:2, mul:4, div:2
           col++; // skip ':'
           const dStart = col;
-          while (col < lineText.length && isDigit(lineText[col])) col++;
+          // Handle hex (0x...) and decimal values
+          if (col + 1 < lineText.length && lineText[col] === '0' && (lineText[col + 1] === 'x' || lineText[col + 1] === 'X')) {
+            col += 2; // skip '0x'
+            while (col < lineText.length && /[0-9a-fA-F]/.test(lineText[col])) col++;
+          } else {
+            while (col < lineText.length && isDigit(lineText[col])) col++;
+          }
           const compound = lower + ':' + lineText.slice(dStart, col);
           tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
         } else if (MNEMONIC_RE.test(lower)) {

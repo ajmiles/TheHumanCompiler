@@ -506,9 +506,9 @@ function parseMemoryFormat(
       if (t.value === 'idxen') memFlags |= 2;
       else if (t.value === 'offen') memFlags |= 1;
       else if (t.value === 'glc') memFlags |= 4;
-      else if (t.value.startsWith('offset:')) offset = parseInt(t.value.slice(7), 10) || 0;
-      else if (t.value.startsWith('offset0:')) offset = (offset & 0xFF00) | (parseInt(t.value.slice(8), 10) & 0xFF);
-      else if (t.value.startsWith('offset1:')) offset = (offset & 0x00FF) | ((parseInt(t.value.slice(8), 10) & 0xFF) << 8);
+      else if (t.value.startsWith('offset:')) offset = Number(t.value.slice(7)) || 0;
+      else if (t.value.startsWith('offset0:')) offset = (offset & 0xFF00) | (Number(t.value.slice(8)) & 0xFF);
+      else if (t.value.startsWith('offset1:')) offset = (offset & 0x00FF) | ((Number(t.value.slice(8)) & 0xFF) << 8);
     } else {
       regTokens.push(t);
     }

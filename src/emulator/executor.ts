@@ -129,6 +129,35 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
+  // DS: ds_swizzle_b32 — cross-lane data permutation
+  if (opcodeInfo.mnemonic === 'ds_swizzle_b32') {
+    const exec = state.exec;
+    const control = decoded.offset ?? 0;
+    const srcReg = decoded.src1!;  // DATA0 field = source VGPR index
+    const dstReg = decoded.dst;
+    const isBitwise = (control & 0x8000) !== 0;
+
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+      let srcLane: number;
+      if (isBitwise) {
+        const andMask = control & 0x1F;
+        const orMask = (control >>> 5) & 0x1F;
+        const xorMask = (control >>> 10) & 0x1F;
+        srcLane = ((lane & andMask) | orMask) ^ xorMask;
+      } else {
+        // Quad permute mode: 2-bit selectors per lane within each quad
+        const quadBase = lane & ~3;
+        const laneInQuad = lane & 3;
+        srcLane = quadBase + ((control >>> (laneInQuad * 2)) & 3);
+        if (srcLane >= WAVE_WIDTH) srcLane = lane;
+      }
+      srcLane &= 31;
+      state.writeVGPR_u32(dstReg, lane, state.readVGPR_u32(srcReg, srcLane));
+    }
+    return;
+  }
+
   // SOP1: scalar instruction — values are already u32
   if (decoded.format === InstructionFormat.SOP1) {
     const src0Raw = resolveSsrc0(state, decoded.src0Encoded, decoded.literal);
