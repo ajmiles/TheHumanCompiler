@@ -618,6 +618,96 @@ group('SOPP (s_endpgm)');
 }
 
 // ════════════════════════════════════════════
+//  SOPC — s_cmp_eq_u32, s_cmp_lg_u32 (scalar compare → SCC)
+// ════════════════════════════════════════════
+group('SOPC (scalar compare)');
+
+// s_cmp_eq_u32: equal → SCC=1, then not-equal → SCC=0
+{
+  const emu = setup([
+    's_mov_b32 s0, 5',
+    's_cmp_eq_u32 s0, 5',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.scc === 1, 's_cmp_eq_u32: s0==5 → SCC=1');
+}
+
+{
+  const emu = setup([
+    's_mov_b32 s0, 5',
+    's_cmp_eq_u32 s0, 3',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.scc === 0, 's_cmp_eq_u32: s0!=3 → SCC=0');
+}
+
+// SCC toggles across multiple comparisons
+{
+  const emu = setup([
+    's_mov_b32 s0, 5',
+    's_cmp_eq_u32 s0, 5',   // SCC=1
+    's_cmp_eq_u32 s0, 3',   // SCC=0
+    's_endpgm',
+  ].join('\n'));
+  // Step through manually to check SCC at each point
+  emu.step(); // s_mov_b32
+  emu.step(); // s_cmp_eq_u32 s0, 5
+  assert(emu.state.scc === 1, 's_cmp_eq_u32 toggle: after s0==5 SCC=1');
+  emu.step(); // s_cmp_eq_u32 s0, 3
+  assert(emu.state.scc === 0, 's_cmp_eq_u32 toggle: after s0!=3 SCC=0');
+}
+
+// s_cmp_lg_u32: not-equal check
+{
+  const emu = setup([
+    's_mov_b32 s0, 7',
+    's_cmp_lg_u32 s0, 7',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.scc === 0, 's_cmp_lg_u32: s0==7 (not less/greater) → SCC=0');
+}
+
+{
+  const emu = setup([
+    's_mov_b32 s0, 7',
+    's_cmp_lg_u32 s0, 10',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.scc === 1, 's_cmp_lg_u32: s0!=10 → SCC=1');
+}
+
+// ════════════════════════════════════════════
+//  SOP2 — s_add_i32, s_and_b32 (scalar 2-source ALU)
+// ════════════════════════════════════════════
+group('SOP2 (scalar ALU)');
+
+{
+  const emu = setup([
+    's_mov_b32 s0, 10',
+    's_mov_b32 s1, 20',
+    's_add_i32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 30, 's_add_i32: 10 + 20 = 30');
+}
+
+{
+  const emu = setup([
+    's_mov_b32 s0, 0xFF00FF00',
+    's_mov_b32 s1, 0x0F0F0F0F',
+    's_and_b32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === (0x0F000F00 >>> 0), 's_and_b32: 0xFF00FF00 & 0x0F0F0F0F = 0x0F000F00');
+}
+
+// ════════════════════════════════════════════
 //  Modifiers — abs, neg, omod, clamp
 // ════════════════════════════════════════════
 group('Modifiers');
