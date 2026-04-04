@@ -45,6 +45,18 @@
   color: var(--accent-green);
 }
 
+.revision-tab__close {
+  margin-left: 6px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  transition: color 0.1s;
+}
+
+.revision-tab__close:hover {
+  color: var(--accent-red);
+}
+
 /* ── Editor Panel ── */
 
 .editor-panel {

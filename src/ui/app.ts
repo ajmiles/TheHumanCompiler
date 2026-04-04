@@ -722,10 +722,27 @@ export class App {
     for (let i = 0; i < this.revisions.length; i++) {
       const tab = document.createElement('button');
       tab.className = 'revision-tab' + (i === this.activeRevision ? ' revision-tab--active' : '');
-      tab.textContent = `Rev ${i + 1}`;
       tab.title = `Revision ${i + 1}`;
       const idx = i;
       tab.onclick = () => this.switchRevision(idx);
+
+      const label = document.createElement('span');
+      label.textContent = `Rev ${i + 1}`;
+      tab.appendChild(label);
+
+      // Close button (only if more than 1 revision)
+      if (this.revisions.length > 1) {
+        const closeBtn = document.createElement('span');
+        closeBtn.className = 'revision-tab__close';
+        closeBtn.textContent = '×';
+        closeBtn.title = `Close Rev ${i + 1}`;
+        closeBtn.onclick = (e) => {
+          e.stopPropagation();
+          this.closeRevision(idx);
+        };
+        tab.appendChild(closeBtn);
+      }
+
       this.revisionBar.appendChild(tab);
     }
 
@@ -755,6 +772,23 @@ export class App {
     this.revisions.push(this.editor.getSource());
     this.activeRevision = this.revisions.length - 1;
     this.renderRevisionTabs();
+    this.saveSolution();
+  }
+
+  private closeRevision(index: number): void {
+    if (this.revisions.length <= 1) return;
+    this.revisions.splice(index, 1);
+    // Adjust active index
+    if (this.activeRevision >= this.revisions.length) {
+      this.activeRevision = this.revisions.length - 1;
+    } else if (this.activeRevision > index) {
+      this.activeRevision--;
+    } else if (this.activeRevision === index) {
+      this.activeRevision = Math.min(index, this.revisions.length - 1);
+    }
+    this.editor.setSource(this.revisions[this.activeRevision] ?? '');
+    this.renderRevisionTabs();
+    this.doAssemble();
     this.saveSolution();
   }
 
