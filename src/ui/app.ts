@@ -39,7 +39,7 @@ function buildLevelOrder(): LevelItem[] {
   if (t2) { levels.push({ kind: 'tutorial', data: t2 }); usedTutorialIds.add(t2.id); }
 
   // Remaining puzzles except deferred ones (placed after their tutorials)
-  const deferredPuzzles = new Set(['quad-average', 'wave-average', 'power-raise']);
+  const deferredPuzzles = new Set(['quad-average', 'wave-average', 'rng-iterate']);
   for (const p of ALL_PUZZLES) {
     if (!usedPuzzleIds.has(p.id) && !deferredPuzzles.has(p.id)) {
       levels.push({ kind: 'puzzle', data: p });
@@ -54,7 +54,7 @@ function buildLevelOrder(): LevelItem[] {
       usedTutorialIds.add(t.id);
       // Place power-raise after branching tutorial
       if (t.id === 'tut-branching') {
-        const pr = getPuzzleById('power-raise');
+        const pr = getPuzzleById('rng-iterate');
         if (pr && !usedPuzzleIds.has(pr.id)) {
           levels.push({ kind: 'puzzle', data: pr });
           usedPuzzleIds.add(pr.id);
@@ -690,6 +690,12 @@ export class App {
     const start = invocationIndex * WAVE_WIDTH;
 
     for (const input of puzzle.inputs) {
+      if (input.isSGPR) {
+        // Scalar input: one value per invocation (use first value in the invocation's range)
+        const value = start < input.values.length ? input.values[start] : 0;
+        this.emulator.state.writeSGPR(input.register, value >>> 0);
+        continue;
+      }
       for (let lane = 0; lane < WAVE_WIDTH; lane++) {
         const idx = start + lane;
         const value = idx < input.values.length ? input.values[idx] : 0;

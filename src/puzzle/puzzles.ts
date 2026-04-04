@@ -480,46 +480,59 @@ const WAVE_AVERAGE: Puzzle = {
   optimalInstructions: 7,
 };
 
-// ── Puzzle 11: Power Raise ──
-// Compute base^exp using a scalar loop. Exponent is uniform across lanes per invocation.
+// ── Puzzle 11: RNG Iterate ──
+// Apply a simple xorshift32 RNG N times. Seed in v0, iteration count in s0.
 
-const powerBase = seededValues(55, 64, 1, 3).map(v => Math.round(v * 10) / 10);
-// Exponents: 3 for first invocation (lanes 0-31), 5 for second (lanes 32-63)
-const powerExp = [
-  ...Array(32).fill(3),
-  ...Array(32).fill(5),
-];
-const powerExpected: number[] = [];
-for (let i = 0; i < 64; i++) {
-  let result = asF32(1.0);
-  const base = asF32(powerBase[i]);
-  for (let e = 0; e < powerExp[i]; e++) {
-    result = asF32(result * base);
-  }
-  powerExpected.push(result);
+function xorshift32(x: number): number {
+  x = x ^ (x << 13);
+  x = x ^ (x >>> 17);
+  x = x ^ (x << 5);
+  return x >>> 0;
 }
 
-const POWER_RAISE: Puzzle = {
-  id: 'power-raise',
-  title: 'Power Raise',
+// Seeds: distinct non-zero u32 values per lane
+const rngSeeds: number[] = [];
+{
+  let s = 0x12345678;
+  for (let i = 0; i < 64; i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    rngSeeds.push((s | 1) >>> 0); // ensure non-zero
+  }
+}
+
+// Iteration counts: 3 for first invocation, 7 for second
+const rngIterations = [3, 7];
+const rngExpected: number[] = [];
+for (let inv = 0; inv < 2; inv++) {
+  const n = rngIterations[inv];
+  for (let lane = 0; lane < 32; lane++) {
+    let x = rngSeeds[inv * 32 + lane];
+    for (let i = 0; i < n; i++) x = xorshift32(x);
+    rngExpected.push(x);
+  }
+}
+
+const RNG_ITERATE: Puzzle = {
+  id: 'rng-iterate',
+  title: 'RNG Iterate',
   description:
-    'Compute base^exponent for each lane. The base is a float in v0 (varies per lane). ' +
-    'The exponent is an integer in v1 (uniform across all lanes in each invocation, but different between invocations). ' +
-    'You cannot hardcode the exponent — use a scalar loop with s_cbranch.',
+    'Apply a xorshift32 random number generator N times to each lane\'s seed. ' +
+    'The seed is in v0 (varies per lane), the iteration count N is pre-loaded in s0 (scalar). ' +
+    'Xorshift32: x ^= x << 13; x ^= x >> 17; x ^= x << 5. Output the final state in v1.',
   inputs: [
-    { name: 'Base', register: 0, values: powerBase },
-    { name: 'Exp', register: 1, values: powerExp, isInteger: true },
+    { name: 'Seed', register: 0, values: rngSeeds, isInteger: true },
+    { name: 'N', register: 0, values: rngIterations, isSGPR: true, isInteger: true },
   ],
   outputs: [
-    { name: 'Result', register: 2, values: powerExpected },
+    { name: 'Result', register: 1, values: rngExpected, isInteger: true },
   ],
   hints: [
-    'Read the exponent from any lane into a scalar: v_readfirstlane_b32 s0, v1',
-    'Initialize v2 = 1.0 (the identity for multiplication).',
-    'Loop: v_mul_f32 v2, v2, v0 then decrement s0 and branch if not zero.',
+    'The xorshift32 step is: x ^= (x << 13); x ^= (x >> 17); x ^= (x << 5)',
+    'Use v_lshlrev_b32 for left shift, v_lshrrev_b32 for right shift, v_xor_b32 for XOR.',
+    'Copy the seed to v1 first, then loop: apply the 3 xorshift ops, decrement s0, branch.',
     's_add_i32 s0, s0, -1 / s_cmp_lg_u32 s0, 0 / s_cbranch_scc1 loop',
   ],
-  optimalInstructions: 7,
+  optimalInstructions: 10,
 };
 
 // ── All Puzzles ──
@@ -535,7 +548,7 @@ export const ALL_PUZZLES: Puzzle[] = [
   BYTE_SHUFFLE,
   QUAD_AVERAGE,
   WAVE_AVERAGE,
-  POWER_RAISE,
+  RNG_ITERATE,
 ];
 
 export function getPuzzleById(id: string): Puzzle | undefined {

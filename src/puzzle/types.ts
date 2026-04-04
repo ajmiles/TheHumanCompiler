@@ -2,9 +2,10 @@
 
 export interface PuzzlePort {
   name: string;       // Display name, e.g. "Input A"
-  register: number;   // VGPR index, e.g. 0 for v0
+  register: number;   // VGPR index (or SGPR index if isSGPR)
   values: number[];   // Full stream of values
   isInteger?: boolean; // If true, values are raw u32 (not float)
+  isSGPR?: boolean;   // If true, this is a scalar register input
 }
 
 export interface Puzzle {
