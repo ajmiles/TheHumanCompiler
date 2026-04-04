@@ -44,10 +44,18 @@ export class Emulator {
 
       if (mnemonic === 's_branch') {
         branched = true;
+      } else if (mnemonic === 's_cbranch_scc0') {
+        branched = this.state.scc === 0;
       } else if (mnemonic === 's_cbranch_scc1') {
         branched = this.state.scc === 1;
       } else if (mnemonic === 's_cbranch_execz') {
         branched = this.state.exec === 0;
+      } else if (mnemonic === 's_cbranch_execnz') {
+        branched = this.state.exec !== 0;
+      } else if (mnemonic === 's_cbranch_vccz') {
+        branched = this.state.vcc === 0;
+      } else if (mnemonic === 's_cbranch_vccnz') {
+        branched = this.state.vcc !== 0;
       }
 
       if (branched) {

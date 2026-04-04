@@ -11,6 +11,7 @@ export enum TokenType {
   LPAREN = 'LPAREN',
   RPAREN = 'RPAREN',
   PIPE = 'PIPE',           // | for |src| abs syntax
+  LABEL = 'LABEL',         // my_label: (definition)
   EOF = 'EOF',
 }
 
@@ -158,6 +159,10 @@ export function tokenize(source: string): Token[] {
           tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
         } else if (lower === 'row_mirror' || lower === 'row_half_mirror' || lower === 'row_bcast15' || lower === 'row_bcast31') {
           tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
+        } else if (col < lineText.length && lineText[col] === ':' && MNEMONIC_RE.test(lower)) {
+          // Label definition: my_label:
+          col++; // skip ':'
+          tokens.push({ type: TokenType.LABEL, value: lower, line: lineNum, column: start + 1 });
         } else if (MNEMONIC_RE.test(lower)) {
           tokens.push({ type: TokenType.MNEMONIC, value: lower, line: lineNum, column: start + 1 });
         }

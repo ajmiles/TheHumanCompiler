@@ -120,7 +120,7 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
   }
 
   if (info.format === InstructionFormat.SOPP) {
-    return encodeSOPP(info.opcode);
+    return encodeSOPP(info.opcode, instr.simm16);
   }
 
   if (info.format === InstructionFormat.SOP2) {
@@ -291,10 +291,11 @@ function encodeSOP1(opcode: number, instr: ParsedInstruction): number[] {
   return words;
 }
 
-function encodeSOPP(opcode: number): number[] {
-  // SOPP: [31:23]=0x17F, [22:16]=OP, [15:0]=SIMM16 (0 for s_endpgm)
+function encodeSOPP(opcode: number, simm16 = 0): number[] {
+  // SOPP: [31:23]=0x17F, [22:16]=OP, [15:0]=SIMM16
   const word = (SOPP_ENCODING_PREFIX << SOP1_PREFIX_SHIFT)
-    | ((opcode & SOPP_OP_MASK) << SOPP_OP_SHIFT);
+    | ((opcode & SOPP_OP_MASK) << SOPP_OP_SHIFT)
+    | (simm16 & 0xFFFF);
   return [(word >>> 0)];
 }
 

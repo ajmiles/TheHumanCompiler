@@ -60,6 +60,12 @@ export function parse(tokens: Token[]): ParseResult {
 
     const tok = peek();
 
+    if (tok.type === TokenType.LABEL) {
+      // Label definition — just record it and move on
+      advance();
+      continue;
+    }
+
     if (tok.type !== TokenType.MNEMONIC) {
       // Skip unexpected tokens until next newline
       while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
@@ -243,15 +249,29 @@ export function parse(tokens: Token[]): ParseResult {
       }
     }
 
-    // SOPP: no operands (e.g. s_endpgm)
+    // SOPP: optional operand — label reference for branches, or numeric (s_waitcnt)
     if (info.format === InstructionFormat.SOPP) {
       const nullOp: Operand = { type: OperandType.INLINE_INT, value: 0, encoded: 0 };
+      let labelRef: string | undefined;
+      let simm16: number | undefined;
+
+      // Check rawTokens for a label reference (MNEMONIC) or numeric operand
+      for (const tok of rawTokens) {
+        if (tok.type === TokenType.MNEMONIC) {
+          labelRef = tok.value;
+        } else if (tok.type === TokenType.NUMBER) {
+          simm16 = Number(tok.value) & 0xFFFF;
+        }
+      }
+
       instructions.push({
         mnemonic: mnemonicToken.value,
         dst: nullOp,
         src0: nullOp,
         line: mnemonicToken.line,
         column: mnemonicToken.column,
+        labelRef,
+        simm16,
       });
       continue;
     }

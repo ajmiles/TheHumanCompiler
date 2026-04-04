@@ -1248,6 +1248,116 @@ group('DPP8');
 }
 
 // ════════════════════════════════════════════
+//  Labels and Branches
+// ════════════════════════════════════════════
+group('Labels and Branches');
+
+// s_branch: unconditional forward jump (skip one instruction)
+{
+  const emu = setup([
+    's_mov_b32 s0, 1',
+    's_branch skip',
+    's_mov_b32 s0, 99',   // should be skipped
+    'skip:',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(0) === 1, 's_branch forward: s0 stays 1 (skipped s0=99)');
+}
+
+// s_cbranch_scc1: conditional branch taken
+{
+  const emu = setup([
+    's_mov_b32 s0, 5',
+    's_cmp_eq_u32 s0, 5',    // SCC=1
+    's_cbranch_scc1 skip',
+    's_mov_b32 s0, 99',      // should be skipped
+    'skip:',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(0) === 5, 's_cbranch_scc1 taken: s0 stays 5');
+}
+
+// s_cbranch_scc1: conditional branch not taken
+{
+  const emu = setup([
+    's_mov_b32 s0, 5',
+    's_cmp_eq_u32 s0, 3',    // SCC=0
+    's_cbranch_scc1 skip',
+    's_mov_b32 s0, 99',      // should execute
+    'skip:',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(0) === 99, 's_cbranch_scc1 not taken: s0 = 99');
+}
+
+// s_cbranch_scc0: branch when SCC=0
+{
+  const emu = setup([
+    's_mov_b32 s0, 5',
+    's_cmp_eq_u32 s0, 3',    // SCC=0
+    's_cbranch_scc0 skip',
+    's_mov_b32 s0, 99',      // should be skipped
+    'skip:',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(0) === 5, 's_cbranch_scc0 taken: s0 stays 5');
+}
+
+// s_cbranch_execz: branch when EXEC=0
+{
+  const emu = setup([
+    's_mov_b32 exec_lo, 0',
+    's_cbranch_execz skip',
+    's_mov_b32 s0, 99',      // should be skipped
+    'skip:',
+    's_mov_b32 exec_lo, 0xFFFFFFFF',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(0) === 0, 's_cbranch_execz taken: s0 stays 0');
+}
+
+// s_cbranch_execnz: branch when EXEC!=0
+{
+  const emu = setup([
+    's_mov_b32 s0, 1',
+    's_cbranch_execnz skip',  // EXEC=0xFFFFFFFF initially
+    's_mov_b32 s0, 99',       // should be skipped
+    'skip:',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(0) === 1, 's_cbranch_execnz taken: s0 stays 1');
+}
+
+// Backward branch (simple loop: add 1 three times)
+{
+  const emu = setup([
+    's_mov_b32 s0, 0',
+    's_mov_b32 s1, 3',       // loop counter
+    'loop:',
+    's_add_i32 s0, s0, 1',
+    's_add_i32 s1, s1, -1',
+    's_cmp_lg_u32 s1, 0',    // SCC=1 if s1 != 0
+    's_cbranch_scc1 loop',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(0) === 3, 'Backward branch loop: s0 = 3 (looped 3 times)');
+}
+
+// Undefined label produces error
+{
+  const result = assemble('s_branch nowhere\ns_endpgm');
+  assert(result.errors.length > 0, 'Undefined label: produces assembly error');
+  assert(result.errors[0].message.includes('nowhere'), 'Undefined label: error mentions label name');
+}
+
+// ════════════════════════════════════════════
 //  Edge Cases
 // ════════════════════════════════════════════
 group('Edge Cases');

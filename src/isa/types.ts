@@ -50,6 +50,9 @@ export interface ParsedInstruction {
   dppCtrl?: number;    // DPP16 control (row_shr:N, quad_perm, etc.)
   dpp8?: number[];     // DPP8: 8 lane selectors
   boundCtrl?: boolean; // DPP16 bound control
+  // Branch support
+  labelRef?: string;   // Unresolved label reference (branch target)
+  simm16?: number;     // Resolved SIMM16 (branch offset or waitcnt)
 }
 
 export interface DecodedInstruction {
