@@ -24,6 +24,7 @@ function formatFloat(val: number, full: boolean): string {
 export class RegisterDisplay {
   private container: HTMLElement;
   private vgprMode: 'f32' | 'hex' | 'uint' = 'f32';
+  private _updateVgprToggle: (() => void) | null = null;
   private sgprMode: 'hex' | 'uint' | 'f32' = 'hex';
   private vgprScrollWrapper!: HTMLElement;
   private sgprList!: HTMLElement;
@@ -46,6 +47,12 @@ export class RegisterDisplay {
 
   setUsedSGPRs(maxIndex: number): void {
     this.maxSgpr = maxIndex;
+  }
+
+  /** Set the VGPR display mode programmatically (e.g. when loading a puzzle). */
+  setVGPRMode(mode: 'f32' | 'hex' | 'uint'): void {
+    this.vgprMode = mode;
+    this._updateVgprToggle?.();
   }
 
   private buildStructure(): void {
@@ -86,6 +93,7 @@ export class RegisterDisplay {
       uintBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'uint');
       this.rerender();
     };
+    this._updateVgprToggle = updateVgprToggle;
 
     floatBtn.onclick = () => { this.vgprMode = 'f32'; updateVgprToggle(); };
     hexBtn.onclick = () => { this.vgprMode = 'hex'; updateVgprToggle(); };

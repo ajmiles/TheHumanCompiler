@@ -645,6 +645,11 @@ export class App {
     // Set up I/O panel
     this.ioPanel.setPuzzle(puzzle);
 
+    // Auto-set VGPR display mode based on puzzle data types
+    const hasIntegerIO = puzzle.inputs.some(i => i.isInteger && !i.isSGPR) ||
+                         puzzle.outputs.some(o => o.isInteger);
+    this.registers.setVGPRMode(hasIntegerIO ? 'uint' : 'f32');
+
     // Set up emulator with placeholder program
     this.emulator.reset();
 
