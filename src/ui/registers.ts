@@ -329,6 +329,8 @@ export class RegisterDisplay {
     }
   }
 
+  private _pulseTarget: string | undefined;
+
   private renderSpecial(state: GPUState): void {
     this.specialRegsEl.innerHTML = '';
     const regs: [string, string][] = [
@@ -341,7 +343,7 @@ export class RegisterDisplay {
     for (const [name, value] of regs) {
       const el = document.createElement('div');
       el.className = 'special-reg';
-      el.dataset.regName = name;
+      if (name === this._pulseTarget) el.classList.add('special-reg--pulse');
 
       const nameEl = document.createElement('span');
       nameEl.className = 'special-reg__name';
@@ -358,12 +360,11 @@ export class RegisterDisplay {
 
   /** Pulse a special register row to draw attention (e.g. 'SCC', 'EXEC'). */
   pulseSpecial(name: string | undefined): void {
-    // Clear any existing pulse
-    this.specialRegsEl.querySelectorAll('.special-reg--pulse').forEach(el =>
-      el.classList.remove('special-reg--pulse')
-    );
-    if (!name) return;
-    const el = this.specialRegsEl.querySelector(`[data-reg-name="${name}"]`);
-    if (el) el.classList.add('special-reg--pulse');
+    this._pulseTarget = name;
+    // Apply immediately to current DOM
+    this.specialRegsEl.querySelectorAll('.special-reg').forEach(el => {
+      const div = el as HTMLElement;
+      div.classList.toggle('special-reg--pulse', div.dataset.regName === name);
+    });
   }
 }
