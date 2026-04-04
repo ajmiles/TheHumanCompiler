@@ -39,19 +39,20 @@ const WELCOME_TO_GPU: Tutorial = {
       title: 'Your first instruction',
       text:
         'Let\'s write your first instruction. The code below is already loaded in the editor:\n\n' +
-        '<code>v_mov_b32 v1, 42</code>\n\n' +
-        'This moves the value 42 into <code>v1</code> for every active lane. Press <strong>Step</strong> to execute it and watch the register panel update.',
-      code: 'v_mov_b32 v1, 42\ns_endpgm',
+        '<code>v_mov_b32 v1, 1.0</code>\n\n' +
+        'This moves the float value 1.0 into <code>v1</code> for every active lane. Press <strong>Step</strong> to execute it and watch the register panel update.\n\n' +
+        '<em>Note: v_mov_b32 copies raw 32-bit data. Using <code>1.0</code> (an inline float constant) stores the IEEE 754 bit pattern for 1.0.</em>',
+      code: 'v_mov_b32 v1, 1.0\ns_endpgm',
     },
     {
       title: 'Adding two registers',
       text:
         'Now let\'s add two registers together:\n\n' +
-        '<code>v_mov_b32 v0, 10</code> — load 10 into v0\n' +
-        '<code>v_mov_b32 v1, 20</code> — load 20 into v1\n' +
+        '<code>v_mov_b32 v0, 4.0</code> — load 4.0 into v0\n' +
+        '<code>v_mov_b32 v1, 2.0</code> — load 2.0 into v1\n' +
         '<code>v_add_f32 v2, v0, v1</code> — add them as floats, store in v2\n\n' +
-        'Step through each instruction and watch <code>v0</code>, <code>v1</code>, then <code>v2</code> fill in.',
-      code: 'v_mov_b32 v0, 10\nv_mov_b32 v1, 20\nv_add_f32 v2, v0, v1\ns_endpgm',
+        'Step through each instruction and watch <code>v0</code>, <code>v1</code>, then <code>v2</code> fill in. You should see 6.0 in v2!',
+      code: 'v_mov_b32 v0, 4.0\nv_mov_b32 v1, 2.0\nv_add_f32 v2, v0, v1\ns_endpgm',
     },
     {
       title: 'Every lane gets the same code',
