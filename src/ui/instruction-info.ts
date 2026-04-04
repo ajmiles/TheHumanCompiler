@@ -109,6 +109,40 @@ const SOPP_FIELDS: BitFieldDef[][] = [[
   { name: 'SIMM16', bits: 16, color: '#bc8cff', extract: () => '0x0000' },
 ]];
 
+// ── SOP2 layout ──
+const SOP2_FIELDS: BitFieldDef[][] = [[
+  { name: '10', bits: 2, color: '#f85149', extract: () => '0b10' },
+  { name: 'OP', bits: 7, color: '#58a6ff',
+    extract: (_w, _i, info) => info.mnemonic },
+  { name: 'SDST', bits: 7, color: '#39d353',
+    extract: (_w, instr) => `${formatOperandShort(instr.dst)} (${hexVal(instr.dst.encoded)})` },
+  { name: 'SSRC1', bits: 8, color: '#d29922',
+    extract: (_w, instr) => instr.src1 ? formatOperandShort(instr.src1) : '—' },
+  { name: 'SSRC0', bits: 8, color: '#bc8cff',
+    extract: (_w, instr) => formatOperandShort(instr.src0) },
+]];
+
+// ── SOPC layout ──
+const SOPC_FIELDS: BitFieldDef[][] = [[
+  { name: '0x17E', bits: 9, color: '#f85149', extract: () => '0x17E' },
+  { name: 'OP', bits: 7, color: '#58a6ff',
+    extract: (_w, _i, info) => info.mnemonic },
+  { name: 'SSRC1', bits: 8, color: '#d29922',
+    extract: (_w, instr) => instr.src1 ? formatOperandShort(instr.src1) : '—' },
+  { name: 'SSRC0', bits: 8, color: '#bc8cff',
+    extract: (_w, instr) => formatOperandShort(instr.src0) },
+]];
+
+// ── SOPK layout ──
+const SOPK_FIELDS: BitFieldDef[][] = [[
+  { name: '1011', bits: 4, color: '#f85149', extract: () => '0xB' },
+  { name: 'OP', bits: 5, color: '#58a6ff',
+    extract: (_w, _i, info) => info.mnemonic },
+  { name: 'SDST', bits: 7, color: '#39d353',
+    extract: (_w, instr) => formatOperandShort(instr.dst) },
+  { name: 'SIMM16', bits: 16, color: '#bc8cff', extract: () => '—' },
+]];
+
 // ── VOP3 layout (2 dwords) ──
 const VOP3_FIELDS: BitFieldDef[][] = [
   [
@@ -161,6 +195,9 @@ function getLayout(format: InstructionFormat, instr: ParsedInstruction): FormatL
     case InstructionFormat.VOP1: return VOP1_FIELDS;
     case InstructionFormat.VOPC: return VOPC_FIELDS;
     case InstructionFormat.SOP1: return SOP1_FIELDS;
+    case InstructionFormat.SOP2: return SOP2_FIELDS;
+    case InstructionFormat.SOPC: return SOPC_FIELDS;
+    case InstructionFormat.SOPK: return SOPK_FIELDS;
     case InstructionFormat.SOPP: return SOPP_FIELDS;
     default: return VOP2_FIELDS;
   }
