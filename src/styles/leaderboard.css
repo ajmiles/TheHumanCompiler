@@ -213,3 +213,11 @@
 .leaderboard-close-btn {
   min-width: 80px;
 }
+
+.leaderboard-local-notice {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 12px;
+  font-style: italic;
+}

@@ -148,6 +148,7 @@ export class LeaderboardOverlay {
     html += `<button class="controls-bar__btn controls-bar__btn--danger" id="lb-clear-btn">Clear Scores</button>`;
     html += `<button class="controls-bar__btn leaderboard-close-btn" id="lb-close-btn">Close</button>`;
     html += `</div>`;
+    html += `<div class="leaderboard-local-notice">⚠ Leaderboards are currently local only (stored in your browser). Online leaderboards coming soon!</div>`;
 
     this.content.innerHTML = html;
 
