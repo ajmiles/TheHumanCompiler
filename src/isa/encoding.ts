@@ -249,9 +249,9 @@ function encodeSOP2(opcode: number, instr: ParsedInstruction): number[] {
 
 function encodeSOPC(opcode: number, instr: ParsedInstruction): number[] {
   // SOPC: [31:23]=0x17E, [22:16]=OP, [15:8]=SSRC1, [7:0]=SSRC0
-  // No dest (writes SCC). Parser puts operands in dst (ssrc0) and src0 (ssrc1).
-  const ssrc0 = instr.dst.encoded & SOP2_SSRC0_MASK;
-  const ssrc1 = instr.src0.encoded & SOP2_SSRC1_MASK;
+  // No dest (writes SCC). Parser puts operands in src0 (ssrc0) and src1 (ssrc1).
+  const ssrc0 = instr.src0.encoded & SOP2_SSRC0_MASK;
+  const ssrc1 = (instr.src1?.encoded ?? 0) & SOP2_SSRC1_MASK;
 
   const word = (SOPC_ENCODING_PREFIX << SOP1_PREFIX_SHIFT)
     | ((opcode & SOPC_OP_MASK) << SOPC_OP_SHIFT)
@@ -259,10 +259,10 @@ function encodeSOPC(opcode: number, instr: ParsedInstruction): number[] {
     | (ssrc0 & SOP2_SSRC0_MASK);
 
   const words = [(word >>> 0)];
-  if (instr.dst.encoded === LITERAL_CONST && instr.dst.type === OperandType.LITERAL) {
-    words.push(literalToU32(instr.dst.value));
-  } else if (instr.src0.encoded === LITERAL_CONST && instr.src0.type === OperandType.LITERAL) {
+  if (instr.src0.encoded === LITERAL_CONST && instr.src0.type === OperandType.LITERAL) {
     words.push(literalToU32(instr.src0.value));
+  } else if (instr.src1 && instr.src1.encoded === LITERAL_CONST && instr.src1.type === OperandType.LITERAL) {
+    words.push(literalToU32(instr.src1.value));
   }
   return words;
 }
