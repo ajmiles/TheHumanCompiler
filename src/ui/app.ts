@@ -218,9 +218,18 @@ export class App {
       }, DEBOUNCE_MS);
     });
 
-    // Update instruction info on cursor change
+    // Update instruction info on cursor change (but not during drag selection)
+    let mouseDown = false;
+    document.addEventListener('mousedown', () => { mouseDown = true; });
+    document.addEventListener('mouseup', () => {
+      mouseDown = false;
+      // Update on mouse up to catch the final position
+      this.instructionInfo.update(this.assemblyResult, this.editor.getCursorLine());
+    });
     this.editor.onCursorChange((line) => {
-      this.instructionInfo.update(this.assemblyResult, line);
+      if (!mouseDown) {
+        this.instructionInfo.update(this.assemblyResult, line);
+      }
     });
 
     // Controls
