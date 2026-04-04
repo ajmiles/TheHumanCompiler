@@ -767,6 +767,19 @@ export function disassemble(
     mnemonic.endsWith('_u16') || mnemonic.endsWith('_i16');
 
   if (decoded.format === InstructionFormat.SOPP) {
+    // Special formatting for s_waitcnt
+    if (mnemonic === 's_waitcnt' && decoded.simm16 !== undefined) {
+      const simm = decoded.simm16;
+      const vmcnt = ((simm >>> 14) & 0x3) << 4 | (simm & 0xF); // {[15:14],[3:0]}
+      const expcnt = (simm >>> 4) & 0x7;                         // [6:4]
+      const lgkmcnt = (simm >>> 8) & 0x3F;                       // [13:8]
+      const parts: string[] = [];
+      if (vmcnt < 63) parts.push(`vmcnt(${vmcnt})`);
+      if (expcnt < 7) parts.push(`expcnt(${expcnt})`);
+      if (lgkmcnt < 63) parts.push(`lgkmcnt(${lgkmcnt})`);
+      if (parts.length > 0) return `s_waitcnt ${parts.join(' & ')}`;
+      return 's_waitcnt';
+    }
     if (decoded.simm16 !== undefined && decoded.simm16 !== 0) {
       return `${mnemonic} 0x${decoded.simm16.toString(16).padStart(4, '0')}`;
     }
