@@ -475,8 +475,13 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       const isVop3b = ((dword0 >>> VOP3_PREFIX_SHIFT) & 0x3F) === 0x35;
       const isXboxNop = isVop3b && vop3Opcode === VOP3_VOP1_OFFSET; // 0x180 = v_nop promoted
 
-      // First try as native VOP3 (e.g. v_fma_f32 = 0x14B)
-      if (lookupByOpcode(InstructionFormat.VOP3, vop3Opcode)) {
+      // First try VOPC promoted (no offset) — check this before native VOP3
+      // because low opcodes (0x00–0xFF) can conflict. VOPC-promoted VOP3
+      // writes to VCC/SGPR (VDST >= 106), not a VGPR.
+      if (lookupByOpcode(InstructionFormat.VOPC, vop3Opcode) && vdst >= 106) {
+        origFormat = InstructionFormat.VOPC;
+        baseOpcode = vop3Opcode;
+      } else if (lookupByOpcode(InstructionFormat.VOP3, vop3Opcode)) {
         origFormat = InstructionFormat.VOP3;
         baseOpcode = vop3Opcode;
       } else if (lookupByOpcode(InstructionFormat.VOPC, vop3Opcode)) {

@@ -144,13 +144,12 @@ const BRANCHING: Tutorial = {
     {
       title: 'The Divergent If/Else Pattern',
       text:
-        'When different lanes need different code paths, the GPU uses a <strong>save-and-mask</strong> pattern:\n\n' +
-        '<code>1.</code> Compute a per-lane condition into VCC using <code>v_cmp_*</code>\n' +
-        '<code>2.</code> <code>s_and_saveexec_b64 s[0:1], vcc</code> — saves the current EXEC to s[0:1], then ANDs VCC into EXEC. Now only "true" lanes are active.\n' +
-        '<code>3.</code> Execute the "if" body — only true lanes participate.\n' +
-        '<code>4.</code> Flip the mask for the "else" body (XOR saved EXEC with current).\n' +
-        '<code>5.</code> Restore EXEC from the saved value — all lanes are active again.\n\n' +
-        'This is how GPU compilers implement <code>if/else</code> in shaders. Both paths execute sequentially, but with different lanes active for each. The hardware doesn\'t truly "skip" inactive lanes — it runs the instruction but suppresses their writes.',
+        'Let\'s see the save-and-mask pattern in action. In this example, lanes 0–15 have <code>v0=0.5</code> and lanes 16–31 have <code>v0=4.0</code>.\n\n' +
+        'We compare <code>v0 > 1.0</code> — lanes 16–31 pass (VCC bits 16–31 set). Then <code>s_and_saveexec_b64 s0, vcc</code> saves the old EXEC to s0 and masks EXEC to only the "true" lanes.\n\n' +
+        'Now <code>v_mul_f32 v1, v0, 2.0</code> only runs on lanes 16–31 (the "if" body). We restore EXEC from s0 and all lanes are active again. Step through and watch <strong>VCC</strong> and <strong>EXEC</strong> change!\n\n' +
+        '<em>v1 ends up as 8.0 for lanes 16–31 and 0.0 for lanes 0–15 — only the lanes that passed the comparison were modified.</em>',
+      code: '; Setup: lanes 0-15 get 0.5, lanes 16-31 get 4.0\nv_mov_b32 v0, 0.5\ns_mov_b32 exec_lo, 0xFFFF0000\nv_mov_b32 v0, 4.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; Compare v0 > 1.0 → VCC has bits set for lanes 16-31\nv_cmp_gt_f32 v0, 1.0\n;\n; Save EXEC to s0, then EXEC &= VCC (only "true" lanes)\ns_and_saveexec_b64 s0, vcc\n;\n; "If" body — only lanes 16-31 run this\nv_mul_f32 v1, v0, 2.0\n;\n; Restore EXEC — all lanes active again\ns_mov_b32 exec_lo, s0\ns_endpgm',
+      highlightSpecial: 'EXEC',
     },
     {
       title: 'Key takeaways',
