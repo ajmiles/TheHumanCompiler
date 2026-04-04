@@ -135,6 +135,16 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
     return encodeDS(info.opcode, instr);
   }
 
+  // DPP8/DPP16 encoding for VOP1/VOP2
+  if ((info.format === InstructionFormat.VOP1 || info.format === InstructionFormat.VOP2) &&
+      (instr.dppCtrl !== undefined || instr.dpp8 !== undefined)) {
+    if (info.format === InstructionFormat.VOP2) {
+      return encodeVOP2DPP(info.opcode, instr);
+    } else {
+      return encodeVOP1DPP(info.opcode, instr);
+    }
+  }
+
   if (info.format === InstructionFormat.VOPC) {
     if (vopcNeedsVOP3(instr)) {
       // VOPC promoted to VOP3: remap parser layout (dst=src0, src0=vsrc1) to VOP3 layout
@@ -173,6 +183,48 @@ function encodeVOP2(opcode: number, instr: ParsedInstruction): number[] {
     words.push(src0Result.literal >>> 0);
   }
   return words;
+}
+
+function buildDppWord(instr: ParsedInstruction): number {
+  if (instr.dpp8) {
+    // DPP8: pack 8 × 3-bit selectors into bits [23:0]
+    let word = 0;
+    for (let j = 0; j < 8; j++) word |= (instr.dpp8[j] & 7) << (j * 3);
+    return word >>> 0;
+  }
+  // DPP16
+  const ctrl = instr.dppCtrl ?? 0;
+  const bc = instr.boundCtrl ? 1 : 0;
+  const src0Neg = instr.src0?.neg ? 1 : 0;
+  const src1Neg = instr.src1?.neg ? 1 : 0;
+  const src0Vgpr = (instr.src0.type === OperandType.VGPR ? instr.src0.value : 0) & 0xFF;
+  return (ctrl & 0x1FF) | (bc << 10) | (src0Neg << 11) | (src1Neg << 12) | (0xF << 16) | (0xF << 20) | (src0Vgpr << 24);
+}
+
+function encodeVOP2DPP(opcode: number, instr: ParsedInstruction): number[] {
+  const vdst = instr.dst.encoded & 0xFF;
+  const vsrc1 = instr.src1!.encoded & 0xFF;
+  const marker = instr.dpp8 ? 0xE9 : 0xFA;
+
+  const word = (0 << 31)
+    | ((opcode & VOP2_OP_MASK) << VOP2_OP_SHIFT)
+    | ((vdst & VDST_MASK) << VDST_SHIFT)
+    | ((vsrc1 & VSRC1_MASK) << VSRC1_SHIFT)
+    | (marker & SRC0_MASK);
+
+  return [(word >>> 0), buildDppWord(instr)];
+}
+
+function encodeVOP1DPP(opcode: number, instr: ParsedInstruction): number[] {
+  const vdst = instr.dst.encoded & 0xFF;
+  const marker = instr.dpp8 ? 0xE9 : 0xFA;
+
+  const word = (VOP1_ENCODING_PREFIX << VOP1_PREFIX_SHIFT)
+    | ((opcode & VOP1_OP_MASK) << VOP1_OP_SHIFT)
+    | ((vdst & VDST_MASK) << VDST_SHIFT)
+    | (marker & SRC0_MASK);
+
+  return [(word >>> 0), buildDppWord(instr)];
 }
 
 function encodeVOPC(opcode: number, instr: ParsedInstruction): number[] {
@@ -466,6 +518,27 @@ export function detectFormat(word: number): InstructionFormat {
 /**
  * Decode a binary stream into instructions.
  */
+/** Parse DPP8/DPP16 extra dword and apply fields to a decoded instruction. */
+function parseDppWord(decoded: DecodedInstruction, src0: number, dword: number): void {
+  if (src0 === 0xE9) {
+    // DPP8: 8 × 3-bit lane selectors in bits [23:0]
+    const selectors: number[] = [];
+    for (let j = 0; j < 8; j++) {
+      selectors.push((dword >>> (j * 3)) & 7);
+    }
+    decoded.dpp8 = selectors;
+    decoded.src0Encoded = VGPR_SRC_MIN; // src0 VGPR comes from fi field or defaults to 0
+  } else if (src0 === 0xFA) {
+    // DPP16: [8:0]=DPP_CTRL, [10]=BOUND_CTRL, [11]=SRC0_NEG, [12]=SRC1_NEG, [31:24]=SRC0_VGPR
+    decoded.dppCtrl = dword & 0x1FF;
+    decoded.boundCtrl = !!((dword >>> 10) & 1);
+    decoded.src0Neg = !!((dword >>> 11) & 1);
+    decoded.src1Neg = !!((dword >>> 12) & 1);
+    decoded.dppSrc0 = (dword >>> 24) & 0xFF;
+    decoded.src0Encoded = VGPR_SRC_MIN + decoded.dppSrc0;
+  }
+}
+
 export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
   const instructions: DecodedInstruction[] = [];
   let i = 0;
@@ -582,7 +655,12 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
 
       // DPP8 (SRC0=0xE9), SDWA (SRC0=0xF9), DPP16 (SRC0=0xFA), or literal constant (SRC0=0xFF)
       if ((src0 === LITERAL_CONST || src0 === 0xE9 || src0 === 0xF9 || src0 === 0xFA) && i < binary.length) {
-        decoded.literal = binary[i];
+        const extraWord = binary[i];
+        if (src0 === 0xE9 || src0 === 0xFA) {
+          parseDppWord(decoded, src0, extraWord);
+        } else {
+          decoded.literal = extraWord;
+        }
         i++;
       }
 
@@ -639,7 +717,12 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
 
       // Check for literal constant or DPP/SDWA data
       if ((src0 === LITERAL_CONST || src0 === 0xE9 || src0 === 0xF9 || src0 === 0xFA) && i < binary.length) {
-        decoded.literal = binary[i];
+        const extraWord = binary[i];
+        if (src0 === 0xE9 || src0 === 0xFA) {
+          parseDppWord(decoded, src0, extraWord);
+        } else {
+          decoded.literal = extraWord;
+        }
         i++;
       }
 
@@ -848,7 +931,12 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
 
       // DPP8 (SRC0=0xE9), SDWA (SRC0=0xF9), DPP16 (SRC0=0xFA), or literal constant (SRC0=0xFF)
       if ((src0 === 0xE9 || src0 === 0xF9 || src0 === 0xFA || src0 === LITERAL_CONST) && i < binary.length) {
-        decoded.literal = binary[i];
+        const extraWord = binary[i];
+        if (src0 === 0xE9 || src0 === 0xFA) {
+          parseDppWord(decoded, src0, extraWord);
+        } else {
+          decoded.literal = extraWord;
+        }
         i++;
       }
 

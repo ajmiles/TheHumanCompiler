@@ -114,6 +114,83 @@ function resolveSsrc0(state: GPUState, encoded: number, literal: number | undefi
 }
 
 /**
+ * Resolve DPP16 source lane for a given lane.
+ * Returns the source lane index, or -1 if out of range (bound_ctrl=true → use 0).
+ */
+function dpp16SourceLane(lane: number, ctrl: number): number {
+  // Row = 16 lanes (0-15, 16-31)
+  const rowBase = lane & ~15;
+  const laneInRow = lane & 15;
+
+  if (ctrl <= 0xFF) {
+    // quad_perm: 4 × 2-bit selectors, applied within each quad of 4
+    const quadBase = lane & ~3;
+    const laneInQuad = lane & 3;
+    const sel = (ctrl >>> (laneInQuad * 2)) & 3;
+    return quadBase + sel;
+  }
+  if (ctrl >= 0x101 && ctrl <= 0x10F) {
+    // row_shl:N — shift left within row
+    const shift = ctrl & 0xF;
+    const src = laneInRow - shift;
+    return src >= 0 ? rowBase + src : -1;
+  }
+  if (ctrl >= 0x111 && ctrl <= 0x11F) {
+    // row_shr:N — shift right within row
+    const shift = ctrl & 0xF;
+    const src = laneInRow + shift;
+    return src < 16 ? rowBase + src : -1;
+  }
+  if (ctrl >= 0x121 && ctrl <= 0x12F) {
+    // row_ror:N — rotate right within row
+    const shift = ctrl & 0xF;
+    return rowBase + ((laneInRow + shift) & 15);
+  }
+  if (ctrl === 0x130) {
+    // wave_shl:1
+    return lane > 0 ? lane - 1 : -1;
+  }
+  if (ctrl === 0x134) {
+    // wave_shr:1
+    return lane < WAVE_WIDTH - 1 ? lane + 1 : -1;
+  }
+  if (ctrl === 0x138) {
+    // wave_rol:1
+    return (lane - 1 + WAVE_WIDTH) & (WAVE_WIDTH - 1);
+  }
+  if (ctrl === 0x13C) {
+    // wave_ror:1
+    return (lane + 1) & (WAVE_WIDTH - 1);
+  }
+  if (ctrl === 0x140) {
+    // row_mirror — reverse within row
+    return rowBase + (15 - laneInRow);
+  }
+  if (ctrl === 0x141) {
+    // row_half_mirror — reverse within each half-row (8 lanes)
+    const halfBase = lane & ~7;
+    const laneInHalf = lane & 7;
+    return halfBase + (7 - laneInHalf);
+  }
+  if (ctrl === 0x142) {
+    // row_bcast15 — broadcast lane 15 of each row
+    return rowBase + 15;
+  }
+  if (ctrl === 0x143) {
+    // row_bcast31 — broadcast lane 31
+    return 31;
+  }
+  return lane;
+}
+
+/** Resolve DPP8 source lane within groups of 8. */
+function dpp8SourceLane(lane: number, selectors: number[]): number {
+  const groupBase = lane & ~7;
+  const laneInGroup = lane & 7;
+  return groupBase + selectors[laneInGroup];
+}
+
+/**
  * Execute a single resolved instruction on the GPU state.
  * Iterates over all 32 lanes; only lanes with their EXEC bit set are active.
  */
@@ -354,10 +431,32 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
 
   // Vector instructions: execute per active lane
   const exec = state.exec;
+  const hasDpp16 = decoded.dppCtrl !== undefined;
+  const hasDpp8 = decoded.dpp8 !== undefined;
+
   for (let lane = 0; lane < WAVE_WIDTH; lane++) {
     if (((exec >>> lane) & 1) === 0) continue;
 
-    const src0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, lane);
+    // DPP: resolve src0 from a different lane
+    let src0Raw: number;
+    if (hasDpp16) {
+      const srcLane = dpp16SourceLane(lane, decoded.dppCtrl!);
+      if (srcLane < 0) {
+        // Out of range: bound_ctrl=true → 0, else keep old dst value
+        if (decoded.boundCtrl) {
+          src0Raw = 0;
+        } else {
+          continue; // lane unchanged
+        }
+      } else {
+        src0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, srcLane);
+      }
+    } else if (hasDpp8) {
+      const srcLane = dpp8SourceLane(lane, decoded.dpp8!);
+      src0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, srcLane);
+    } else {
+      src0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, lane);
+    }
     let result: number;
 
     if (isInt) {

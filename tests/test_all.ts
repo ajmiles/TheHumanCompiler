@@ -1091,6 +1091,163 @@ function setupSwizzle(offsetHex: string): Emulator {
 }
 
 // ════════════════════════════════════════════
+//  DPP16 — row_shr, row_shl, row_ror, quad_perm, wave_shl/shr, row_mirror
+// ════════════════════════════════════════════
+group('DPP16');
+
+// Helper: load lane index (0..31) as u32 into v0, then run a DPP add
+function setupDpp16(dppMod: string): Emulator {
+  const lines: string[] = [];
+  for (let i = 0; i < 32; i++) {
+    const mask = (1 << i) >>> 0;
+    lines.push(`s_mov_b32 exec_lo, 0x${mask.toString(16).padStart(8, '0')}`);
+    lines.push(`v_mov_b32 v0, ${i}`);
+  }
+  lines.push('s_mov_b32 exec_lo, 0xFFFFFFFF');
+  // v_mov_b32 with DPP: copies src0 from a different lane into dst
+  lines.push(`v_mov_b32 v1, v0 ${dppMod}`);
+  lines.push('s_endpgm');
+  const emu = setup(lines.join('\n'));
+  emu.run();
+  return emu;
+}
+
+// row_shr:1 — each lane reads from lane+1 within a row of 16
+{
+  const emu = setupDpp16('row_shr:1 bound_ctrl:1');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16 row_shr:1: lane 0 reads lane 1');
+  assert(emu.state.readVGPR_u32(1, 14) === 15, 'DPP16 row_shr:1: lane 14 reads lane 15');
+  assert(emu.state.readVGPR_u32(1, 15) === 0, 'DPP16 row_shr:1: lane 15 OOB → 0 (bound_ctrl)');
+  assert(emu.state.readVGPR_u32(1, 16) === 17, 'DPP16 row_shr:1: lane 16 reads lane 17 (row 1)');
+}
+
+// row_shl:1 — each lane reads from lane-1 within a row
+{
+  const emu = setupDpp16('row_shl:1 bound_ctrl:1');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'DPP16 row_shl:1: lane 0 OOB → 0 (bound_ctrl)');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'DPP16 row_shl:1: lane 1 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 15) === 14, 'DPP16 row_shl:1: lane 15 reads lane 14');
+}
+
+// row_shr:4 — shift right by 4 within row
+{
+  const emu = setupDpp16('row_shr:4 bound_ctrl:1');
+  assert(emu.state.readVGPR_u32(1, 0) === 4, 'DPP16 row_shr:4: lane 0 reads lane 4');
+  assert(emu.state.readVGPR_u32(1, 11) === 15, 'DPP16 row_shr:4: lane 11 reads lane 15');
+  assert(emu.state.readVGPR_u32(1, 12) === 0, 'DPP16 row_shr:4: lane 12 OOB → 0');
+}
+
+// row_ror:1 — rotate right within row (wraps around)
+{
+  const emu = setupDpp16('row_ror:1');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16 row_ror:1: lane 0 reads lane 1');
+  assert(emu.state.readVGPR_u32(1, 15) === 0, 'DPP16 row_ror:1: lane 15 wraps to lane 0');
+  assert(emu.state.readVGPR_u32(1, 16) === 17, 'DPP16 row_ror:1: lane 16 reads lane 17 (row 1)');
+}
+
+// quad_perm:[1,0,3,2] — swap adjacent within each quad
+{
+  const emu = setupDpp16('quad_perm:[1,0,3,2]');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16 quad_perm swap: lane 0 reads lane 1');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'DPP16 quad_perm swap: lane 1 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 2) === 3, 'DPP16 quad_perm swap: lane 2 reads lane 3');
+  assert(emu.state.readVGPR_u32(1, 3) === 2, 'DPP16 quad_perm swap: lane 3 reads lane 2');
+  assert(emu.state.readVGPR_u32(1, 4) === 5, 'DPP16 quad_perm swap: lane 4 reads lane 5');
+}
+
+// quad_perm:[0,0,0,0] — broadcast lane 0 of each quad
+{
+  const emu = setupDpp16('quad_perm:[0,0,0,0]');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'DPP16 quad_perm bcast: lane 0 → 0');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'DPP16 quad_perm bcast: lane 1 → 0');
+  assert(emu.state.readVGPR_u32(1, 2) === 0, 'DPP16 quad_perm bcast: lane 2 → 0');
+  assert(emu.state.readVGPR_u32(1, 3) === 0, 'DPP16 quad_perm bcast: lane 3 → 0');
+  assert(emu.state.readVGPR_u32(1, 4) === 4, 'DPP16 quad_perm bcast: lane 4 → 4 (next quad)');
+}
+
+// wave_shl:1 — shift left across full wave
+{
+  const emu = setupDpp16('wave_shl:1 bound_ctrl:1');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'DPP16 wave_shl:1: lane 0 OOB → 0');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'DPP16 wave_shl:1: lane 1 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 16) === 15, 'DPP16 wave_shl:1: lane 16 reads lane 15 (crosses row)');
+}
+
+// wave_shr:1 — shift right across full wave
+{
+  const emu = setupDpp16('wave_shr:1 bound_ctrl:1');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16 wave_shr:1: lane 0 reads lane 1');
+  assert(emu.state.readVGPR_u32(1, 31) === 0, 'DPP16 wave_shr:1: lane 31 OOB → 0');
+  assert(emu.state.readVGPR_u32(1, 15) === 16, 'DPP16 wave_shr:1: lane 15 reads lane 16 (crosses row)');
+}
+
+// row_mirror — reverse within row of 16
+{
+  const emu = setupDpp16('row_mirror');
+  assert(emu.state.readVGPR_u32(1, 0) === 15, 'DPP16 row_mirror: lane 0 reads lane 15');
+  assert(emu.state.readVGPR_u32(1, 15) === 0, 'DPP16 row_mirror: lane 15 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 7) === 8, 'DPP16 row_mirror: lane 7 reads lane 8');
+  assert(emu.state.readVGPR_u32(1, 16) === 31, 'DPP16 row_mirror: lane 16 reads lane 31 (row 1)');
+}
+
+// row_half_mirror — reverse within each half-row (8 lanes)
+{
+  const emu = setupDpp16('row_half_mirror');
+  assert(emu.state.readVGPR_u32(1, 0) === 7, 'DPP16 row_half_mirror: lane 0 reads lane 7');
+  assert(emu.state.readVGPR_u32(1, 7) === 0, 'DPP16 row_half_mirror: lane 7 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 8) === 15, 'DPP16 row_half_mirror: lane 8 reads lane 15');
+}
+
+// DPP16 with VOP2: v_add_f32 with row_shr:1
+{
+  const lines: string[] = [];
+  for (let i = 0; i < 32; i++) {
+    const mask = (1 << i) >>> 0;
+    lines.push(`s_mov_b32 exec_lo, 0x${mask.toString(16).padStart(8, '0')}`);
+    lines.push(`v_mov_b32 v0, ${i}.0`);
+  }
+  lines.push('s_mov_b32 exec_lo, 0xFFFFFFFF');
+  lines.push('v_add_f32 v1, v0, v0 row_shr:1 bound_ctrl:1');
+  lines.push('s_endpgm');
+  const emu = setup(lines.join('\n'));
+  emu.run();
+  // Lane 0: src0=v0[lane 1]=1.0 (DPP), src1=v0[lane 0]=0.0 → 1.0
+  assert(approx(emu.state.readVGPR(1, 0), 1.0), 'DPP16 VOP2: v_add_f32 row_shr:1 lane 0 = 0.0 + 1.0');
+}
+
+// ════════════════════════════════════════════
+//  DPP8 — lane permutation within groups of 8
+// ════════════════════════════════════════════
+group('DPP8');
+
+// DPP8: reverse within groups of 8
+{
+  const emu = setupDpp16('dpp8:[7,6,5,4,3,2,1,0]');
+  assert(emu.state.readVGPR_u32(1, 0) === 7, 'DPP8 reverse: lane 0 reads lane 7');
+  assert(emu.state.readVGPR_u32(1, 7) === 0, 'DPP8 reverse: lane 7 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 8) === 15, 'DPP8 reverse: lane 8 reads lane 15 (group 1)');
+  assert(emu.state.readVGPR_u32(1, 15) === 8, 'DPP8 reverse: lane 15 reads lane 8');
+}
+
+// DPP8: broadcast lane 0 of each group
+{
+  const emu = setupDpp16('dpp8:[0,0,0,0,0,0,0,0]');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'DPP8 bcast: lane 0 → 0');
+  assert(emu.state.readVGPR_u32(1, 5) === 0, 'DPP8 bcast: lane 5 → 0');
+  assert(emu.state.readVGPR_u32(1, 7) === 0, 'DPP8 bcast: lane 7 → 0');
+  assert(emu.state.readVGPR_u32(1, 8) === 8, 'DPP8 bcast: lane 8 → 8 (group 1 base)');
+  assert(emu.state.readVGPR_u32(1, 12) === 8, 'DPP8 bcast: lane 12 → 8');
+}
+
+// DPP8: rotate left by 1 within groups of 8
+{
+  const emu = setupDpp16('dpp8:[1,2,3,4,5,6,7,0]');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP8 rotate: lane 0 reads lane 1');
+  assert(emu.state.readVGPR_u32(1, 6) === 7, 'DPP8 rotate: lane 6 reads lane 7');
+  assert(emu.state.readVGPR_u32(1, 7) === 0, 'DPP8 rotate: lane 7 wraps to lane 0');
+}
+
+// ════════════════════════════════════════════
 //  Edge Cases
 // ════════════════════════════════════════════
 group('Edge Cases');

@@ -132,8 +132,10 @@ export function tokenize(source: string): Token[] {
           tokens.push({ type: TokenType.REGISTER, value: lower, line: lineNum, column: start + 1 });
         } else if (MODIFIERS.has(lower)) {
           tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
-        } else if ((lower === 'mul' || lower === 'div' || lower === 'offset' || lower === 'offset0' || lower === 'offset1') && col < lineText.length && lineText[col] === ':') {
-          // Compound output modifier: mul:2, mul:4, div:2
+        } else if ((lower === 'mul' || lower === 'div' || lower === 'offset' || lower === 'offset0' || lower === 'offset1' ||
+                    lower === 'row_shl' || lower === 'row_shr' || lower === 'row_ror' || lower === 'bound_ctrl' ||
+                    lower === 'wave_shl' || lower === 'wave_shr' || lower === 'wave_rol' || lower === 'wave_ror') && col < lineText.length && lineText[col] === ':') {
+          // Compound modifier: mul:2, row_shr:1, bound_ctrl:1, etc.
           col++; // skip ':'
           const dStart = col;
           // Handle hex (0x...) and decimal values
@@ -145,6 +147,17 @@ export function tokenize(source: string): Token[] {
           }
           const compound = lower + ':' + lineText.slice(dStart, col);
           tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
+        } else if ((lower === 'quad_perm' || lower === 'dpp8') && col < lineText.length && lineText[col] === ':') {
+          // DPP bracket modifier: quad_perm:[3,2,1,0] or dpp8:[7,6,5,4,3,2,1,0]
+          col++; // skip ':'
+          const dStart = col;
+          // Read until closing bracket
+          while (col < lineText.length && lineText[col] !== ']') col++;
+          if (col < lineText.length) col++; // skip ']'
+          const compound = lower + ':' + lineText.slice(dStart, col);
+          tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
+        } else if (lower === 'row_mirror' || lower === 'row_half_mirror' || lower === 'row_bcast15' || lower === 'row_bcast31') {
+          tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
         } else if (MNEMONIC_RE.test(lower)) {
           tokens.push({ type: TokenType.MNEMONIC, value: lower, line: lineNum, column: start + 1 });
         }

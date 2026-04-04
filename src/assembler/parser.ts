@@ -131,16 +131,45 @@ export function parse(tokens: Token[]): ParseResult {
       rawTokens.push(advance());
     }
 
-    // Extract trailing output modifiers (mul:2, mul:4, div:2, clamp) from raw tokens
+    // Extract trailing output modifiers (mul:2, mul:4, div:2, clamp) and DPP modifiers
     let omod = 0;
     let clamp = false;
+    let dppCtrl: number | undefined;
+    let dpp8: number[] | undefined;
+    let boundCtrl: boolean | undefined;
     while (rawTokens.length > 0 && rawTokens[rawTokens.length - 1].type === TokenType.MODIFIER) {
       const mod = rawTokens.pop()!;
-      switch (mod.value) {
+      const val = mod.value;
+      switch (val) {
         case 'mul:2': omod = 1; break;
         case 'mul:4': omod = 2; break;
         case 'div:2': omod = 3; break;
         case 'clamp': clamp = true; break;
+        case 'row_mirror': dppCtrl = 0x140; break;
+        case 'row_half_mirror': dppCtrl = 0x141; break;
+        case 'row_bcast15': dppCtrl = 0x142; break;
+        case 'row_bcast31': dppCtrl = 0x143; break;
+        default:
+          if (val.startsWith('row_shl:')) dppCtrl = 0x100 + (parseInt(val.slice(8), 10) & 0xF);
+          else if (val.startsWith('row_shr:')) dppCtrl = 0x110 + (parseInt(val.slice(8), 10) & 0xF);
+          else if (val.startsWith('row_ror:')) dppCtrl = 0x120 + (parseInt(val.slice(8), 10) & 0xF);
+          else if (val.startsWith('wave_shl:')) dppCtrl = 0x130;
+          else if (val.startsWith('wave_shr:')) dppCtrl = 0x134;
+          else if (val.startsWith('wave_rol:')) dppCtrl = 0x138;
+          else if (val.startsWith('wave_ror:')) dppCtrl = 0x13C;
+          else if (val.startsWith('bound_ctrl:')) boundCtrl = val.slice(11) === '1';
+          else if (val.startsWith('quad_perm:')) {
+            // quad_perm:[3,2,1,0] → 4 × 2-bit selectors
+            const nums = val.slice(10).replace(/[[\]]/g, '').split(',').map(Number);
+            if (nums.length === 4) {
+              dppCtrl = (nums[0] & 3) | ((nums[1] & 3) << 2) | ((nums[2] & 3) << 4) | ((nums[3] & 3) << 6);
+            }
+          } else if (val.startsWith('dpp8:')) {
+            // dpp8:[7,6,5,4,3,2,1,0] → 8 × 3-bit selectors
+            const nums = val.slice(5).replace(/[[\]]/g, '').split(',').map(Number);
+            if (nums.length === 8) dpp8 = nums.map(n => n & 7);
+          }
+          break;
       }
     }
 
@@ -295,6 +324,9 @@ export function parse(tokens: Token[]): ParseResult {
       column: mnemonicToken.column,
       omod: omod || undefined,
       clamp: clamp || undefined,
+      dppCtrl,
+      dpp8,
+      boundCtrl,
     });
   }
 

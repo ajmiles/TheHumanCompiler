@@ -46,6 +46,10 @@ export interface ParsedInstruction {
   clamp?: boolean;     // Clamp output to [0.0, 1.0]
   offset?: number;     // Memory offset (SMEM, MUBUF, DS)
   memFlags?: number;   // Packed memory flags: bit1=idxen, bit2=glc, bit0=offen
+  // DPP modifiers
+  dppCtrl?: number;    // DPP16 control (row_shr:N, quad_perm, etc.)
+  dpp8?: number[];     // DPP8: 8 lane selectors
+  boundCtrl?: boolean; // DPP16 bound control
 }
 
 export interface DecodedInstruction {
@@ -75,6 +79,11 @@ export interface DecodedInstruction {
   // Output modifiers
   omod?: number;       // 0=none, 1=×2, 2=×4, 3=÷2
   clamp?: boolean;
+  // DPP modifiers
+  dppCtrl?: number;    // DPP16: 9-bit control word (row_shr, quad_perm, etc.)
+  dpp8?: number[];     // DPP8: 8 lane selectors (3-bit each, within groups of 8)
+  boundCtrl?: boolean; // DPP16: true = out-of-range reads return 0
+  dppSrc0?: number;    // DPP: actual VGPR index for src0 (from DPP word bits [31:24])
 }
 
 export type SemanticFn = (a: number, b?: number, c?: number) => number;
