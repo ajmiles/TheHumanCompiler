@@ -699,8 +699,8 @@ export class App {
 
     for (const input of puzzle.inputs) {
       if (input.isSGPR) {
-        // Scalar input: one value per invocation (use first value in the invocation's range)
-        const value = start < input.values.length ? input.values[start] : 0;
+        // Scalar input: one value per invocation (indexed by invocation, not lane)
+        const value = invocationIndex < input.values.length ? input.values[invocationIndex] : 0;
         this.emulator.state.writeSGPR(input.register, value >>> 0);
         continue;
       }
