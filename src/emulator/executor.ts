@@ -433,6 +433,11 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
   const exec = state.exec;
   const hasDpp16 = decoded.dppCtrl !== undefined;
   const hasDpp8 = decoded.dpp8 !== undefined;
+  const hasDpp = hasDpp16 || hasDpp8;
+
+  // When DPP is active, buffer results to avoid read-after-write hazards
+  // (lane N may read lane M's VGPR via DPP, but lane M may already be written)
+  const dppResults: Array<{ lane: number; value: number }> | null = hasDpp ? [] : null;
 
   for (let lane = 0; lane < WAVE_WIDTH; lane++) {
     if (((exec >>> lane) & 1) === 0) continue;
@@ -442,11 +447,10 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     if (hasDpp16) {
       const srcLane = dpp16SourceLane(lane, decoded.dppCtrl!);
       if (srcLane < 0) {
-        // Out of range: bound_ctrl=true → 0, else keep old dst value
         if (decoded.boundCtrl) {
           src0Raw = 0;
         } else {
-          continue; // lane unchanged
+          continue;
         }
       } else {
         src0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, srcLane);
@@ -475,12 +479,16 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       } else {
         result = opcodeInfo.execute(src0Raw);
       }
-      state.writeVGPR_u32(decoded.dst, lane, result >>> 0);
+      const writeVal = result >>> 0;
+      if (dppResults) { dppResults.push({ lane, value: writeVal }); }
+      else { state.writeVGPR_u32(decoded.dst, lane, writeVal); }
     } else if (intIn) {
       // Integer input, float output (v_cvt_f32_i32, v_cvt_f32_u32, v_cvt_f32_ubyte*)
       // Pass raw u32 to execute, get float back, bitcast for storage
       const floatResult = opcodeInfo.execute(src0Raw);
-      state.writeVGPR_u32(decoded.dst, lane, floatBits(floatResult));
+      const writeVal = floatBits(floatResult);
+      if (dppResults) { dppResults.push({ lane, value: writeVal }); }
+      else { state.writeVGPR_u32(decoded.dst, lane, writeVal); }
     } else {
       // Float ops: bitcast u32 → float, apply modifiers, execute, bitcast back
       let src0Val = bitsToFloat(src0Raw);
@@ -522,8 +530,16 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
         result = Math.max(0.0, Math.min(1.0, result));
       }
 
-      state.writeVGPR_u32(decoded.dst, lane,
-        opcodeInfo.integerOutput ? (result >>> 0) : floatBits(result));
+      const writeVal = opcodeInfo.integerOutput ? (result >>> 0) : floatBits(result);
+      if (dppResults) { dppResults.push({ lane, value: writeVal }); }
+      else { state.writeVGPR_u32(decoded.dst, lane, writeVal); }
+    }
+  }
+
+  // Flush buffered DPP results
+  if (dppResults) {
+    for (const { lane, value } of dppResults) {
+      state.writeVGPR_u32(decoded.dst, lane, value);
     }
   }
 }
