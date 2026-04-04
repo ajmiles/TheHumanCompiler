@@ -188,10 +188,9 @@ function encodeVOP2(opcode: number, instr: ParsedInstruction): number[] {
 function buildDppWord(instr: ParsedInstruction): number {
   const src0Vgpr = (instr.src0.type === OperandType.VGPR ? instr.src0.value : 0) & 0xFF;
   if (instr.dpp8) {
-    // DPP8: pack 8 × 3-bit selectors into bits [23:0], src0 VGPR in [31:24]
-    let word = 0;
-    for (let j = 0; j < 8; j++) word |= (instr.dpp8[j] & 7) << (j * 3);
-    word |= (src0Vgpr << 24);
+    // DPP8: [7:0]=SRC0 VGPR, [31:8]=8×3-bit lane selectors
+    let word = src0Vgpr & 0xFF;
+    for (let j = 0; j < 8; j++) word |= (instr.dpp8[j] & 7) << (8 + j * 3);
     return word >>> 0;
   }
   // DPP16
@@ -522,13 +521,13 @@ export function detectFormat(word: number): InstructionFormat {
 /** Parse DPP8/DPP16 extra dword and apply fields to a decoded instruction. */
 function parseDppWord(decoded: DecodedInstruction, src0: number, dword: number): void {
   if (src0 === 0xE9) {
-    // DPP8: 8 × 3-bit lane selectors in bits [23:0], src0 VGPR in [31:24]
+    // DPP8: [7:0]=SRC0 VGPR, [31:8]=8×3-bit lane selectors
     const selectors: number[] = [];
     for (let j = 0; j < 8; j++) {
-      selectors.push((dword >>> (j * 3)) & 7);
+      selectors.push((dword >>> (8 + j * 3)) & 7);
     }
     decoded.dpp8 = selectors;
-    const src0Vgpr = (dword >>> 24) & 0xFF;
+    const src0Vgpr = dword & 0xFF;
     decoded.src0Encoded = VGPR_SRC_MIN + src0Vgpr;
   } else if (src0 === 0xFA) {
     // DPP16: [8:0]=DPP_CTRL, [10]=BOUND_CTRL, [11]=SRC0_NEG, [12]=SRC1_NEG, [31:24]=SRC0_VGPR
