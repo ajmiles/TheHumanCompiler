@@ -29,6 +29,7 @@ function registerLanguage(): void {
   const soppMnemonics: string[] = [];
   const vmemMnemonics: string[] = [];
   const smemMnemonics: string[] = [];
+  const dsMnemonics: string[] = [];
 
   for (const op of allOps) {
     switch (op.format) {
@@ -55,6 +56,9 @@ function registerLanguage(): void {
       case InstructionFormat.SMEM:
         smemMnemonics.push(op.mnemonic);
         break;
+      case InstructionFormat.DS:
+        dsMnemonics.push(op.mnemonic);
+        break;
     }
   }
 
@@ -66,6 +70,7 @@ function registerLanguage(): void {
     sopp: soppMnemonics,
     vmem: vmemMnemonics,
     smem: smemMnemonics,
+    ds: dsMnemonics,
     tokenizer: {
       root: [
         // Comments
@@ -86,6 +91,7 @@ function registerLanguage(): void {
             '@sopp': 'keyword.sopp',
             '@vmem': 'keyword.vmem',
             '@smem': 'keyword.smem',
+            '@ds': 'keyword.ds',
             '@default': 'identifier',
           },
         }],
@@ -106,6 +112,7 @@ function registerLanguage(): void {
       { token: 'keyword.sopp', foreground: 'd29922', fontStyle: 'bold' },   // Yellow — SOPP
       { token: 'keyword.vmem', foreground: 'db6d28', fontStyle: 'bold' },   // Orange — VMEM
       { token: 'keyword.smem', foreground: '39c5cf', fontStyle: 'bold' },   // Cyan — SMEM
+      { token: 'keyword.ds', foreground: 'f85149', fontStyle: 'bold' },     // Red — DS/LDS
       { token: 'keyword', foreground: '39d353', fontStyle: 'bold' },        // Fallback green
       { token: 'register', foreground: '39c5cf' },
       { token: 'number', foreground: 'd29922' },
