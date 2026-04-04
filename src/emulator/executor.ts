@@ -201,8 +201,9 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
 
   state.modifiedRegs.clear();
 
-  // SOPP: program control (e.g. s_endpgm)
-  if (opcodeInfo.halts) {
+  // SOPP: program control (s_endpgm, branches, waitcnt, etc.)
+  // Branching is handled in emulator.ts step(), not here.
+  if (decoded.format === InstructionFormat.SOPP) {
     return;
   }
 
