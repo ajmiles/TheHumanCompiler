@@ -38,9 +38,10 @@ function buildLevelOrder(): LevelItem[] {
   const t2 = getTutorialById('tut-modifiers');
   if (t2) { levels.push({ kind: 'tutorial', data: t2 }); usedTutorialIds.add(t2.id); }
 
-  // Remaining puzzles except quad-average (placed after intra-wave tutorial)
+  // Remaining puzzles except wave-comm puzzles (placed after intra-wave tutorial)
+  const deferredPuzzles = new Set(['quad-average', 'wave-average']);
   for (const p of ALL_PUZZLES) {
-    if (!usedPuzzleIds.has(p.id) && p.id !== 'quad-average') {
+    if (!usedPuzzleIds.has(p.id) && !deferredPuzzles.has(p.id)) {
       levels.push({ kind: 'puzzle', data: p });
       usedPuzzleIds.add(p.id);
     }
@@ -51,12 +52,14 @@ function buildLevelOrder(): LevelItem[] {
     if (!usedTutorialIds.has(t.id)) {
       levels.push({ kind: 'tutorial', data: t });
       usedTutorialIds.add(t.id);
-      // Place quad-average right after intra-wave tutorial
+      // Place wave-comm puzzles right after intra-wave tutorial
       if (t.id === 'tut-intra-wave') {
-        const qa = getPuzzleById('quad-average');
-        if (qa && !usedPuzzleIds.has(qa.id)) {
-          levels.push({ kind: 'puzzle', data: qa });
-          usedPuzzleIds.add(qa.id);
+        for (const pid of ['quad-average', 'wave-average']) {
+          const p = getPuzzleById(pid);
+          if (p && !usedPuzzleIds.has(p.id)) {
+            levels.push({ kind: 'puzzle', data: p });
+            usedPuzzleIds.add(p.id);
+          }
         }
       }
     }
@@ -174,7 +177,7 @@ export class App {
 
     const info = document.createElement('div');
     info.className = 'header__info';
-    info.innerHTML = '<span class="header__badge">RDNA2</span><span>Wave32</span>';
+    info.innerHTML = '<span class="header__badge">RDNA2</span>';
 
     header.append(title, puzzleBtn, spacer, encyBtn, importBtn, feedbackBtn, info);
 

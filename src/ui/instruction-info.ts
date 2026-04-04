@@ -320,6 +320,12 @@ function needsVOP3(instr: ParsedInstruction): boolean {
 
 function getEffectiveFormatName(format: InstructionFormat, instr: ParsedInstruction): string {
   if (format === InstructionFormat.VOP3) return 'VOP3';
+  if ((format === InstructionFormat.VOP1 || format === InstructionFormat.VOP2) && (instr.dpp8 !== undefined)) {
+    return `${format} + DPP8`;
+  }
+  if ((format === InstructionFormat.VOP1 || format === InstructionFormat.VOP2) && (instr.dppCtrl !== undefined)) {
+    return `${format} + DPP16`;
+  }
   if ((format === InstructionFormat.VOP1 || format === InstructionFormat.VOP2) && needsVOP3(instr)) {
     return `VOP3 (promoted from ${format})`;
   }
@@ -551,6 +557,38 @@ export class InstructionInfo {
       html += `</div>`;
 
       html += `</div></div>`;
+    }
+
+    // ── DPP modifier info ──
+    if (instr.dppCtrl !== undefined || instr.dpp8 !== undefined) {
+      html += `<div class="instr-info-dpp">`;
+      if (instr.dpp8) {
+        html += `<span class="instr-info-field-name" style="color:#ff9800">DPP8</span> `;
+        html += `<span>[${instr.dpp8.join(',')}]</span>`;
+        html += ` — src0 reads from lane selectors within groups of 8`;
+      } else if (instr.dppCtrl !== undefined) {
+        const ctrl = instr.dppCtrl;
+        let dppName = `ctrl=0x${ctrl.toString(16)}`;
+        if (ctrl <= 0xFF) {
+          const s = [(ctrl) & 3, (ctrl >>> 2) & 3, (ctrl >>> 4) & 3, (ctrl >>> 6) & 3];
+          dppName = `quad_perm:[${s.join(',')}]`;
+        } else if (ctrl >= 0x101 && ctrl <= 0x10F) dppName = `row_shl:${ctrl & 0xF}`;
+        else if (ctrl >= 0x111 && ctrl <= 0x11F) dppName = `row_shr:${ctrl & 0xF}`;
+        else if (ctrl >= 0x121 && ctrl <= 0x12F) dppName = `row_ror:${ctrl & 0xF}`;
+        else if (ctrl === 0x130) dppName = 'wave_shl:1';
+        else if (ctrl === 0x134) dppName = 'wave_shr:1';
+        else if (ctrl === 0x138) dppName = 'wave_rol:1';
+        else if (ctrl === 0x13C) dppName = 'wave_ror:1';
+        else if (ctrl === 0x140) dppName = 'row_mirror';
+        else if (ctrl === 0x141) dppName = 'row_half_mirror';
+        else if (ctrl === 0x142) dppName = 'row_bcast15';
+        else if (ctrl === 0x143) dppName = 'row_bcast31';
+        html += `<span class="instr-info-field-name" style="color:#ff9800">DPP16</span> `;
+        html += `<span>${escapeHtml(dppName)}</span>`;
+        if (instr.boundCtrl) html += ` <span style="color:#888">bound_ctrl</span>`;
+        html += ` — src0 reads from remapped lane`;
+      }
+      html += `</div>`;
     }
 
     // ── Raw hex ──

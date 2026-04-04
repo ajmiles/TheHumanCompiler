@@ -424,6 +424,42 @@ const QUAD_AVERAGE: Puzzle = {
   optimalInstructions: 4,
 };
 
+// ── Puzzle 10: Wave Average ──
+
+const waveAvgInput = seededValues(77, 64, 0, 100);
+// Expected: every lane outputs the average of all 32 lanes in its invocation
+const waveAvgExpected: number[] = [];
+for (let inv = 0; inv < 2; inv++) {
+  const start = inv * 32;
+  let sum = 0;
+  for (let i = 0; i < 32; i++) sum += waveAvgInput[start + i];
+  const avg = Math.round((sum / 32) * 100) / 100;
+  for (let i = 0; i < 32; i++) waveAvgExpected.push(avg);
+}
+
+const WAVE_AVERAGE: Puzzle = {
+  id: 'wave-average',
+  title: 'Wave Average',
+  description:
+    'Compute the average of all 32 lanes in the wavefront and write it to every lane. ' +
+    'This is a full-wave parallel reduction — the holy grail of GPU subgroup operations.',
+  inputs: [
+    { name: 'Input', register: 0, values: waveAvgInput },
+  ],
+  outputs: [
+    { name: 'Average', register: 1, values: waveAvgExpected },
+  ],
+  hints: [
+    'Start with a quad reduction using quad_perm (like Quad Average).',
+    'After the quad sum, you need to combine across quads using row_shr.',
+    'row_shr:4 crosses quad boundaries within a row of 16.',
+    'row_shr:8 combines the two halves of each 16-lane row.',
+    'Finally, you need to combine the two rows. ds_swizzle with xor=16 can do this.',
+    'Divide by 32 at the end (multiply by 0.03125 or use 1/32).',
+  ],
+  optimalInstructions: 7,
+};
+
 // ── All Puzzles ──
 
 export const ALL_PUZZLES: Puzzle[] = [
@@ -436,6 +472,7 @@ export const ALL_PUZZLES: Puzzle[] = [
   DOT_PRODUCT_3D,
   BYTE_SHUFFLE,
   QUAD_AVERAGE,
+  WAVE_AVERAGE,
 ];
 
 export function getPuzzleById(id: string): Puzzle | undefined {
