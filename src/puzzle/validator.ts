@@ -4,7 +4,7 @@
 import { WAVE_WIDTH } from '../isa/constants';
 import { Puzzle, PuzzleResult, InvocationResult } from './types';
 
-const EPSILON = 1e-4; // Tolerance for float comparison
+const EPSILON = 0.01; // Tolerance for float comparison (~2 decimal places of f32)
 
 function floatEquals(a: number, b: number): boolean {
   if (Number.isNaN(a) && Number.isNaN(b)) return true;

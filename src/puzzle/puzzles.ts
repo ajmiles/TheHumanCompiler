@@ -396,8 +396,18 @@ const BYTE_SHUFFLE: Puzzle = {
 const quadAvgInput = seededValues(99, 64, 0, 100);
 // Expected: for each group of 4 lanes, output the average of those 4 values
 const quadAvgExpected: number[] = [];
+const _qf = new Float32Array(1);
+function asF32(v: number): number { _qf[0] = v; return _qf[0]; }
 for (let i = 0; i < quadAvgInput.length; i += 4) {
-  const avg = Math.round(((quadAvgInput[i] + quadAvgInput[i + 1] + quadAvgInput[i + 2] + quadAvgInput[i + 3]) / 4) * 100) / 100;
+  // Simulate f32 reduction: pairwise add then combine, then multiply by 0.25
+  const a = asF32(quadAvgInput[i]);
+  const b = asF32(quadAvgInput[i + 1]);
+  const c = asF32(quadAvgInput[i + 2]);
+  const d = asF32(quadAvgInput[i + 3]);
+  const ab = asF32(a + b);
+  const cd = asF32(c + d);
+  const sum = asF32(ab + cd);
+  const avg = asF32(sum * 0.25);
   quadAvgExpected.push(avg, avg, avg, avg);
 }
 
@@ -431,9 +441,19 @@ const waveAvgInput = seededValues(77, 64, 0, 100);
 const waveAvgExpected: number[] = [];
 for (let inv = 0; inv < 2; inv++) {
   const start = inv * 32;
-  let sum = 0;
-  for (let i = 0; i < 32; i++) sum += waveAvgInput[start + i];
-  const avg = Math.round((sum / 32) * 100) / 100;
+  // Simulate f32 tree reduction matching quad_perm → row_shr → ds_swizzle pattern
+  const vals = waveAvgInput.slice(start, start + 32).map(asF32);
+  // Pairwise: 0+1, 2+3, etc.
+  for (let i = 0; i < 32; i += 2) vals[i] = asF32(vals[i] + vals[i + 1]);
+  // Quad: (0+1)+(2+3), etc.
+  for (let i = 0; i < 32; i += 4) vals[i] = asF32(vals[i] + vals[i + 2]);
+  // Row-8: combine within 16-lane rows
+  for (let i = 0; i < 32; i += 8) vals[i] = asF32(vals[i] + vals[i + 4]);
+  // Row-16
+  for (let i = 0; i < 32; i += 16) vals[i] = asF32(vals[i] + vals[i + 8]);
+  // Cross-row
+  const sum = asF32(vals[0] + vals[16]);
+  const avg = asF32(sum * asF32(1 / 32));
   for (let i = 0; i < 32; i++) waveAvgExpected.push(avg);
 }
 
