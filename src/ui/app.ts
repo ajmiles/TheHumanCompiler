@@ -743,6 +743,10 @@ export class App {
     this.emulator.reset();
     this.updateAllDisplays();
 
+    // Collapse instruction info and binary view to keep focus on the editor
+    this.instructionInfo.setCollapsed(true);
+    this.binaryView.setCollapsed(true);
+
     this.statusBar.setStatus(`Tutorial: ${tutorial.title}`, 'info');
   }
 

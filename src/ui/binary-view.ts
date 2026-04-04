@@ -44,9 +44,18 @@ export class BinaryView {
 
   private toggle(): void {
     this.collapsed = !this.collapsed;
+    this.applyCollapsed();
+  }
+
+  private applyCollapsed(): void {
     this.scrollable.style.display = this.collapsed ? 'none' : '';
     this.toggleBtn.textContent = this.collapsed ? '▶' : '▼';
     this.toggleBtn.title = this.collapsed ? 'Expand binary view' : 'Collapse binary view';
+  }
+
+  setCollapsed(collapsed: boolean): void {
+    this.collapsed = collapsed;
+    this.applyCollapsed();
   }
 
   update(binary: Uint32Array, currentPC: number): void {

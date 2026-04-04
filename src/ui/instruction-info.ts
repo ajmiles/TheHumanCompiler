@@ -426,9 +426,18 @@ export class InstructionInfo {
 
   private toggle(): void {
     this.collapsed = !this.collapsed;
+    this.applyCollapsed();
+  }
+
+  private applyCollapsed(): void {
     this.scrollable.style.display = this.collapsed ? 'none' : '';
     this.toggleBtn.textContent = this.collapsed ? '▶' : '▼';
     this.toggleBtn.title = this.collapsed ? 'Expand instruction info' : 'Collapse instruction info';
+  }
+
+  setCollapsed(collapsed: boolean): void {
+    this.collapsed = collapsed;
+    this.applyCollapsed();
   }
 
   update(assemblyResult: AssemblyResult | null, cursorLine: number): void {
