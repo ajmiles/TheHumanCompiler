@@ -15,15 +15,18 @@ import { assemble } from '../assembler/assembler';
 import { Emulator } from '../emulator/emulator';
 import { Puzzle } from '../puzzle/types';
 import { ALL_PUZZLES, getPuzzleById } from '../puzzle/puzzles';
+import { ALL_TUTORIALS, getTutorialById, Tutorial } from '../puzzle/tutorials';
 import { validatePuzzle } from '../puzzle/validator';
 import { WAVE_WIDTH } from '../isa/constants';
 import { AssemblyResult, OperandType } from '../isa/types';
 import { decodeBinary, disassemble } from '../isa/encoding';
 import { lookupByOpcode } from '../isa/opcodes';
 import { VERSION } from '../version';
+import { TutorialPanel } from './tutorial-panel';
 
 const STORAGE_KEY = 'humancompiler_completed';
 const SOLUTIONS_KEY = 'humancompiler_solutions';
+const TUTORIALS_KEY = 'humancompiler_tutorials_completed';
 const DEBOUNCE_MS = 500;
 
 export class App {
@@ -37,6 +40,7 @@ export class App {
   private statusBar!: StatusBar;
   private leaderboard!: LeaderboardOverlay;
   private encyclopedia!: Encyclopedia;
+  private tutorialPanel!: TutorialPanel;
   private errorListEl!: HTMLElement;
 
   private emulator = new Emulator();
@@ -64,12 +68,19 @@ export class App {
   // Completed puzzle tracking
   private completedIds: Set<string>;
 
+  // Tutorial mode
+  private isTutorialMode = false;
+  private currentTutorial: Tutorial | null = null;
+  private completedTutorialIds: Set<string>;
+  private ioContainer!: HTMLElement;
+
   constructor(root: HTMLElement) {
     this.completedIds = this.loadCompleted();
+    this.completedTutorialIds = this.loadCompletedTutorials();
     this.buildLayout(root);
     this.wireEvents();
     // Show puzzle select on startup
-    this.puzzleSelect.show(ALL_PUZZLES, this.completedIds);
+    this.puzzleSelect.show(ALL_PUZZLES, ALL_TUTORIALS, this.allCompletedIds());
   }
 
   private buildLayout(root: HTMLElement): void {
@@ -85,7 +96,7 @@ export class App {
     puzzleBtn.className = 'header__puzzle-select';
     puzzleBtn.textContent = '📋 Puzzles';
     puzzleBtn.onclick = () => {
-      this.puzzleSelect.show(ALL_PUZZLES, this.completedIds);
+      this.puzzleSelect.show(ALL_PUZZLES, ALL_TUTORIALS, this.allCompletedIds());
     };
 
     const spacer = document.createElement('div');
@@ -151,12 +162,13 @@ export class App {
 
     centerPanel.append(this.revisionBar, editorContainer, instrInfoContainer, binaryContainer, this.errorListEl);
 
-    // Right column: I/O panel
+    // Right column: I/O panel + tutorial panel
     const rightPanel = document.createElement('div');
     rightPanel.className = 'panel';
     const ioContainer = document.createElement('div');
     ioContainer.style.flex = '1';
     ioContainer.style.overflow = 'auto';
+    this.ioContainer = ioContainer;
     rightPanel.appendChild(ioContainer);
 
     // Drag handle between left panel and center
@@ -181,6 +193,7 @@ export class App {
     this.editor = new AsmEditor(editorContainer);
     this.registers = new RegisterDisplay(regContainer);
     this.ioPanel = new IOPanel(ioContainer);
+    this.tutorialPanel = new TutorialPanel(ioContainer);
     this.binaryView = new BinaryView(binaryContainer);
     this.instructionInfo = new InstructionInfo(instrInfoContainer);
     this.controls = new Controls(controlsBar);
@@ -246,8 +259,23 @@ export class App {
       }
     });
 
-    // Puzzle selection
-    this.puzzleSelect.onSelect((id) => this.loadPuzzle(id));
+    // Puzzle / tutorial selection
+    this.puzzleSelect.onSelect((id, kind) => {
+      if (kind === 'tutorial') {
+        this.loadTutorial(id);
+      } else {
+        this.loadPuzzle(id);
+      }
+    });
+
+    // Tutorial step changes
+    this.tutorialPanel.onStepChange((step) => {
+      if (step.code) {
+        this.editor.setSource(step.code);
+        this.doAssemble();
+        this.doReset();
+      }
+    });
   }
 
   private setupResizer(resizer: HTMLElement, leftPanel: HTMLElement, main: HTMLElement): void {
@@ -533,6 +561,9 @@ export class App {
     const puzzle = getPuzzleById(id);
     if (!puzzle) return;
 
+    // Exit tutorial mode if active
+    this.exitTutorialMode();
+
     this.doStop();
     this.primed = false;
     this.currentPuzzle = puzzle;
@@ -678,6 +709,62 @@ export class App {
     }
   }
 
+  // ── Tutorial Engine ──
+
+  private loadTutorial(id: string): void {
+    const tutorial = getTutorialById(id);
+    if (!tutorial) return;
+
+    this.doStop();
+    this.primed = false;
+    this.currentPuzzle = null;
+    this.currentTutorial = tutorial;
+    this.isTutorialMode = true;
+
+    // Hide I/O panel content, show tutorial panel
+    this.ioPanel.setPuzzle(null as unknown as Puzzle);
+    this.ioContainer.querySelectorAll('.puzzle-panel').forEach(el => {
+      (el as HTMLElement).style.display = 'none';
+    });
+    this.tutorialPanel.setTutorial(tutorial);
+
+    // Load code from the first step if it has one
+    const firstStep = tutorial.steps[0];
+    if (firstStep.code) {
+      this.editor.setSource(firstStep.code);
+    } else {
+      this.editor.setSource('; Tutorial mode\ns_endpgm\n');
+    }
+    this.doAssemble();
+    this.emulator.reset();
+    this.updateAllDisplays();
+
+    this.statusBar.setStatus(`Tutorial: ${tutorial.title}`, 'info');
+  }
+
+  private exitTutorialMode(): void {
+    if (!this.isTutorialMode) return;
+
+    // Mark tutorial as completed when exiting
+    if (this.currentTutorial) {
+      this.completedTutorialIds.add(this.currentTutorial.id);
+      this.saveCompletedTutorials();
+    }
+
+    this.isTutorialMode = false;
+    this.currentTutorial = null;
+    this.tutorialPanel.hide();
+
+    // Re-show I/O panel content
+    this.ioContainer.querySelectorAll('.puzzle-panel').forEach(el => {
+      (el as HTMLElement).style.display = '';
+    });
+  }
+
+  private allCompletedIds(): Set<string> {
+    return new Set([...this.completedIds, ...this.completedTutorialIds]);
+  }
+
   // ── Persistence ──
 
   private loadCompleted(): Set<string> {
@@ -691,6 +778,19 @@ export class App {
 
   private saveCompleted(): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([...this.completedIds]));
+  }
+
+  private loadCompletedTutorials(): Set<string> {
+    try {
+      const raw = localStorage.getItem(TUTORIALS_KEY);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  }
+
+  private saveCompletedTutorials(): void {
+    localStorage.setItem(TUTORIALS_KEY, JSON.stringify([...this.completedTutorialIds]));
   }
 
   private saveSolution(): void {
