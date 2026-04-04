@@ -277,6 +277,7 @@ export class App {
   private doAssemble(): void {
     const source = this.editor.getSource();
     this.assemblyResult = assemble(source);
+    this.instructionInfo.setSource(source);
 
     this.editor.setErrors(
       this.assemblyResult.errors.map(e => ({

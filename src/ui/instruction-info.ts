@@ -242,6 +242,7 @@ export class InstructionInfo {
   private bodyEl: HTMLElement;
   private toggleBtn: HTMLButtonElement;
   private collapsed = false;
+  private lastSource = '';
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -285,24 +286,49 @@ export class InstructionInfo {
   }
 
   update(assemblyResult: AssemblyResult | null, cursorLine: number): void {
-    if (!assemblyResult || assemblyResult.instructions.length === 0) {
+    if (!assemblyResult) {
       this.bodyEl.innerHTML = '<div class="instr-info-placeholder">Move cursor to an instruction to see details</div>';
       return;
     }
 
-    // Find instruction on this line
+    // Find parsed instruction on this line
     const instr = assemblyResult.instructions.find(i => i.line === cursorLine);
-    if (!instr) {
-      this.bodyEl.innerHTML = '<div class="instr-info-placeholder">Move cursor to an instruction to see details</div>';
+
+    if (instr) {
+      const info = lookupByMnemonic(instr.mnemonic);
+      if (!info) {
+        this.bodyEl.innerHTML = '<div class="instr-info-placeholder">Unknown instruction</div>';
+        return;
+      }
+      this.renderFull(instr, info);
       return;
     }
 
-    const info = lookupByMnemonic(instr.mnemonic);
-    if (!info) {
-      this.bodyEl.innerHTML = '<div class="instr-info-placeholder">Unknown instruction</div>';
-      return;
+    // No parsed instruction — try to show metadata from the mnemonic on this line
+    // (for formats the parser skips like SMEM, MUBUF, etc.)
+    if (this.lastSource) {
+      const lines = this.lastSource.split('\n');
+      if (cursorLine >= 1 && cursorLine <= lines.length) {
+        const lineText = lines[cursorLine - 1].trim();
+        const match = lineText.match(/^([a-z_][a-z0-9_]*)/);
+        if (match) {
+          const info = lookupByMnemonic(match[1]);
+          if (info) {
+            this.renderMetaOnly(info);
+            return;
+          }
+        }
+      }
     }
 
+    this.bodyEl.innerHTML = '<div class="instr-info-placeholder">Move cursor to an instruction to see details</div>';
+  }
+
+  setSource(source: string): void {
+    this.lastSource = source;
+  }
+
+  private renderFull(instr: ParsedInstruction, info: OpcodeInfo): void {
     // Encode to get actual binary words
     let words: number[];
     try {
@@ -361,7 +387,6 @@ export class InstructionInfo {
       for (const field of fields) {
         const value = field.extract(words, instr, info);
         html += `<div class="instr-info-bit" style="flex:${field.bits};background:${field.color}15;border-color:${field.color}">`;
-        // Only show the field name if it differs from the value
         if (field.name && field.name !== value) {
           html += `<span class="instr-info-field-name" style="color:${field.color}80">${field.name}</span>`;
         }
@@ -376,6 +401,24 @@ export class InstructionInfo {
     // ── Raw hex ──
     const hexStr = words.map(w => (w >>> 0).toString(16).padStart(8, '0')).join(' ');
     html += `<div class="instr-info-hex">Binary: <span>${hexStr}</span></div>`;
+
+    this.bodyEl.innerHTML = html;
+  }
+
+  private renderMetaOnly(info: OpcodeInfo): void {
+    const descFirstLine = info.description.split('\n')[0];
+    let html = '';
+
+    html += `<div class="instr-info-meta">`;
+    html += `<span class="instr-info-format">${escapeHtml(info.format)}</span>`;
+    html += `<span class="instr-info-sep">|</span>`;
+    html += `<span class="instr-info-opcode">opcode: ${hexVal(info.opcode)}</span>`;
+    html += `<span class="instr-info-sep">|</span>`;
+    html += `<span class="instr-info-mnemonic">${escapeHtml(info.mnemonic)}</span>`;
+    html += `</div>`;
+
+    html += `<div class="instr-info-desc">${escapeHtml(descFirstLine)}</div>`;
+    html += `<div class="instr-info-formula">${escapeHtml(info.syntax)}</div>`;
 
     this.bodyEl.innerHTML = html;
   }
