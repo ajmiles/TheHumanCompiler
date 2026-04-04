@@ -6,7 +6,7 @@ import { IOPanel } from './io-panel';
 import { BinaryView } from './binary-view';
 import { InstructionInfo } from './instruction-info';
 import { Controls } from './controls';
-import { PuzzleSelect } from './puzzle-select';
+import { PuzzleSelect, LevelItem } from './puzzle-select';
 import { StatusBar } from './status-bar';
 import { LeaderboardOverlay, SolutionStats } from './leaderboard';
 import { Encyclopedia } from './encyclopedia';
@@ -16,6 +16,38 @@ import { Emulator } from '../emulator/emulator';
 import { Puzzle } from '../puzzle/types';
 import { ALL_PUZZLES, getPuzzleById } from '../puzzle/puzzles';
 import { ALL_TUTORIALS, getTutorialById, Tutorial } from '../puzzle/tutorials';
+
+// Build the level order: T1, P1, P2, T2, then remaining puzzles
+function buildLevelOrder(): LevelItem[] {
+  const levels: LevelItem[] = [];
+  const usedPuzzleIds = new Set<string>();
+
+  // T1: Welcome to the GPU
+  if (ALL_TUTORIALS[0]) levels.push({ kind: 'tutorial', data: ALL_TUTORIALS[0] });
+
+  // P1: Signal Boost, P2: Merge Streams
+  for (const id of ['signal-boost', 'merge-streams']) {
+    const p = getPuzzleById(id);
+    if (p) { levels.push({ kind: 'puzzle', data: p }); usedPuzzleIds.add(id); }
+  }
+
+  // T2: Input/Output Modifiers (if it exists)
+  if (ALL_TUTORIALS[1]) levels.push({ kind: 'tutorial', data: ALL_TUTORIALS[1] });
+
+  // Remaining puzzles in original order
+  for (const p of ALL_PUZZLES) {
+    if (!usedPuzzleIds.has(p.id)) levels.push({ kind: 'puzzle', data: p });
+  }
+
+  // Any remaining tutorials
+  for (let i = 2; i < ALL_TUTORIALS.length; i++) {
+    levels.push({ kind: 'tutorial', data: ALL_TUTORIALS[i] });
+  }
+
+  return levels;
+}
+
+const LEVEL_ORDER = buildLevelOrder();
 import { validatePuzzle } from '../puzzle/validator';
 import { WAVE_WIDTH } from '../isa/constants';
 import { AssemblyResult, OperandType } from '../isa/types';
@@ -80,7 +112,7 @@ export class App {
     this.buildLayout(root);
     this.wireEvents();
     // Show puzzle select on startup
-    this.puzzleSelect.show(ALL_PUZZLES, ALL_TUTORIALS, this.allCompletedIds());
+    this.puzzleSelect.show(LEVEL_ORDER, this.allCompletedIds());
   }
 
   private buildLayout(root: HTMLElement): void {
@@ -96,7 +128,7 @@ export class App {
     puzzleBtn.className = 'header__puzzle-select';
     puzzleBtn.textContent = '📋 Puzzles';
     puzzleBtn.onclick = () => {
-      this.puzzleSelect.show(ALL_PUZZLES, ALL_TUTORIALS, this.allCompletedIds());
+      this.puzzleSelect.show(LEVEL_ORDER, this.allCompletedIds());
     };
 
     const spacer = document.createElement('div');
