@@ -99,8 +99,9 @@ export class IOPanel {
     collectedOutputs: Map<number, number[]> | null,
     currentInvocation: number,
   ): void {
-    const streamLen = puzzle.inputs[0]?.values.length ?? puzzle.outputs[0]?.values.length ?? 0;
-    const inputs = puzzle.inputs;
+    const vgprInputs = puzzle.inputs.filter(i => !i.isSGPR);
+    const streamLen = vgprInputs[0]?.values.length ?? puzzle.outputs[0]?.values.length ?? 0;
+    const inputs = vgprInputs;
     const outputs = puzzle.outputs;
     const chunkStart = currentInvocation * WAVE_WIDTH;
     const chunkEnd = chunkStart + WAVE_WIDTH;

@@ -654,7 +654,10 @@ export class App {
       this.revisions = saved.revisions;
       this.activeRevision = saved.activeIndex;
     } else {
-      const inputNames = puzzle.inputs.map(i => `; ${i.name} in v${i.register}`).join('\n');
+      const inputNames = puzzle.inputs.map(i => {
+        const regName = i.isSGPR ? `s${i.register}` : `v${i.register}`;
+        return `; ${i.name} in ${regName}`;
+      }).join('\n');
       const outputNames = puzzle.outputs.map(o => `; ${o.name} to v${o.register}`).join('\n');
       const template = `; ${puzzle.title}\n${inputNames}\n${outputNames}\n; Write your solution below:\n\ns_endpgm\n`;
       this.revisions = [template];
