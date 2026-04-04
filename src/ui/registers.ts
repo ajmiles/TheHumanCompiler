@@ -23,7 +23,7 @@ function formatFloat(val: number, full: boolean): string {
 
 export class RegisterDisplay {
   private container: HTMLElement;
-  private showHex = false;
+  private vgprMode: 'f32' | 'hex' | 'uint' = 'f32';
   private sgprMode: 'hex' | 'uint' | 'f32' = 'hex';
   private vgprScrollWrapper!: HTMLElement;
   private sgprList!: HTMLElement;
@@ -64,31 +64,34 @@ export class RegisterDisplay {
     headerRight.style.gap = '8px';
     headerRight.style.alignItems = 'center';
 
-    // Float/Hex toggle
+    // F32/HEX/UINT toggle
     const toggle = document.createElement('div');
     toggle.className = 'format-toggle';
 
     const floatBtn = document.createElement('button');
     floatBtn.className = 'format-toggle__btn format-toggle__btn--active';
     floatBtn.textContent = 'F32';
-    floatBtn.onclick = () => {
-      this.showHex = false;
-      floatBtn.classList.add('format-toggle__btn--active');
-      hexBtn.classList.remove('format-toggle__btn--active');
-      this.rerender();
-    };
 
     const hexBtn = document.createElement('button');
     hexBtn.className = 'format-toggle__btn';
     hexBtn.textContent = 'HEX';
-    hexBtn.onclick = () => {
-      this.showHex = true;
-      hexBtn.classList.add('format-toggle__btn--active');
-      floatBtn.classList.remove('format-toggle__btn--active');
+
+    const uintBtn = document.createElement('button');
+    uintBtn.className = 'format-toggle__btn';
+    uintBtn.textContent = 'UINT';
+
+    const updateVgprToggle = () => {
+      floatBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'f32');
+      hexBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'hex');
+      uintBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'uint');
       this.rerender();
     };
 
-    toggle.append(floatBtn, hexBtn);
+    floatBtn.onclick = () => { this.vgprMode = 'f32'; updateVgprToggle(); };
+    hexBtn.onclick = () => { this.vgprMode = 'hex'; updateVgprToggle(); };
+    uintBtn.onclick = () => { this.vgprMode = 'uint'; updateVgprToggle(); };
+
+    toggle.append(floatBtn, hexBtn, uintBtn);
 
     // Transpose toggle
     const transposeBtn = document.createElement('button');
@@ -250,7 +253,13 @@ export class RegisterDisplay {
         const td = document.createElement('td');
         const val = state.readVGPR(r, l);
         const full = this.fullPrecisionLanes.has(l);
-        td.textContent = this.showHex ? floatToHex(val) : formatFloat(val, full);
+        if (this.vgprMode === 'hex') {
+          td.textContent = floatToHex(val);
+        } else if (this.vgprMode === 'uint') {
+          td.textContent = (state.readVGPR_u32(r, l) >>> 0).toString();
+        } else {
+          td.textContent = formatFloat(val, full);
+        }
         if (isModified) td.classList.add('modified');
         row.appendChild(td);
       }
@@ -296,7 +305,13 @@ export class RegisterDisplay {
       for (let r = 0; r < regCount; r++) {
         const td = document.createElement('td');
         const val = state.readVGPR(r, l);
-        td.textContent = this.showHex ? floatToHex(val) : formatFloat(val, false);
+        if (this.vgprMode === 'hex') {
+          td.textContent = floatToHex(val);
+        } else if (this.vgprMode === 'uint') {
+          td.textContent = (state.readVGPR_u32(r, l) >>> 0).toString();
+        } else {
+          td.textContent = formatFloat(val, false);
+        }
         if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
         row.appendChild(td);
       }
