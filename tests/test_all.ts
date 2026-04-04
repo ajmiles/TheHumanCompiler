@@ -977,94 +977,94 @@ function setupSwizzle(offsetHex: string): Emulator {
 // src_lane = ((lane & 0x1F) | 0) ^ 1 = lane ^ 1
 // Lane 0→1, 1→0, 2→3, 3→2, ...
 {
-  const emu = setupSwizzle('0x841F');
-  assert(emu.state.readVGPR_u32(1, 0) === 1, 'ds_swizzle xor=1: lane 0 reads from lane 1');
-  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle xor=1: lane 1 reads from lane 0');
-  assert(emu.state.readVGPR_u32(1, 2) === 3, 'ds_swizzle xor=1: lane 2 reads from lane 3');
-  assert(emu.state.readVGPR_u32(1, 3) === 2, 'ds_swizzle xor=1: lane 3 reads from lane 2');
-  assert(emu.state.readVGPR_u32(1, 30) === 31, 'ds_swizzle xor=1: lane 30 reads from lane 31');
-  assert(emu.state.readVGPR_u32(1, 31) === 30, 'ds_swizzle xor=1: lane 31 reads from lane 30');
+  const emu = setupSwizzle('0x041F');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'ds_swizzle bitwise xor=1: lane 0 reads from lane 1');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle bitwise xor=1: lane 1 reads from lane 0');
+  assert(emu.state.readVGPR_u32(1, 2) === 3, 'ds_swizzle bitwise xor=1: lane 2 reads from lane 3');
+  assert(emu.state.readVGPR_u32(1, 3) === 2, 'ds_swizzle bitwise xor=1: lane 3 reads from lane 2');
+  assert(emu.state.readVGPR_u32(1, 30) === 31, 'ds_swizzle bitwise xor=1: lane 30 reads from lane 31');
+  assert(emu.state.readVGPR_u32(1, 31) === 30, 'ds_swizzle bitwise xor=1: lane 31 reads from lane 30');
 }
 
 // Bitwise mode: XOR with distance 2 (xor=2, or=0, and=0x1F → 0x881F)
 // src_lane = lane ^ 2 → 0→2, 1→3, 2→0, 3→1, 4→6, 5→7, ...
 {
-  const emu = setupSwizzle('0x881F');
-  assert(emu.state.readVGPR_u32(1, 0) === 2, 'ds_swizzle xor=2: lane 0 reads from lane 2');
-  assert(emu.state.readVGPR_u32(1, 1) === 3, 'ds_swizzle xor=2: lane 1 reads from lane 3');
-  assert(emu.state.readVGPR_u32(1, 2) === 0, 'ds_swizzle xor=2: lane 2 reads from lane 0');
-  assert(emu.state.readVGPR_u32(1, 3) === 1, 'ds_swizzle xor=2: lane 3 reads from lane 1');
+  const emu = setupSwizzle('0x081F');
+  assert(emu.state.readVGPR_u32(1, 0) === 2, 'ds_swizzle bitwise xor=2: lane 0 reads from lane 2');
+  assert(emu.state.readVGPR_u32(1, 1) === 3, 'ds_swizzle bitwise xor=2: lane 1 reads from lane 3');
+  assert(emu.state.readVGPR_u32(1, 2) === 0, 'ds_swizzle bitwise xor=2: lane 2 reads from lane 0');
+  assert(emu.state.readVGPR_u32(1, 3) === 1, 'ds_swizzle bitwise xor=2: lane 3 reads from lane 1');
 }
 
 // Bitwise mode: AND round-down to even (xor=0, or=0, and=0x1E → 0x801E)
 // src_lane = (lane & 0x1E) | 0 ^ 0 = lane & 0x1E → clears bit 0
 // Lane 0→0, 1→0, 2→2, 3→2, 4→4, 5→4, ...
 {
-  const emu = setupSwizzle('0x801E');
-  assert(emu.state.readVGPR_u32(1, 0) === 0, 'ds_swizzle and=0x1E: lane 0 → 0');
-  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle and=0x1E: lane 1 → 0 (round down)');
-  assert(emu.state.readVGPR_u32(1, 2) === 2, 'ds_swizzle and=0x1E: lane 2 → 2');
-  assert(emu.state.readVGPR_u32(1, 3) === 2, 'ds_swizzle and=0x1E: lane 3 → 2 (round down)');
-  assert(emu.state.readVGPR_u32(1, 7) === 6, 'ds_swizzle and=0x1E: lane 7 → 6 (round down)');
+  const emu = setupSwizzle('0x001E');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'ds_swizzle bitwise and=0x1E: lane 0 → 0');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle bitwise and=0x1E: lane 1 → 0 (round down)');
+  assert(emu.state.readVGPR_u32(1, 2) === 2, 'ds_swizzle bitwise and=0x1E: lane 2 → 2');
+  assert(emu.state.readVGPR_u32(1, 3) === 2, 'ds_swizzle bitwise and=0x1E: lane 3 → 2 (round down)');
+  assert(emu.state.readVGPR_u32(1, 7) === 6, 'ds_swizzle bitwise and=0x1E: lane 7 → 6 (round down)');
 }
 
 // Bitwise mode: OR broadcast lane 0 within groups of 4 (xor=0, or=0, and=0x1C → 0x801C)
 // src_lane = lane & 0x1C → clears bottom 2 bits → reads from base of quad
 // Lane 0→0, 1→0, 2→0, 3→0, 4→4, 5→4, 6→4, 7→4, ...
 {
-  const emu = setupSwizzle('0x801C');
-  assert(emu.state.readVGPR_u32(1, 0) === 0, 'ds_swizzle and=0x1C: lane 0 → 0');
-  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle and=0x1C: lane 1 → 0');
-  assert(emu.state.readVGPR_u32(1, 2) === 0, 'ds_swizzle and=0x1C: lane 2 → 0');
-  assert(emu.state.readVGPR_u32(1, 3) === 0, 'ds_swizzle and=0x1C: lane 3 → 0');
-  assert(emu.state.readVGPR_u32(1, 4) === 4, 'ds_swizzle and=0x1C: lane 4 → 4');
-  assert(emu.state.readVGPR_u32(1, 5) === 4, 'ds_swizzle and=0x1C: lane 5 → 4');
+  const emu = setupSwizzle('0x001C');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'ds_swizzle bitwise and=0x1C: lane 0 → 0');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle bitwise and=0x1C: lane 1 → 0');
+  assert(emu.state.readVGPR_u32(1, 2) === 0, 'ds_swizzle bitwise and=0x1C: lane 2 → 0');
+  assert(emu.state.readVGPR_u32(1, 3) === 0, 'ds_swizzle bitwise and=0x1C: lane 3 → 0');
+  assert(emu.state.readVGPR_u32(1, 4) === 4, 'ds_swizzle bitwise and=0x1C: lane 4 → 4');
+  assert(emu.state.readVGPR_u32(1, 5) === 4, 'ds_swizzle bitwise and=0x1C: lane 5 → 4');
 }
 
 // Bitwise mode: OR sets bit → broadcast from lane 1 within pairs (xor=0, or=1, and=0x1E → 0x803E)
 // src_lane = ((lane & 0x1E) | 1) ^ 0 = (lane & 0x1E) | 1 → always odd
 // Lane 0→1, 1→1, 2→3, 3→3, 4→5, 5→5, ...
 {
-  const emu = setupSwizzle('0x803E');
-  assert(emu.state.readVGPR_u32(1, 0) === 1, 'ds_swizzle or=1,and=0x1E: lane 0 → 1');
-  assert(emu.state.readVGPR_u32(1, 1) === 1, 'ds_swizzle or=1,and=0x1E: lane 1 → 1');
-  assert(emu.state.readVGPR_u32(1, 2) === 3, 'ds_swizzle or=1,and=0x1E: lane 2 → 3');
-  assert(emu.state.readVGPR_u32(1, 3) === 3, 'ds_swizzle or=1,and=0x1E: lane 3 → 3');
+  const emu = setupSwizzle('0x003E');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'ds_swizzle bitwise or=1,and=0x1E: lane 0 → 1');
+  assert(emu.state.readVGPR_u32(1, 1) === 1, 'ds_swizzle bitwise or=1,and=0x1E: lane 1 → 1');
+  assert(emu.state.readVGPR_u32(1, 2) === 3, 'ds_swizzle bitwise or=1,and=0x1E: lane 2 → 3');
+  assert(emu.state.readVGPR_u32(1, 3) === 3, 'ds_swizzle bitwise or=1,and=0x1E: lane 3 → 3');
 }
 
 // Bitwise mode: combined xor+and (xor=1, or=0, and=0x1E → 0x841E)
 // src_lane = ((lane & 0x1E) | 0) ^ 1 → round to even then flip bit 0
 // Lane 0→1, 1→1, 2→3, 3→3, 4→5, 5→5, ...
 {
-  const emu = setupSwizzle('0x841E');
-  assert(emu.state.readVGPR_u32(1, 0) === 1, 'ds_swizzle xor=1,and=0x1E: lane 0 → 1');
-  assert(emu.state.readVGPR_u32(1, 1) === 1, 'ds_swizzle xor=1,and=0x1E: lane 1 → 1');
-  assert(emu.state.readVGPR_u32(1, 2) === 3, 'ds_swizzle xor=1,and=0x1E: lane 2 → 3');
-  assert(emu.state.readVGPR_u32(1, 3) === 3, 'ds_swizzle xor=1,and=0x1E: lane 3 → 3');
+  const emu = setupSwizzle('0x041E');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'ds_swizzle bitwise xor=1,and=0x1E: lane 0 → 1');
+  assert(emu.state.readVGPR_u32(1, 1) === 1, 'ds_swizzle bitwise xor=1,and=0x1E: lane 1 → 1');
+  assert(emu.state.readVGPR_u32(1, 2) === 3, 'ds_swizzle bitwise xor=1,and=0x1E: lane 2 → 3');
+  assert(emu.state.readVGPR_u32(1, 3) === 3, 'ds_swizzle bitwise xor=1,and=0x1E: lane 3 → 3');
 }
 
 // Quad permute mode (bit15=0): reverse within each quad → 0x00E4 = identity, 0x001B = reverse
 // 0x001B: quad_perm = [3,2,1,0] → bits = 11_10_01_00 = 0x1B
 {
-  const emu = setupSwizzle('0x001B');
-  assert(emu.state.readVGPR_u32(1, 0) === 3, 'ds_swizzle quad reverse: lane 0 → 3');
-  assert(emu.state.readVGPR_u32(1, 1) === 2, 'ds_swizzle quad reverse: lane 1 → 2');
-  assert(emu.state.readVGPR_u32(1, 2) === 1, 'ds_swizzle quad reverse: lane 2 → 1');
-  assert(emu.state.readVGPR_u32(1, 3) === 0, 'ds_swizzle quad reverse: lane 3 → 0');
+  const emu = setupSwizzle('0x801B');
+  assert(emu.state.readVGPR_u32(1, 0) === 3, 'ds_swizzle QDM reverse: lane 0 → 3');
+  assert(emu.state.readVGPR_u32(1, 1) === 2, 'ds_swizzle QDM reverse: lane 1 → 2');
+  assert(emu.state.readVGPR_u32(1, 2) === 1, 'ds_swizzle QDM reverse: lane 2 → 1');
+  assert(emu.state.readVGPR_u32(1, 3) === 0, 'ds_swizzle QDM reverse: lane 3 → 0');
   // Next quad (lanes 4-7) should also reverse within quad
-  assert(emu.state.readVGPR_u32(1, 4) === 7, 'ds_swizzle quad reverse: lane 4 → 7');
-  assert(emu.state.readVGPR_u32(1, 5) === 6, 'ds_swizzle quad reverse: lane 5 → 6');
+  assert(emu.state.readVGPR_u32(1, 4) === 7, 'ds_swizzle QDM reverse: lane 4 → 7');
+  assert(emu.state.readVGPR_u32(1, 5) === 6, 'ds_swizzle QDM reverse: lane 5 → 6');
 }
 
 // Quad permute mode: broadcast lane 0 of each quad → 0x0000 = [0,0,0,0]
 {
-  const emu = setupSwizzle('0x0000');
-  assert(emu.state.readVGPR_u32(1, 0) === 0, 'ds_swizzle quad broadcast: lane 0 → 0');
-  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle quad broadcast: lane 1 → 0');
-  assert(emu.state.readVGPR_u32(1, 2) === 0, 'ds_swizzle quad broadcast: lane 2 → 0');
-  assert(emu.state.readVGPR_u32(1, 3) === 0, 'ds_swizzle quad broadcast: lane 3 → 0');
-  assert(emu.state.readVGPR_u32(1, 4) === 4, 'ds_swizzle quad broadcast: lane 4 → 4 (quad base)');
-  assert(emu.state.readVGPR_u32(1, 5) === 4, 'ds_swizzle quad broadcast: lane 5 → 4');
+  const emu = setupSwizzle('0x8000');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'ds_swizzle QDM broadcast: lane 0 → 0');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle QDM broadcast: lane 1 → 0');
+  assert(emu.state.readVGPR_u32(1, 2) === 0, 'ds_swizzle QDM broadcast: lane 2 → 0');
+  assert(emu.state.readVGPR_u32(1, 3) === 0, 'ds_swizzle QDM broadcast: lane 3 → 0');
+  assert(emu.state.readVGPR_u32(1, 4) === 4, 'ds_swizzle QDM broadcast: lane 4 → 4 (quad base)');
+  assert(emu.state.readVGPR_u32(1, 5) === 4, 'ds_swizzle QDM broadcast: lane 5 → 4');
 }
 
 // EXEC masking: disabled lanes should not be modified
@@ -1081,7 +1081,7 @@ function setupSwizzle(offsetHex: string): Emulator {
   lines.push('v_mov_b32 v1, 0xFF');
   // Mask: only lane 0 active
   lines.push('s_mov_b32 exec_lo, 0x00000001');
-  lines.push('ds_swizzle_b32 v1, v0 offset:0x841F');  // XOR swap
+  lines.push('ds_swizzle_b32 v1, v0 offset:0x041F');  // XOR swap (bitwise: bit15=0)
   lines.push('s_endpgm');
   const emu = setup(lines.join('\n'));
   emu.run();

@@ -197,17 +197,17 @@ const INTRA_WAVE: Tutorial = {
       title: 'ds_swizzle_b32 — Lane Permutation',
       text:
         '<code>ds_swizzle_b32</code> permutes data between lanes <strong>without touching LDS memory</strong>, despite the "ds" prefix. It\'s a pure register-to-register lane shuffle.\n\n' +
-        'The permutation is controlled by a 16-bit <em>offset</em> word. When bit 15 is set, it uses <strong>bitwise mode</strong>:\n\n' +
+        'The permutation is controlled by a 16-bit <em>offset</em> word. When bit 15 is clear, it uses <strong>bitwise mode</strong> for full 32-thread data sharing:\n\n' +
         '<code style="font-family:monospace;letter-spacing:1px">┌──────────┬──────────┬──────────┬───┐\n' +
         '│  bit 15  │ [14:10]  │  [9:5]   │[4:0]│\n' +
-        '│  mode=1  │ xor_mask │ or_mask  │and_mask│\n' +
+        '│  mode=0  │ xor_mask │ or_mask  │and_mask│\n' +
         '└──────────┴──────────┴──────────┴───┘</code>\n\n' +
         'The source lane is computed as: <code>src = ((lane & and_mask) | or_mask) ^ xor_mask</code>\n\n' +
-        'When bit 15 is clear, it uses <strong>QDM (Quad Distribute Mode)</strong> — each group of 4 lanes gets independent 2-bit selectors to pick a source lane within its quad.\n\n' +
+        'When bit 15 is set, it uses <strong>QDM (Quad Distribute Mode)</strong> — each group of 4 lanes gets independent 2-bit selectors to pick a source lane within its quad.\n\n' +
         'Try this example. First, even lanes get 0.0 and odd lanes get 1.0. Then:\n' +
-        '• <strong>XOR swap</strong> (<code>0x841F</code>): xor=1, and=0x1F → swaps adjacent pairs (0↔1, 2↔3, …) so v1 has the values flipped\n' +
-        '• <strong>OR broadcast odd</strong> (<code>0x803E</code>): or=1, and=0x1E → every lane reads its odd neighbour, so v2 is all 1.0',
-      code: '; Setup: even lanes=0.0, odd lanes=1.0\nv_mov_b32 v0, 0.0\ns_mov_b32 exec_lo, 0xAAAAAAAA\nv_mov_b32 v0, 1.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; XOR swap: xor=1, or=0, and=0x1F → 0x841F\n; Lane 0 reads lane 1, lane 1 reads lane 0, etc.\n; v1: odd lanes get 0.0, even lanes get 1.0 (swapped!)\nds_swizzle_b32 v1, v0 offset:0x841F\n;\n; OR broadcast odd: xor=0, or=1, and=0x1E → 0x803E\n; src = (lane & 0x1E) | 1 → every lane reads its odd neighbour\n; v2: all lanes get 1.0 (the odd lane value)\nds_swizzle_b32 v2, v0 offset:0x803E\ns_endpgm',
+        '• <strong>XOR swap</strong> (<code>0x041F</code>): xor=1, and=0x1F → swaps adjacent pairs (0↔1, 2↔3, …) so v1 has the values flipped\n' +
+        '• <strong>OR broadcast odd</strong> (<code>0x003E</code>): or=1, and=0x1E → every lane reads its odd neighbour, so v2 is all 1.0',
+      code: '; Setup: even lanes=0.0, odd lanes=1.0\nv_mov_b32 v0, 0.0\ns_mov_b32 exec_lo, 0xAAAAAAAA\nv_mov_b32 v0, 1.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; XOR swap: xor=1, or=0, and=0x1F → 0x041F\n; Lane 0 reads lane 1, lane 1 reads lane 0, etc.\n; v1: odd lanes get 0.0, even lanes get 1.0 (swapped!)\nds_swizzle_b32 v1, v0 offset:0x041F\n;\n; OR broadcast odd: xor=0, or=1, and=0x1E → 0x003E\n; src = (lane & 0x1E) | 1 → every lane reads its odd neighbour\n; v2: all lanes get 1.0 (the odd lane value)\nds_swizzle_b32 v2, v0 offset:0x003E\ns_endpgm',
     },
     {
       title: 'DPP — Data Parallel Primitives',
