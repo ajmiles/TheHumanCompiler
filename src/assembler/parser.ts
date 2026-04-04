@@ -249,6 +249,7 @@ export function parse(tokens: Token[]): ParseResult {
     const parsed = parseOperands(info.format, expectedCount,
       operandGroups.map(g => g.token),
       errors,
+      info.mnemonic,
     );
     if (!parsed) continue;
 
@@ -312,6 +313,7 @@ function parseOperands(
   _operandCount: number,
   tokens: Token[],
   errors: AssemblyError[],
+  mnemonic?: string,
 ): OperandSet | null {
   if (format === InstructionFormat.VOP3) {
     // VOP3: can be 3-source (dst, src0, src1, src2) or 2-source (dst, src0, src1)
@@ -373,8 +375,11 @@ function parseOperands(
   }
 
   if (format === InstructionFormat.VOP1) {
-    // VOP1: dst, src0
-    const dst = parseDestOperand(tokens[0], errors);
+    // v_readfirstlane_b32 writes to an SGPR (or VGPR in some contexts)
+    const isReadFirstLane = mnemonic === 'v_readfirstlane_b32';
+    const dst = isReadFirstLane
+      ? parseSrc0Operand(tokens[0], errors)  // accept SGPR or VGPR
+      : parseDestOperand(tokens[0], errors);
     if (!dst) return null;
     const src0 = parseSrc0Operand(tokens[1], errors);
     if (!src0) return null;
