@@ -310,6 +310,88 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     writesVCC: true,
     isIntegerOp: true,
   },
+  {
+    mnemonic: 'v_dot8c_i32_i4',
+    format: InstructionFormat.VOP2,
+    opcode: 0x02,
+    operandCount: 3,
+    execute: (a, b) => ((a + (b ?? 0)) | 0),
+    description: 'Dot product of 8 4-bit integers, accumulate into 32-bit integer.',
+    syntax: 'v_dot8c_i32_i4 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mac_legacy_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x06,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Legacy multiply-accumulate: vdst = src0 × vsrc1 + vdst (0 * anything = 0).',
+    syntax: 'v_mac_legacy_f32 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_add_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x32,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a + (b ?? 0)),
+    description: 'Add two 16-bit floats.\nvdst = src0 + vsrc1',
+    syntax: 'v_add_f16 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_sub_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x33,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a - (b ?? 0)),
+    description: 'Subtract two 16-bit floats.\nvdst = src0 - vsrc1',
+    syntax: 'v_sub_f16 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_mul_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x35,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Multiply two 16-bit floats.\nvdst = src0 × vsrc1',
+    syntax: 'v_mul_f16 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_fmac_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x36,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Fused multiply-accumulate f16: vdst = src0 × vsrc1 + vdst.',
+    syntax: 'v_fmac_f16 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_max_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x39,
+    operandCount: 3,
+    execute: (a, b) => Math.max(a, b ?? 0),
+    description: 'Maximum of two 16-bit floats.\nvdst = max(src0, vsrc1)',
+    syntax: 'v_max_f16 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_min_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x3A,
+    operandCount: 3,
+    execute: (a, b) => Math.min(a, b ?? 0),
+    description: 'Minimum of two 16-bit floats.\nvdst = min(src0, vsrc1)',
+    syntax: 'v_min_f16 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_ldexp_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x3B,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * Math.pow(2, (b ?? 0) | 0)),
+    description: 'Load exponent f16: vdst = src0 × 2^vsrc1.',
+    syntax: 'v_ldexp_f16 vdst, src0, vsrc1',
+  },
 ];
 
 // ── VOP1 Instructions (1-source) ──
@@ -616,6 +698,80 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     syntax: 'v_swap_b32 vdst, vsrc0',
     isIntegerOp: true,
   },
+  {
+    mnemonic: 'v_cvt_f16_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x0A,
+    operandCount: 2,
+    execute: (a) => asFloat(a),
+    description: 'Convert a 32-bit float to a 16-bit float.\nvdst = (f16)src0',
+    syntax: 'v_cvt_f16_f32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_cvt_f32_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x0B,
+    operandCount: 2,
+    execute: (a) => asFloat(a),
+    description: 'Convert a 16-bit float to a 32-bit float.\nvdst = (f32)src0',
+    syntax: 'v_cvt_f32_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_cvt_f16_u16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x50,
+    operandCount: 2,
+    execute: (a) => asFloat((a >>> 0) & 0xFFFF),
+    description: 'Convert unsigned 16-bit integer to 16-bit float.\nvdst = (f16)(uint16)src0',
+    syntax: 'v_cvt_f16_u16 vdst, src0',
+    integerInput: true,
+  },
+  {
+    mnemonic: 'v_cvt_f16_i16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x51,
+    operandCount: 2,
+    execute: (a) => asFloat((a << 16) >> 16),
+    description: 'Convert signed 16-bit integer to 16-bit float.\nvdst = (f16)(int16)src0',
+    syntax: 'v_cvt_f16_i16 vdst, src0',
+    integerInput: true,
+  },
+  {
+    mnemonic: 'v_rcp_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x54,
+    operandCount: 2,
+    execute: (a) => asFloat(1.0 / a),
+    description: 'Reciprocal of a 16-bit float.\nvdst = 1.0 / src0',
+    syntax: 'v_rcp_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_sqrt_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x55,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.sqrt(a)),
+    description: 'Square root of a 16-bit float.\nvdst = √src0',
+    syntax: 'v_sqrt_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_exp_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x58,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.pow(2, a)),
+    description: 'Base-2 exponential of a 16-bit float.\nvdst = 2^src0',
+    syntax: 'v_exp_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_floor_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x5B,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.floor(a)),
+    description: 'Floor of a 16-bit float.\nvdst = floor(src0)',
+    syntax: 'v_floor_f16 vdst, src0',
+  },
 ];
 
 // ── VOP3-only Instructions (3-source, always 64-bit) ──
@@ -723,6 +879,293 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     description: 'Cross-lane permutation across groups of 16 lanes.',
     syntax: 'v_permlanex16_b32 vdst, vsrc0, ssrc1, ssrc2',
     isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mad_i32_i24',
+    format: InstructionFormat.VOP3,
+    opcode: 0x142,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const sa = (a << 8) >> 8;
+      const sb = ((b ?? 0) << 8) >> 8;
+      return ((sa * sb) + (c ?? 0)) | 0;
+    },
+    description: 'Multiply-add: (int24)src0 × (int24)src1 + src2.',
+    syntax: 'v_mad_i32_i24 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_bfe_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x149,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const data = a | 0;
+      const offset = (b ?? 0) & 31;
+      const width = (c ?? 0) & 31;
+      if (width === 0) return 0;
+      const extracted = (data >> offset) & ((1 << width) - 1);
+      // Sign-extend
+      const signBit = (extracted >>> (width - 1)) & 1;
+      return signBit ? (extracted | (~0 << width)) | 0 : extracted;
+    },
+    description: 'Bitfield extract (signed): extract and sign-extend a field from src0.',
+    syntax: 'v_bfe_i32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_bfi_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x14A,
+    operandCount: 4,
+    execute: (a, b, c) => (((a >>> 0) & (b ?? 0)) | (~(a >>> 0) & (c ?? 0))) >>> 0,
+    description: 'Bitfield insert: vdst = (src0 & src1) | (~src0 & src2).',
+    syntax: 'v_bfi_b32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_med3_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x157,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const vals = [a, b ?? 0, c ?? 0].sort((x, y) => x - y);
+      return asFloat(vals[1]);
+    },
+    description: 'Median of three 32-bit floats.\nvdst = median(src0, src1, src2)',
+    syntax: 'v_med3_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_mul_lo_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x169,
+    operandCount: 3,
+    execute: (a, b) => Math.imul(a >>> 0, (b ?? 0) >>> 0) >>> 0,
+    description: 'Multiply two unsigned 32-bit integers, return low 32 bits.',
+    syntax: 'v_mul_lo_u32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mul_hi_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x16A,
+    operandCount: 3,
+    execute: (a, b) => {
+      const ua = (a >>> 0);
+      const ub = ((b ?? 0) >>> 0);
+      return (Number(BigInt(ua) * BigInt(ub) >> 32n)) >>> 0;
+    },
+    description: 'Multiply two unsigned 32-bit integers, return high 32 bits.',
+    syntax: 'v_mul_hi_u32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_add3_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x36D,
+    operandCount: 4,
+    execute: (a, b, c) => ((a + (b ?? 0) + (c ?? 0)) >>> 0),
+    description: 'Add three unsigned 32-bit integers.\nvdst = src0 + src1 + src2',
+    syntax: 'v_add3_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_lshl_or_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x36F,
+    operandCount: 4,
+    execute: (a, b, c) => (((a << ((b ?? 0) & 31)) | (c ?? 0)) >>> 0),
+    description: 'Left shift src0 by src1 bits, then OR with src2.\nvdst = (src0 << src1) | src2',
+    syntax: 'v_lshl_or_b32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_or3_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x372,
+    operandCount: 4,
+    execute: (a, b, c) => ((a | (b ?? 0) | (c ?? 0)) >>> 0),
+    description: 'OR three 32-bit values.\nvdst = src0 | src1 | src2',
+    syntax: 'v_or3_b32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_pack_b32_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x311,
+    operandCount: 3,
+    execute: (a, b) => (((a & 0xFFFF) | (((b ?? 0) & 0xFFFF) << 16)) >>> 0),
+    description: 'Pack two f16 values into a 32-bit register.\nvdst = {src1[15:0], src0[15:0]}',
+    syntax: 'v_pack_b32_f16 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_fma_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x34B,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
+    description: 'Fused multiply-add for 16-bit floats.\nvdst = src0 × src1 + src2',
+    syntax: 'v_fma_f16 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_min3_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x351,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(Math.min(a, b ?? 0, c ?? 0)),
+    description: 'Minimum of three 16-bit floats.',
+    syntax: 'v_min3_f16 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_max3_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x354,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(Math.max(a, b ?? 0, c ?? 0)),
+    description: 'Maximum of three 16-bit floats.',
+    syntax: 'v_max3_f16 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_med3_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x357,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const vals = [a, b ?? 0, c ?? 0].sort((x, y) => x - y);
+      return asFloat(vals[1]);
+    },
+    description: 'Median of three 16-bit floats.',
+    syntax: 'v_med3_f16 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_med3_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x358,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const vals = [a | 0, (b ?? 0) | 0, (c ?? 0) | 0].sort((x, y) => x - y);
+      return vals[1];
+    },
+    description: 'Median of three signed 16-bit integers.',
+    syntax: 'v_med3_i16 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_add_nc_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x303,
+    operandCount: 3,
+    execute: (a, b) => ((a + (b ?? 0)) & 0xFFFF),
+    description: 'Add two unsigned 16-bit integers (no carry).',
+    syntax: 'v_add_nc_u16 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_sub_nc_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x304,
+    operandCount: 3,
+    execute: (a, b) => ((a - (b ?? 0)) & 0xFFFF),
+    description: 'Subtract two unsigned 16-bit integers (no carry).',
+    syntax: 'v_sub_nc_u16 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_lshrrev_b16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x307,
+    operandCount: 3,
+    execute: (a, b) => (((b ?? 0) >>> (a & 15)) & 0xFFFF),
+    description: 'Logical right shift 16-bit value (reversed operand order).',
+    syntax: 'v_lshrrev_b16 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  // VOP3P packed instructions (prefix 0x33, treated as VOP3)
+  {
+    mnemonic: 'v_pk_mul_lo_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x001,
+    operandCount: 3,
+    execute: (a) => a,
+    description: 'Packed multiply low unsigned 16-bit.',
+    syntax: 'v_pk_mul_lo_u16 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_pk_sub_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x003,
+    operandCount: 3,
+    execute: (a) => a,
+    description: 'Packed subtract signed 16-bit.',
+    syntax: 'v_pk_sub_i16 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_pk_lshlrev_b16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x004,
+    operandCount: 3,
+    execute: (a) => a,
+    description: 'Packed left shift rev 16-bit.',
+    syntax: 'v_pk_lshlrev_b16 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_pk_add_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x00A,
+    operandCount: 3,
+    execute: (a) => a,
+    description: 'Packed add unsigned 16-bit.',
+    syntax: 'v_pk_add_u16 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_pk_fma_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x00E,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
+    description: 'Packed fused multiply-add f16.',
+    syntax: 'v_pk_fma_f16 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_pk_add_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x00F,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a + (b ?? 0)),
+    description: 'Packed add f16.',
+    syntax: 'v_pk_add_f16 vdst, src0, src1',
+  },
+  {
+    mnemonic: 'v_pk_mul_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x010,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Packed multiply f16.',
+    syntax: 'v_pk_mul_f16 vdst, src0, src1',
+  },
+  {
+    mnemonic: 'v_pk_min_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x011,
+    operandCount: 3,
+    execute: (a, b) => Math.min(a, b ?? 0),
+    description: 'Packed minimum f16.',
+    syntax: 'v_pk_min_f16 vdst, src0, src1',
+  },
+  {
+    mnemonic: 'v_pk_max_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x012,
+    operandCount: 3,
+    execute: (a, b) => Math.max(a, b ?? 0),
+    description: 'Packed maximum f16.',
+    syntax: 'v_pk_max_f16 vdst, src0, src1',
   },
   {
     mnemonic: 'v_perm_b32',
@@ -910,6 +1353,96 @@ const VOPC_OPCODES: OpcodeInfo[] = [
     syntax: 'v_cmpx_ne_u32 src0, vsrc1',
     writesVCC: true,
   },
+  {
+    mnemonic: 'v_cmp_lt_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xC1,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) < ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare two unsigned 32-bit integers: set VCC if src0 < vsrc1.',
+    syntax: 'v_cmp_lt_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_lt_f16',
+    format: InstructionFormat.VOPC,
+    opcode: 0xC9,
+    operandCount: 2,
+    execute: (a, b) => (a < (b ?? 0)) ? 1 : 0,
+    description: 'Compare two 16-bit floats: set VCC if src0 < vsrc1.',
+    syntax: 'v_cmp_lt_f16 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_gt_f16',
+    format: InstructionFormat.VOPC,
+    opcode: 0xCC,
+    operandCount: 2,
+    execute: (a, b) => (a > (b ?? 0)) ? 1 : 0,
+    description: 'Compare two 16-bit floats: set VCC if src0 > vsrc1.',
+    syntax: 'v_cmp_gt_f16 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_eq_u16',
+    format: InstructionFormat.VOPC,
+    opcode: 0xAA,
+    operandCount: 2,
+    execute: (a, b) => ((a & 0xFFFF) === ((b ?? 0) & 0xFFFF)) ? 1 : 0,
+    description: 'Compare two unsigned 16-bit integers: set VCC if src0 == vsrc1.',
+    syntax: 'v_cmp_eq_u16 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_ne_u16',
+    format: InstructionFormat.VOPC,
+    opcode: 0xAD,
+    operandCount: 2,
+    execute: (a, b) => ((a & 0xFFFF) !== ((b ?? 0) & 0xFFFF)) ? 1 : 0,
+    description: 'Compare two unsigned 16-bit integers: set VCC if src0 != vsrc1.',
+    syntax: 'v_cmp_ne_u16 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_lt_i16',
+    format: InstructionFormat.VOPC,
+    opcode: 0x89,
+    operandCount: 2,
+    execute: (a, b) => (((a << 16) >> 16) < (((b ?? 0) << 16) >> 16)) ? 1 : 0,
+    description: 'Compare two signed 16-bit integers: set VCC if src0 < vsrc1.',
+    syntax: 'v_cmp_lt_i16 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_le_i16',
+    format: InstructionFormat.VOPC,
+    opcode: 0x8B,
+    operandCount: 2,
+    execute: (a, b) => (((a << 16) >> 16) <= (((b ?? 0) << 16) >> 16)) ? 1 : 0,
+    description: 'Compare two signed 16-bit integers: set VCC if src0 <= vsrc1.',
+    syntax: 'v_cmp_le_i16 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_gt_i16',
+    format: InstructionFormat.VOPC,
+    opcode: 0x8C,
+    operandCount: 2,
+    execute: (a, b) => (((a << 16) >> 16) > (((b ?? 0) << 16) >> 16)) ? 1 : 0,
+    description: 'Compare two signed 16-bit integers: set VCC if src0 > vsrc1.',
+    syntax: 'v_cmp_gt_i16 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_ge_i16',
+    format: InstructionFormat.VOPC,
+    opcode: 0x8E,
+    operandCount: 2,
+    execute: (a, b) => (((a << 16) >> 16) >= (((b ?? 0) << 16) >> 16)) ? 1 : 0,
+    description: 'Compare two signed 16-bit integers: set VCC if src0 >= vsrc1.',
+    syntax: 'v_cmp_ge_i16 src0, vsrc1',
+    writesVCC: true,
+  },
 ];
 
 // ── SOP1 Instructions (scalar, 1-source) ──
@@ -977,6 +1510,43 @@ const SOP1_OPCODES: OpcodeInfo[] = [
     execute: (a) => a,
     description: 'Save EXEC to sdst, then OR ssrc0 into EXEC.\nsdst = EXEC; EXEC |= ssrc0',
     syntax: 's_or_saveexec_b64 sdst, ssrc0',
+  },
+  {
+    mnemonic: 's_bcnt1_i32_b32',
+    format: InstructionFormat.SOP1,
+    opcode: 0x0F,
+    operandCount: 2,
+    execute: (a) => {
+      let v = a >>> 0;
+      let count = 0;
+      while (v) { count += v & 1; v >>>= 1; }
+      return count;
+    },
+    description: 'Count set bits (popcount) of a 32-bit value.',
+    syntax: 's_bcnt1_i32_b32 sdst, ssrc0',
+  },
+  {
+    mnemonic: 's_ff1_i32_b32',
+    format: InstructionFormat.SOP1,
+    opcode: 0x13,
+    operandCount: 2,
+    execute: (a) => {
+      const v = a >>> 0;
+      if (v === 0) return 0xFFFFFFFF;
+      for (let i = 0; i < 32; i++) { if ((v >>> i) & 1) return i; }
+      return 0xFFFFFFFF;
+    },
+    description: 'Find first one in a 32-bit value.',
+    syntax: 's_ff1_i32_b32 sdst, ssrc0',
+  },
+  {
+    mnemonic: 's_and_saveexec_b32',
+    format: InstructionFormat.SOP1,
+    opcode: 0x3C,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Save EXEC to sdst, then AND ssrc0 into EXEC (32-bit).\nsdst = EXEC_LO; EXEC_LO &= ssrc0',
+    syntax: 's_and_saveexec_b32 sdst, ssrc0',
   },
 ];
 
@@ -1047,6 +1617,33 @@ const SOPP_OPCODES: OpcodeInfo[] = [
     description: 'Instruction prefetch hint.',
     syntax: 's_inst_prefetch simm16',
   },
+  {
+    mnemonic: 's_cbranch_scc0',
+    format: InstructionFormat.SOPP,
+    opcode: 0x04,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'Conditional branch if SCC == 0.',
+    syntax: 's_cbranch_scc0 simm16',
+  },
+  {
+    mnemonic: 's_cbranch_vccnz',
+    format: InstructionFormat.SOPP,
+    opcode: 0x07,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'Conditional branch if VCC != 0.',
+    syntax: 's_cbranch_vccnz simm16',
+  },
+  {
+    mnemonic: 's_barrier',
+    format: InstructionFormat.SOPP,
+    opcode: 0x0A,
+    operandCount: 0,
+    execute: () => 0,
+    description: 'Synchronization barrier for all waves in a threadgroup.',
+    syntax: 's_barrier',
+  },
 ];
 
 // ── SOP2 Instructions (scalar, 2-source) ──
@@ -1061,6 +1658,9 @@ const SOP2_OPCODES: OpcodeInfo[] = [
   { mnemonic: 's_andn2_b64', format: InstructionFormat.SOP2, opcode: 0x15, operandCount: 3, execute: (a, b) => (a & ~(b ?? 0)) >>> 0, description: 'Scalar AND-NOT2 (64-bit): sdst = ssrc0 & ~ssrc1.', syntax: 's_andn2_b64 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_lshl_b32', format: InstructionFormat.SOP2, opcode: 0x1E, operandCount: 3, execute: (a, b) => (a << ((b ?? 0) & 31)) >>> 0, description: 'Scalar left shift (32-bit).', syntax: 's_lshl_b32 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_mul_i32', format: InstructionFormat.SOP2, opcode: 0x26, operandCount: 3, execute: (a, b) => Math.imul(a, b ?? 0) | 0, description: 'Scalar multiply signed 32-bit.', syntax: 's_mul_i32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_or_b32', format: InstructionFormat.SOP2, opcode: 0x10, operandCount: 3, execute: (a, b) => (a | (b ?? 0)) >>> 0, description: 'Scalar bitwise OR (32-bit).', syntax: 's_or_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_xor_b32', format: InstructionFormat.SOP2, opcode: 0x12, operandCount: 3, execute: (a, b) => (a ^ (b ?? 0)) >>> 0, description: 'Scalar bitwise XOR (32-bit).', syntax: 's_xor_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_andn2_b32', format: InstructionFormat.SOP2, opcode: 0x14, operandCount: 3, execute: (a, b) => (a & ~(b ?? 0)) >>> 0, description: 'Scalar AND-NOT2 (32-bit): sdst = ssrc0 & ~ssrc1.', syntax: 's_andn2_b32 sdst, ssrc0, ssrc1' },
 ];
 
 // ── SOPC Instructions (scalar compare) ──
@@ -1073,7 +1673,9 @@ const SOPC_OPCODES: OpcodeInfo[] = [
 // ── SOPK Instructions (scalar with inline constant) ──
 
 const SOPK_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 's_movk_i32', format: InstructionFormat.SOPK, opcode: 0x00, operandCount: 2, execute: (a) => a, description: 'Move a 16-bit immediate into an SGPR (sign-extended).', syntax: 's_movk_i32 sdst, simm16' },
   { mnemonic: 's_setreg_imm32_b32', format: InstructionFormat.SOPK, opcode: 0x15, operandCount: 2, execute: (a) => a, description: 'Set hardware register from 32-bit immediate.', syntax: 's_setreg_imm32_b32 hwreg, imm32' },
+  { mnemonic: 's_waitcnt_vscnt', format: InstructionFormat.SOPK, opcode: 0x17, operandCount: 0, execute: () => 0, description: 'Wait for vector store count to reach a specified value.', syntax: 's_waitcnt_vscnt null, simm16' },
 ];
 
 // ── SMEM Instructions (scalar memory) ──
@@ -1086,6 +1688,8 @@ const SMEM_OPCODES: OpcodeInfo[] = [
   { mnemonic: 's_buffer_load_dword', format: InstructionFormat.SMEM, opcode: 0x08, operandCount: 3, execute: (a) => a, description: 'Scalar buffer load 1 dword.', syntax: 's_buffer_load_dword sdst, sbase, offset' },
   { mnemonic: 's_buffer_load_dwordx2', format: InstructionFormat.SMEM, opcode: 0x09, operandCount: 3, execute: (a) => a, description: 'Scalar buffer load 2 dwords.', syntax: 's_buffer_load_dwordx2 sdst, sbase, offset' },
   { mnemonic: 's_buffer_load_dwordx4', format: InstructionFormat.SMEM, opcode: 0x0A, operandCount: 3, execute: (a) => a, description: 'Scalar buffer load 4 dwords.', syntax: 's_buffer_load_dwordx4 sdst, sbase, offset' },
+  { mnemonic: 's_buffer_load_dwordx8', format: InstructionFormat.SMEM, opcode: 0x0B, operandCount: 3, execute: (a) => a, description: 'Scalar buffer load 8 dwords.', syntax: 's_buffer_load_dwordx8 sdst, sbase, offset' },
+  { mnemonic: 's_buffer_load_dwordx16', format: InstructionFormat.SMEM, opcode: 0x0C, operandCount: 3, execute: (a) => a, description: 'Scalar buffer load 16 dwords.', syntax: 's_buffer_load_dwordx16 sdst, sbase, offset' },
 ];
 
 // ── MUBUF Instructions (buffer memory) ──
@@ -1103,7 +1707,20 @@ const MUBUF_OPCODES: OpcodeInfo[] = [
 // ── MIMG Instructions (image memory) ──
 
 const MIMG_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 'image_load', format: InstructionFormat.MIMG, opcode: 0x00, operandCount: 3, execute: (a) => a, description: 'Image load from texture.', syntax: 'image_load vdata, vaddr, srsrc' },
+  { mnemonic: 'image_store', format: InstructionFormat.MIMG, opcode: 0x08, operandCount: 3, execute: (a) => a, description: 'Image store to texture.', syntax: 'image_store vdata, vaddr, srsrc' },
+  { mnemonic: 'image_sample_lz', format: InstructionFormat.MIMG, opcode: 0x27, operandCount: 3, execute: (a) => a, description: 'Image sample with LOD zero.', syntax: 'image_sample_lz vdata, vaddr, srsrc, ssamp' },
   { mnemonic: 'image_gather4_l', format: InstructionFormat.MIMG, opcode: 0x44, operandCount: 3, execute: (a) => a, description: 'Gather 4 texels with explicit LOD.', syntax: 'image_gather4_l vdata, vaddr, srsrc, ssamp' },
+];
+
+// ── DS Instructions (data share / LDS) ──
+
+const DS_OPCODES: OpcodeInfo[] = [
+  { mnemonic: 'ds_write_b32', format: InstructionFormat.DS, opcode: 0x0D, operandCount: 2, execute: (a) => a, description: 'Write 32 bits to LDS.', syntax: 'ds_write_b32 vaddr, vdata' },
+  { mnemonic: 'ds_write2st64_b32', format: InstructionFormat.DS, opcode: 0x0F, operandCount: 3, execute: (a) => a, description: 'Write two 32-bit values to LDS with stride 64.', syntax: 'ds_write2st64_b32 vaddr, vdata0, vdata1' },
+  { mnemonic: 'ds_swizzle_b32', format: InstructionFormat.DS, opcode: 0x35, operandCount: 2, execute: (a) => a, description: 'Cross-lane data swizzle in LDS.', syntax: 'ds_swizzle_b32 vdst, vsrc' },
+  { mnemonic: 'ds_read_b32', format: InstructionFormat.DS, opcode: 0x36, operandCount: 2, execute: (a) => a, description: 'Read 32 bits from LDS.', syntax: 'ds_read_b32 vdst, vaddr' },
+  { mnemonic: 'ds_read2st64_b32', format: InstructionFormat.DS, opcode: 0x38, operandCount: 2, execute: (a) => a, description: 'Read two 32-bit values from LDS with stride 64.', syntax: 'ds_read2st64_b32 vdst, vaddr' },
 ];
 
 // ── Lookup Tables ──
@@ -1130,6 +1747,7 @@ register(SOPK_OPCODES);
 register(SMEM_OPCODES);
 register(MUBUF_OPCODES);
 register(MIMG_OPCODES);
+register(DS_OPCODES);
 
 export function lookupByMnemonic(mnemonic: string): OpcodeInfo | undefined {
   return byMnemonic.get(mnemonic.toLowerCase());

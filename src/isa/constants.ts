@@ -175,6 +175,13 @@ export const MIMG_ENCODING_PREFIX = 0x3C;
 export const MIMG_OP_SHIFT = 18;
 export const MIMG_OP_MASK = 0xFF;
 
+// DS encoding (2 dwords):
+// Dword 0: [31:26]=0x36, [25:18]=OP(8), [17]=GDS, [15:8]=OFFSET1(8), [7:0]=OFFSET0(8)
+// Dword 1: [31:24]=VDST(8), [23:16]=DATA1(8), [15:8]=DATA0(8), [7:0]=ADDR(8)
+export const DS_ENCODING_PREFIX = 0x36;
+export const DS_OP_SHIFT = 18;
+export const DS_OP_MASK = 0xFF;
+
 /**
  * Decode a 9-bit source operand encoding to its float/int value.
  * Returns the value the operand represents.

@@ -14,6 +14,7 @@ export enum InstructionFormat {
   MUBUF = 'MUBUF',
   MTBUF = 'MTBUF',
   MIMG = 'MIMG',
+  DS = 'DS',
 }
 
 export enum OperandType {
