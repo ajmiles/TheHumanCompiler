@@ -308,6 +308,12 @@ export class AsmEditor {
     return this.editor.getPosition()?.lineNumber ?? 1;
   }
 
+  revealLine(line: number): void {
+    this.editor.revealLineInCenterIfOutsideViewport(line);
+    this.editor.setPosition({ lineNumber: line, column: 1 });
+    this.editor.focus();
+  }
+
   setErrors(errors: { line: number; column: number; message: string }[]): void {
     const model = this.editor.getModel();
     if (!model) return;

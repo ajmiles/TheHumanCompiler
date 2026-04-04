@@ -37,6 +37,7 @@ export class App {
   private statusBar!: StatusBar;
   private leaderboard!: LeaderboardOverlay;
   private encyclopedia!: Encyclopedia;
+  private errorListEl!: HTMLElement;
 
   private emulator = new Emulator();
   private currentPuzzle: Puzzle | null = null;
@@ -144,7 +145,11 @@ export class App {
     const binaryContainer = document.createElement('div');
     binaryContainer.style.flexShrink = '0';
 
-    centerPanel.append(this.revisionBar, editorContainer, instrInfoContainer, binaryContainer);
+    this.errorListEl = document.createElement('div');
+    this.errorListEl.className = 'error-list-panel';
+    this.errorListEl.style.flexShrink = '0';
+
+    centerPanel.append(this.revisionBar, editorContainer, instrInfoContainer, binaryContainer, this.errorListEl);
 
     // Right column: I/O panel
     const rightPanel = document.createElement('div');
@@ -282,6 +287,9 @@ export class App {
     );
 
     this.controls.setAssembleStatus(this.assemblyResult.errors.length);
+
+    // Update error list
+    this.renderErrorList(this.assemblyResult.errors);
 
     if (this.assemblyResult.errors.length === 0 && this.assemblyResult.binary.length > 0) {
       this.binaryView.update(this.assemblyResult.binary, this.emulator.state.pc);
@@ -467,6 +475,46 @@ export class App {
     } else {
       this.editor.clearHighlight();
     }
+  }
+
+  private renderErrorList(errors: { message: string; line: number; column: number }[]): void {
+    if (errors.length === 0) {
+      this.errorListEl.style.display = 'none';
+      return;
+    }
+
+    this.errorListEl.style.display = '';
+    this.errorListEl.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.className = 'panel__header error-list-header';
+    header.textContent = `Errors (${errors.length})`;
+    this.errorListEl.appendChild(header);
+
+    const list = document.createElement('div');
+    list.className = 'error-list-body';
+
+    for (const err of errors) {
+      const row = document.createElement('div');
+      row.className = 'error-list-item';
+      row.ondblclick = () => {
+        this.editor.highlightLine(err.line);
+        this.editor.revealLine(err.line);
+      };
+
+      const loc = document.createElement('span');
+      loc.className = 'error-list-loc';
+      loc.textContent = `Ln ${err.line}`;
+
+      const msg = document.createElement('span');
+      msg.className = 'error-list-msg';
+      msg.textContent = err.message;
+
+      row.append(loc, msg);
+      list.appendChild(row);
+    }
+
+    this.errorListEl.appendChild(list);
   }
 
   // ── Puzzle Engine ──
