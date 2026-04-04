@@ -724,9 +724,39 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     syntax: 'v_permlanex16_b32 vdst, vsrc0, ssrc1, ssrc2',
     isIntegerOp: true,
   },
+  {
+    mnemonic: 'v_perm_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x344,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      // Permute bytes from src0 and src1 based on selector src2
+      // Each nibble of src2 selects a byte:
+      //   0-3: byte 0-3 of src1
+      //   4-7: byte 0-3 of src0
+      //   8-11: reserved (0)
+      //   12: 0x00, 13: 0xFF
+      const s0 = (a ?? 0) >>> 0;
+      const s1 = (b ?? 0) >>> 0;
+      const sel = (c ?? 0) >>> 0;
+      let result = 0;
+      for (let i = 0; i < 4; i++) {
+        const nibble = (sel >>> (i * 8)) & 0xFF;
+        let byte: number;
+        if (nibble <= 3) byte = (s1 >>> (nibble * 8)) & 0xFF;
+        else if (nibble <= 7) byte = (s0 >>> ((nibble - 4) * 8)) & 0xFF;
+        else if (nibble === 0x0C) byte = 0x00;
+        else if (nibble === 0x0D) byte = 0xFF;
+        else byte = 0;
+        result |= byte << (i * 8);
+      }
+      return result >>> 0;
+    },
+    description: 'Byte permutation. Each byte of vdst is selected from src0 or src1 by a selector in src2.\nSelector nibbles: 0-3=src1 bytes, 4-7=src0 bytes, 0xC=0x00, 0xD=0xFF.',
+    syntax: 'v_perm_b32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
 ];
-
-// ── VOPC Instructions(comparisons, write to VCC) ──
 
 const VOPC_OPCODES: OpcodeInfo[] = [
   {
