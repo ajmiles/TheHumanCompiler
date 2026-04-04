@@ -28,7 +28,6 @@ import {
   invalidRegister,
   wrongOperandCount,
   invalidLiteral,
-  src0Constraint,
 } from './errors';
 
 export interface ParseResult {
@@ -211,10 +210,12 @@ export function parse(tokens: Token[]): ParseResult {
     // VOPC special handling: accept 2 or 3 operands (optional vcc dest)
     let expectedCount = info.operandCount;
     if (info.format === InstructionFormat.VOPC) {
-      // Strip leading "vcc" or "exec" operand if present (it's implicit)
-      if (operandGroups.length === 3 &&
-          (operandGroups[0].token.value === 'vcc' || operandGroups[0].token.value === 'exec')) {
-        operandGroups.shift();
+      // Strip leading destination operand if present (vcc, exec, or SGPR pair)
+      if (operandGroups.length === 3) {
+        const firstVal = operandGroups[0].token.value;
+        if (firstVal === 'vcc' || firstVal === 'exec' || firstVal.match(/^s\d+$/)) {
+          operandGroups.shift();
+        }
       }
       expectedCount = 2; // always 2 source operands
     }
@@ -312,13 +313,13 @@ function parseOperands(
   }
 
   if (format === InstructionFormat.VOPC) {
-    // VOPC: src0, vsrc1 (no destination — result to VCC)
+    // VOPC: src0, src1 (no destination — result to VCC/SGPR)
+    // Both sources use 9-bit encoding (VOP3-promoted allows any source type)
     const src0 = parseSrc0Operand(tokens[0], errors);
     if (!src0) return null;
-    const vsrc1 = parseVsrc1Operand(tokens[1], errors);
-    if (!vsrc1) return null;
-    // Store src0 as "dst" and vsrc1 as "src0" for the encoding to pick up
-    return { dst: src0, src0: vsrc1 };
+    const src1 = parseSrc0Operand(tokens[1], errors);
+    if (!src1) return null;
+    return { dst: src0, src0: src1 };
   }
 
   if (format === InstructionFormat.SOP1) {
@@ -420,27 +421,6 @@ function parseSrc0Operand(token: Token, errors: AssemblyError[]): Operand | null
   }
 
   errors.push(invalidLiteral(token.value, token.line, token.column));
-  return null;
-}
-
-// VSRC1: must be VGPR, encoded as plain 8-bit index
-function parseVsrc1Operand(token: Token, errors: AssemblyError[]): Operand | null {
-  if (token.type === TokenType.REGISTER) {
-    const reg = parseRegister(token);
-    if (!reg) {
-      errors.push(invalidRegister(token.value, token.line, token.column));
-      return null;
-    }
-    if (reg.type !== OperandType.VGPR) {
-      errors.push(src0Constraint(token.line, token.column));
-      return null;
-    }
-    // VSRC1 encoded as plain VGPR index
-    return { type: OperandType.VGPR, value: reg.index, encoded: reg.index };
-  }
-
-  // VSRC1 must be VGPR
-  errors.push(src0Constraint(token.line, token.column));
   return null;
 }
 

@@ -862,9 +862,16 @@ export function disassemble(
   if (decoded.format === InstructionFormat.VOPC) {
     const src0 = formatSrc0(decoded.src0Encoded, decoded.literal, isInt);
     const src1 = formatSrc0(decoded.src1!, decoded.literal, isInt);
-    // v_cmpx_* writes to EXEC, v_cmp_* writes to VCC (or SGPR pair in VOP3)
     const isCmpx = mnemonic.startsWith('v_cmpx_');
-    const dest = isCmpx ? 'exec' : 'vcc';
+    // VOP3-promoted VOPC can write to an SGPR pair instead of VCC
+    let dest: string;
+    if (isCmpx) {
+      dest = 'exec';
+    } else if (decoded.dst === 106) {
+      dest = 'vcc'; // VCC_LO
+    } else {
+      dest = `s${decoded.dst}`;
+    }
     return `${mnemonic} ${dest}, ${src0}, ${src1}`;
   }
 
