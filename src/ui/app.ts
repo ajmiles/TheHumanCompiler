@@ -6,7 +6,7 @@ import { IOPanel } from './io-panel';
 import { BinaryView } from './binary-view';
 import { InstructionInfo } from './instruction-info';
 import { Controls } from './controls';
-import { PuzzleSelect, LevelItem } from './puzzle-select';
+import { PuzzleSelect, LevelItem, BestScore } from './puzzle-select';
 import { StatusBar } from './status-bar';
 import { LeaderboardOverlay, SolutionStats } from './leaderboard';
 import { Encyclopedia } from './encyclopedia';
@@ -16,6 +16,7 @@ import { Emulator } from '../emulator/emulator';
 import { Puzzle } from '../puzzle/types';
 import { ALL_PUZZLES, getPuzzleById } from '../puzzle/puzzles';
 import { ALL_TUTORIALS, getTutorialById, Tutorial } from '../puzzle/tutorials';
+import { getLeaderboard } from '../puzzle/leaderboard';
 
 // Build the level order: T1, P1, P2, T2, then remaining puzzles
 function buildLevelOrder(): LevelItem[] {
@@ -112,7 +113,7 @@ export class App {
     this.buildLayout(root);
     this.wireEvents();
     // Show puzzle select on startup
-    this.puzzleSelect.show(LEVEL_ORDER, this.allCompletedIds());
+    this.puzzleSelect.show(LEVEL_ORDER, this.allCompletedIds(), this.getBestScores());
   }
 
   private buildLayout(root: HTMLElement): void {
@@ -128,7 +129,7 @@ export class App {
     puzzleBtn.className = 'header__puzzle-select';
     puzzleBtn.textContent = '📋 Puzzles';
     puzzleBtn.onclick = () => {
-      this.puzzleSelect.show(LEVEL_ORDER, this.allCompletedIds());
+      this.puzzleSelect.show(LEVEL_ORDER, this.allCompletedIds(), this.getBestScores());
     };
 
     const spacer = document.createElement('div');
@@ -813,6 +814,23 @@ export class App {
 
   private allCompletedIds(): Set<string> {
     return new Set([...this.completedIds, ...this.completedTutorialIds]);
+  }
+
+  private getBestScores(): Map<string, BestScore> {
+    const scores = new Map<string, BestScore>();
+    for (const puzzle of ALL_PUZZLES) {
+      const entries = getLeaderboard(puzzle.id);
+      if (entries.length === 0) continue;
+      // Find best in each category
+      let bestSize = Infinity, bestVgprs = Infinity, bestCycles = Infinity;
+      for (const e of entries) {
+        if (e.codeSize < bestSize) bestSize = e.codeSize;
+        if (e.vgprsUsed < bestVgprs) bestVgprs = e.vgprsUsed;
+        if (e.cycles < bestCycles) bestCycles = e.cycles;
+      }
+      scores.set(puzzle.id, { codeSize: bestSize, vgprsUsed: bestVgprs, cycles: bestCycles });
+    }
+    return scores;
   }
 
   // ── Persistence ──

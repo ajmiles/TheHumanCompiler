@@ -8,6 +8,12 @@ export type LevelItem =
   | { kind: 'tutorial'; data: Tutorial }
   | { kind: 'puzzle'; data: Puzzle };
 
+export interface BestScore {
+  codeSize: number;
+  vgprsUsed: number;
+  cycles: number;
+}
+
 export class PuzzleSelect {
   private overlay: HTMLElement;
   private content: HTMLElement;
@@ -32,7 +38,7 @@ export class PuzzleSelect {
     });
   }
 
-  show(levels: LevelItem[], completedIds: Set<string>): void {
+  show(levels: LevelItem[], completedIds: Set<string>, bestScores?: Map<string, BestScore>): void {
     this.content.innerHTML = '';
 
     // Title
@@ -94,7 +100,20 @@ export class PuzzleSelect {
       // Description (truncated)
       const descEl = document.createElement('span');
       descEl.className = 'level-row__desc';
-      descEl.textContent = desc.length > 100 ? desc.slice(0, 100) + '…' : desc;
+      descEl.textContent = desc.length > 80 ? desc.slice(0, 80) + '…' : desc;
+
+      // Best scores (puzzles only)
+      const scoresEl = document.createElement('span');
+      scoresEl.className = 'level-row__scores';
+      if (!isTutorial) {
+        const best = bestScores?.get(id);
+        if (best) {
+          scoresEl.innerHTML =
+            `<span class="level-row__score">${best.codeSize}B</span>` +
+            `<span class="level-row__score">${best.vgprsUsed}V</span>` +
+            `<span class="level-row__score">${best.cycles}C</span>`;
+        }
+      }
 
       // Status
       const status = document.createElement('span');
@@ -104,7 +123,7 @@ export class PuzzleSelect {
         status.classList.add('level-row__status--done');
       }
 
-      row.append(numBadge, titleEl, tag, descEl, status);
+      row.append(numBadge, titleEl, tag, descEl, scoresEl, status);
       list.appendChild(row);
       levelNum++;
     }

@@ -545,6 +545,25 @@ html, body {
   white-space: nowrap;
 }
 
+.level-row__scores {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 130px;
+  justify-content: flex-end;
+}
+
+.level-row__score {
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(57, 211, 83, 0.1);
+  color: var(--accent-green);
+  border: 1px solid rgba(57, 211, 83, 0.2);
+}
+
 .level-row__status {
   font-size: 16px;
   min-width: 20px;
