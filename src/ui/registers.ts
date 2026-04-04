@@ -31,7 +31,8 @@ export class RegisterDisplay {
   private maxVgpr = 0;
   private maxSgpr = -1;
   private lastState: GPUState | null = null;
-  private fullPrecisionLanes = new Set<number>(); // lanes showing full f32 precision
+  private fullPrecisionLanes = new Set<number>();
+  private transposed = true; // default: rows=lanes, cols=registers
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -89,7 +90,18 @@ export class RegisterDisplay {
 
     toggle.append(floatBtn, hexBtn);
 
-    headerRight.append(toggle);
+    // Transpose toggle
+    const transposeBtn = document.createElement('button');
+    transposeBtn.className = 'format-toggle__btn format-toggle__btn--active';
+    transposeBtn.textContent = '⇄';
+    transposeBtn.title = 'Toggle layout: rows=lanes vs rows=registers';
+    transposeBtn.onclick = () => {
+      this.transposed = !this.transposed;
+      this.fullPrecisionLanes.clear();
+      this.rerender();
+    };
+
+    headerRight.append(toggle, transposeBtn);
     vgprHeader.append(vgprLabel, headerRight);
     vgprSection.appendChild(vgprHeader);
 
@@ -175,13 +187,21 @@ export class RegisterDisplay {
   }
 
   private renderVGPRs(state: GPUState): void {
-    const count = Math.max(this.maxVgpr + 1, 1);
+    const regCount = Math.max(this.maxVgpr + 1, 1);
     const lanes = WAVE_WIDTH;
 
+    if (this.transposed) {
+      this.renderVGPRsTransposed(state, regCount, lanes);
+    } else {
+      this.renderVGPRsNormal(state, regCount, lanes);
+    }
+  }
+
+  /** Rows = registers, Columns = lanes (original layout) */
+  private renderVGPRsNormal(state: GPUState, regCount: number, lanes: number): void {
     const table = document.createElement('table');
     table.className = 'vgpr-table';
 
-    // Header row
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
     headerRow.className = 'vgpr-table__header-row';
@@ -214,9 +234,8 @@ export class RegisterDisplay {
     thead.appendChild(headerRow);
     table.appendChild(thead);
 
-    // Body
     const tbody = document.createElement('tbody');
-    for (let r = 0; r < count; r++) {
+    for (let r = 0; r < regCount; r++) {
       const row = document.createElement('tr');
       const nameCell = document.createElement('td');
       nameCell.textContent = `v${r}`;
@@ -235,7 +254,52 @@ export class RegisterDisplay {
       tbody.appendChild(row);
     }
     table.appendChild(tbody);
+    this.vgprScrollWrapper.replaceChildren(table);
+  }
 
+  /** Rows = lanes, Columns = registers (transposed layout) */
+  private renderVGPRsTransposed(state: GPUState, regCount: number, lanes: number): void {
+    const table = document.createElement('table');
+    table.className = 'vgpr-table';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    headerRow.className = 'vgpr-table__header-row';
+
+    const laneTh = document.createElement('th');
+    laneTh.textContent = 'Lane';
+    headerRow.appendChild(laneTh);
+
+    for (let r = 0; r < regCount; r++) {
+      const th = document.createElement('th');
+      th.textContent = `v${r}`;
+      th.style.cursor = 'pointer';
+      th.title = `v${r}`;
+      if (state.modifiedRegs.has(`v${r}`)) {
+        th.classList.add('vgpr-table__th--full');
+      }
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (let l = 0; l < lanes; l++) {
+      const row = document.createElement('tr');
+      const laneCell = document.createElement('td');
+      laneCell.textContent = `L${l}`;
+      row.appendChild(laneCell);
+
+      for (let r = 0; r < regCount; r++) {
+        const td = document.createElement('td');
+        const val = state.readVGPR(r, l);
+        td.textContent = this.showHex ? floatToHex(val) : formatFloat(val, false);
+        if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
+        row.appendChild(td);
+      }
+      tbody.appendChild(row);
+    }
+    table.appendChild(tbody);
     this.vgprScrollWrapper.replaceChildren(table);
   }
 
