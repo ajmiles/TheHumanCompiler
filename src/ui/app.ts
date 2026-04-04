@@ -721,11 +721,15 @@ export class App {
     this.currentTutorial = tutorial;
     this.isTutorialMode = true;
 
-    // Hide I/O panel content, show tutorial panel
-    this.ioPanel.setPuzzle(null as unknown as Puzzle);
-    this.ioContainer.querySelectorAll('.puzzle-panel').forEach(el => {
-      (el as HTMLElement).style.display = 'none';
-    });
+    // Hide I/O panel, show tutorial panel
+    // Hide all children of ioContainer except the tutorial panel
+    for (const child of Array.from(this.ioContainer.children)) {
+      if ((child as HTMLElement).classList?.contains('tutorial-panel')) {
+        (child as HTMLElement).style.display = '';
+      } else {
+        (child as HTMLElement).style.display = 'none';
+      }
+    }
     this.tutorialPanel.setTutorial(tutorial);
 
     // Load code from the first step if it has one
@@ -755,10 +759,14 @@ export class App {
     this.currentTutorial = null;
     this.tutorialPanel.hide();
 
-    // Re-show I/O panel content
-    this.ioContainer.querySelectorAll('.puzzle-panel').forEach(el => {
-      (el as HTMLElement).style.display = '';
-    });
+    // Re-show I/O panel content, hide tutorial panel
+    for (const child of Array.from(this.ioContainer.children)) {
+      if ((child as HTMLElement).classList?.contains('tutorial-panel')) {
+        (child as HTMLElement).style.display = 'none';
+      } else {
+        (child as HTMLElement).style.display = '';
+      }
+    }
   }
 
   private allCompletedIds(): Set<string> {
