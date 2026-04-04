@@ -24,7 +24,7 @@ function formatFloat(val: number, full: boolean): string {
 export class RegisterDisplay {
   private container: HTMLElement;
   private showHex = false;
-  private sgprShowHex = true;  // SGPRs default to hex
+  private sgprMode: 'hex' | 'uint' | 'f32' = 'hex';
   private vgprScrollWrapper!: HTMLElement;
   private sgprList!: HTMLElement;
   private specialRegsEl!: HTMLElement;
@@ -130,24 +130,27 @@ export class RegisterDisplay {
     const sgprUintBtn = document.createElement('button');
     sgprUintBtn.className = 'format-toggle__btn';
     sgprUintBtn.textContent = 'UINT';
-    sgprUintBtn.onclick = () => {
-      this.sgprShowHex = false;
-      sgprUintBtn.classList.add('format-toggle__btn--active');
-      sgprHexBtn.classList.remove('format-toggle__btn--active');
-      this.rerender();
-    };
 
     const sgprHexBtn = document.createElement('button');
     sgprHexBtn.className = 'format-toggle__btn format-toggle__btn--active';
     sgprHexBtn.textContent = 'HEX';
-    sgprHexBtn.onclick = () => {
-      this.sgprShowHex = true;
-      sgprHexBtn.classList.add('format-toggle__btn--active');
-      sgprUintBtn.classList.remove('format-toggle__btn--active');
+
+    const sgprF32Btn = document.createElement('button');
+    sgprF32Btn.className = 'format-toggle__btn';
+    sgprF32Btn.textContent = 'F32';
+
+    const updateSgprToggle = () => {
+      sgprUintBtn.classList.toggle('format-toggle__btn--active', this.sgprMode === 'uint');
+      sgprHexBtn.classList.toggle('format-toggle__btn--active', this.sgprMode === 'hex');
+      sgprF32Btn.classList.toggle('format-toggle__btn--active', this.sgprMode === 'f32');
       this.rerender();
     };
 
-    sgprToggle.append(sgprUintBtn, sgprHexBtn);
+    sgprUintBtn.onclick = () => { this.sgprMode = 'uint'; updateSgprToggle(); };
+    sgprHexBtn.onclick = () => { this.sgprMode = 'hex'; updateSgprToggle(); };
+    sgprF32Btn.onclick = () => { this.sgprMode = 'f32'; updateSgprToggle(); };
+
+    sgprToggle.append(sgprUintBtn, sgprHexBtn, sgprF32Btn);
     sgprHeaderRight.append(sgprToggle);
     sgprHeader.append(sgprLabel, sgprHeaderRight);
 
@@ -320,9 +323,16 @@ export class RegisterDisplay {
       const rawVal = state.readSGPR(i) >>> 0;
       const val = document.createElement('span');
       val.className = 'sgpr-entry__value';
-      val.textContent = this.sgprShowHex
-        ? '0x' + rawVal.toString(16).padStart(8, '0')
-        : rawVal.toString();
+      if (this.sgprMode === 'hex') {
+        val.textContent = '0x' + rawVal.toString(16).padStart(8, '0');
+      } else if (this.sgprMode === 'f32') {
+        const f32 = new Float32Array(1);
+        const u32 = new Uint32Array(f32.buffer);
+        u32[0] = rawVal;
+        val.textContent = f32[0].toPrecision(6);
+      } else {
+        val.textContent = rawVal.toString();
+      }
 
       entry.append(name, val);
       this.sgprList.appendChild(entry);

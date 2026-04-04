@@ -405,7 +405,7 @@ group('VOP1 Conversion Operations');
 group('VOP1 Special (v_readfirstlane_b32)');
 
 {
-  const emu = setup('v_readfirstlane_b32 v1, v0\ns_endpgm');
+  const emu = setup('v_readfirstlane_b32 s1, v0\ns_endpgm');
   // Set EXEC to skip lane 0, first active = lane 1
   emu.state.exec = 0xFFFFFFFE; // bit0=0, bit1..31=1
   emu.state.writeVGPR_u32(0, 0, 0x11111111);
@@ -413,8 +413,7 @@ group('VOP1 Special (v_readfirstlane_b32)');
   emu.state.writeVGPR_u32(0, 2, 0x33333333);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(1, 0) === (0x22222222 >>> 0), 'v_readfirstlane_b32: broadcasts lane 1 to lane 0');
-  assert(emu.state.readVGPR_u32(1, 2) === (0x22222222 >>> 0), 'v_readfirstlane_b32: broadcasts lane 1 to lane 2');
+  assert(emu.state.readSGPR(1) === (0x22222222 >>> 0), 'v_readfirstlane_b32: broadcasts lane 1 value to s1');
 }
 
 // ════════════════════════════════════════════

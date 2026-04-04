@@ -270,7 +270,7 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
-  // v_readfirstlane_b32: broadcast first active lane to all lanes
+  // v_readfirstlane_b32: broadcast first active lane to scalar dest
   if (opcodeInfo.mnemonic === 'v_readfirstlane_b32') {
     const exec = state.exec;
     let firstVal = 0;
@@ -280,8 +280,14 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
         break;
       }
     }
-    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
-      state.writeVGPR_u32(decoded.dst, lane, firstVal);
+    // v_readfirstlane writes to an SGPR (VDST field holds SGPR index)
+    const dst = decoded.dst;
+    if (dst === EXEC_LO) {
+      state.exec = firstVal; state.modifiedRegs.add('EXEC');
+    } else if (dst === VCC_LO) {
+      state.vcc = firstVal; state.modifiedRegs.add('VCC');
+    } else {
+      state.writeSGPR(dst, firstVal);
     }
     return;
   }
