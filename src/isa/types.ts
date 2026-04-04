@@ -44,6 +44,8 @@ export interface ParsedInstruction {
   column: number;
   omod?: number;       // Output modifier: 0=none, 1=×2, 2=×4, 3=÷2
   clamp?: boolean;     // Clamp output to [0.0, 1.0]
+  offset?: number;     // Memory offset (SMEM, MUBUF, DS)
+  memFlags?: number;   // Packed memory flags: bit1=idxen, bit2=glc, bit0=offen
 }
 
 export interface DecodedInstruction {

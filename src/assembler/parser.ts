@@ -84,10 +84,30 @@ export function parse(tokens: Token[]): ParseResult {
       InstructionFormat.VOP1, InstructionFormat.VOP2, InstructionFormat.VOP3,
       InstructionFormat.VOPC, InstructionFormat.SOP1, InstructionFormat.SOPP,
       InstructionFormat.SOP2, InstructionFormat.SOPC,
+      InstructionFormat.SMEM, InstructionFormat.MUBUF,
+      InstructionFormat.DS, InstructionFormat.MIMG,
     ]);
     if (!assembleableFormats.has(info.format)) {
       while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
         advance();
+      }
+      continue;
+    }
+
+    // Memory/DS formats — different operand pattern, parsed separately
+    if (info.format === InstructionFormat.SMEM ||
+        info.format === InstructionFormat.MUBUF ||
+        info.format === InstructionFormat.DS ||
+        info.format === InstructionFormat.MIMG) {
+      const memTokens: Token[] = [];
+      while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
+        if (peek().type === TokenType.COMMA) { advance(); continue; }
+        memTokens.push(advance());
+      }
+
+      const memInstr = parseMemoryFormat(info.format, memTokens, mnemonicToken, errors);
+      if (memInstr) {
+        instructions.push(memInstr);
       }
       continue;
     }
@@ -463,6 +483,66 @@ function parseSsrc0Operand(token: Token, errors: AssemblyError[]): Operand | nul
   return null;
 }
 
+function parseMemoryFormat(
+  _format: InstructionFormat,
+  tokens: Token[],
+  mnemonicToken: Token,
+  errors: AssemblyError[],
+): ParsedInstruction | null {
+  // Separate register/number tokens from trailing modifier tokens
+  const regTokens: Token[] = [];
+  let offset = 0;
+  let memFlags = 0;
+  for (const t of tokens) {
+    if (t.type === TokenType.MODIFIER) {
+      if (t.value === 'idxen') memFlags |= 2;
+      else if (t.value === 'offen') memFlags |= 1;
+      else if (t.value === 'glc') memFlags |= 4;
+      else if (t.value.startsWith('offset:')) offset = parseInt(t.value.slice(7), 10) || 0;
+      else if (t.value.startsWith('offset0:')) offset = (offset & 0xFF00) | (parseInt(t.value.slice(8), 10) & 0xFF);
+      else if (t.value.startsWith('offset1:')) offset = (offset & 0x00FF) | ((parseInt(t.value.slice(8), 10) & 0xFF) << 8);
+    } else {
+      regTokens.push(t);
+    }
+  }
+
+  const nullOp: Operand = { type: OperandType.INLINE_INT, value: 0, encoded: 0 };
+
+  // Parse each register/number token into an Operand
+  const ops: Operand[] = [];
+  for (const t of regTokens) {
+    if (t.type === TokenType.REGISTER) {
+      const reg = parseRegister(t);
+      if (!reg) {
+        errors.push(invalidRegister(t.value, t.line, t.column));
+        return null;
+      }
+      ops.push({ type: reg.type, value: reg.index, encoded: reg.index });
+    } else if (t.type === TokenType.NUMBER) {
+      const numOp = parseNumericOperand(t, errors);
+      if (!numOp) return null;
+      ops.push(numOp);
+    }
+  }
+
+  if (ops.length < 1) {
+    errors.push(wrongOperandCount(2, ops.length, mnemonicToken.line, mnemonicToken.column));
+    return null;
+  }
+
+  return {
+    mnemonic: mnemonicToken.value,
+    dst: ops[0] ?? nullOp,
+    src0: ops[1] ?? nullOp,
+    src1: ops[2],
+    src2: ops[3],
+    line: mnemonicToken.line,
+    column: mnemonicToken.column,
+    offset: offset || undefined,
+    memFlags: memFlags || undefined,
+  };
+}
+
 interface RegisterInfo {
   type: OperandType.VGPR | OperandType.SGPR | OperandType.SPECIAL;
   index: number;
@@ -485,6 +565,14 @@ function parseRegister(token: Token): RegisterInfo | null {
   // Special registers
   if (val in SPECIAL_REG_MAP) {
     return { type: OperandType.SPECIAL, index: SPECIAL_REG_MAP[val] };
+  }
+
+  // Register range syntax: v[N:M] or s[N:M]
+  const rangeMatch = val.match(/^([vs])\[(\d+):(\d+)\]$/);
+  if (rangeMatch) {
+    const regType = rangeMatch[1] === 'v' ? OperandType.VGPR : OperandType.SGPR;
+    const idx = parseInt(rangeMatch[2], 10);
+    return { type: regType, index: idx };
   }
 
   if (val.startsWith('v')) {

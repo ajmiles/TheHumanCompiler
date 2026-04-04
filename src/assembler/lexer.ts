@@ -23,7 +23,7 @@ export interface Token {
 
 const REGISTER_RE = /^[vs]\d+$/;
 const SPECIAL_REGS = new Set(['exec', 'exec_lo', 'exec_hi', 'vcc', 'vcc_lo', 'vcc_hi', 'm0', 'null']);
-const MODIFIERS = new Set(['abs', 'neg', 'clamp']);
+const MODIFIERS = new Set(['abs', 'neg', 'clamp', 'idxen', 'offen', 'glc']);
 const MNEMONIC_RE = /^[a-z_][a-z0-9_]*$/;
 
 export function tokenize(source: string): Token[] {
@@ -115,13 +115,24 @@ export function tokenize(source: string): Token[] {
         const word = lineText.slice(start, col);
         const lower = word.toLowerCase();
 
+        // Register range syntax: s[N:M] or v[N:M]
+        if ((lower === 's' || lower === 'v') && col < lineText.length && lineText[col] === '[') {
+          const rangeStart = col;
+          col++; // skip [
+          while (col < lineText.length && lineText[col] !== ']') col++;
+          if (col < lineText.length) col++; // skip ]
+          const fullToken = word + lineText.slice(rangeStart, col);
+          tokens.push({ type: TokenType.REGISTER, value: fullToken.toLowerCase(), line: lineNum, column: start + 1 });
+          continue;
+        }
+
         if (REGISTER_RE.test(lower)) {
           tokens.push({ type: TokenType.REGISTER, value: lower, line: lineNum, column: start + 1 });
         } else if (SPECIAL_REGS.has(lower)) {
           tokens.push({ type: TokenType.REGISTER, value: lower, line: lineNum, column: start + 1 });
         } else if (MODIFIERS.has(lower)) {
           tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
-        } else if ((lower === 'mul' || lower === 'div') && col < lineText.length && lineText[col] === ':') {
+        } else if ((lower === 'mul' || lower === 'div' || lower === 'offset' || lower === 'offset0' || lower === 'offset1') && col < lineText.length && lineText[col] === ':') {
           // Compound output modifier: mul:2, mul:4, div:2
           col++; // skip ':'
           const dStart = col;

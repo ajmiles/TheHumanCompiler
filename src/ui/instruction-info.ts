@@ -184,6 +184,111 @@ const VOP3_FIELDS: BitFieldDef[][] = [
   ],
 ];
 
+// ── SMEM layout (2 dwords) ──
+// Dword 0: [31:26]=0x3D(6), [25:18]=OP(8), [17:13]=flags(5), [12:6]=SDATA(7), [5:0]=SBASE(6)
+// Dword 1: [31:21]=SOFFSET(11), [20:0]=OFFSET(21)
+const SMEM_FIELDS: BitFieldDef[][] = [
+  [
+    { name: '0x3D', bits: 6, color: '#f85149', extract: () => '0x3D' },
+    { name: 'OP', bits: 8, color: '#58a6ff',
+      extract: (_w, _i, info) => info.mnemonic },
+    { name: '', bits: 5, color: '#21262d', extract: () => '—' },
+    { name: 'SDATA', bits: 7, color: '#39d353',
+      extract: (_w, instr) => `s${instr.dst.value}` },
+    { name: 'SBASE', bits: 6, color: '#bc8cff',
+      extract: (_w, instr) => `s${instr.src0.value}` },
+  ],
+  [
+    { name: '', bits: 11, color: '#21262d', extract: () => '—' },
+    { name: 'OFFSET', bits: 21, color: '#d29922',
+      extract: (_w, instr) => instr.src1 ? hexVal(instr.src1.value, 4) : '0' },
+  ],
+];
+
+// ── MUBUF layout (2 dwords) ──
+// Dword 0: [31:26]=0x38(6), [25:18]=OP(8), [17:15]=reserved(3), [14]=GLC, [13]=IDXEN, [12]=OFFEN, [11:0]=OFFSET(12)
+// Dword 1: [31:24]=SOFFSET(8), [23:21]=reserved(3), [20:16]=SRSRC(5), [15:8]=VDATA(8), [7:0]=VADDR(8)
+const MUBUF_FIELDS: BitFieldDef[][] = [
+  [
+    { name: '0x38', bits: 6, color: '#f85149', extract: () => '0x38' },
+    { name: 'OP', bits: 8, color: '#58a6ff',
+      extract: (_w, _i, info) => info.mnemonic },
+    { name: '', bits: 3, color: '#21262d', extract: () => '—' },
+    { name: 'GLC', bits: 1, color: '#db6d28',
+      extract: (_w, instr) => (instr.memFlags ?? 0) & 4 ? '1' : '0' },
+    { name: 'IDX', bits: 1, color: '#39c5cf',
+      extract: (_w, instr) => (instr.memFlags ?? 0) & 2 ? '1' : '0' },
+    { name: 'OFN', bits: 1, color: '#39c5cf',
+      extract: (_w, instr) => (instr.memFlags ?? 0) & 1 ? '1' : '0' },
+    { name: 'OFFSET', bits: 12, color: '#d29922',
+      extract: (_w, instr) => String(instr.offset ?? 0) },
+  ],
+  [
+    { name: 'SOFFSET', bits: 8, color: '#8b949e',
+      extract: (_w, instr) => instr.src2 ? formatOperandShort(instr.src2) : '0' },
+    { name: '', bits: 3, color: '#21262d', extract: () => '—' },
+    { name: 'SRSRC', bits: 5, color: '#f0883e',
+      extract: (_w, instr) => instr.src1 ? `s${instr.src1.value}` : '—' },
+    { name: 'VDATA', bits: 8, color: '#39d353',
+      extract: (_w, instr) => `v${instr.dst.value}` },
+    { name: 'VADDR', bits: 8, color: '#bc8cff',
+      extract: (_w, instr) => `v${instr.src0.value}` },
+  ],
+];
+
+// ── DS layout (2 dwords) ──
+// Dword 0: [31:26]=0x36(6), [25:18]=OP(8), [17]=GDS(1), [16]=reserved(1), [15:8]=OFFSET1(8), [7:0]=OFFSET0(8)
+// Dword 1: [31:24]=VDST(8), [23:16]=DATA1(8), [15:8]=DATA0(8), [7:0]=ADDR(8)
+const DS_FIELDS: BitFieldDef[][] = [
+  [
+    { name: '0x36', bits: 6, color: '#f85149', extract: () => '0x36' },
+    { name: 'OP', bits: 8, color: '#58a6ff',
+      extract: (_w, _i, info) => info.mnemonic },
+    { name: 'GDS', bits: 1, color: '#db6d28', extract: () => '0' },
+    { name: '', bits: 1, color: '#21262d', extract: () => '—' },
+    { name: 'OFFSET1', bits: 8, color: '#d29922',
+      extract: (_w, instr) => String(((instr.offset ?? 0) >>> 8) & 0xFF) },
+    { name: 'OFFSET0', bits: 8, color: '#d29922',
+      extract: (_w, instr) => String((instr.offset ?? 0) & 0xFF) },
+  ],
+  [
+    { name: 'VDST', bits: 8, color: '#39d353',
+      extract: (_w, instr) => `v${instr.dst.value}` },
+    { name: 'DATA1', bits: 8, color: '#8b949e',
+      extract: (_w, instr) => instr.src2 ? `v${instr.src2.value}` : '—' },
+    { name: 'DATA0', bits: 8, color: '#f0883e',
+      extract: (_w, instr) => instr.src1 ? `v${instr.src1.value}` : '—' },
+    { name: 'ADDR', bits: 8, color: '#bc8cff',
+      extract: (_w, instr) => `v${instr.src0.value}` },
+  ],
+];
+
+// ── MIMG layout (2 dwords) ──
+// Dword 0: [31:26]=0x3C(6), [25:18]=OP(8), [17:14]=DMASK(4), [13:11]=DIM(3), [10:3]=reserved(8), [2:0]=NSA(3)
+// Dword 1: [31:26]=reserved(6), [25:21]=SSAMP(5), [20:16]=SRSRC(5), [15:8]=VDATA(8), [7:0]=VADDR(8)
+const MIMG_FIELDS: BitFieldDef[][] = [
+  [
+    { name: '0x3C', bits: 6, color: '#f85149', extract: () => '0x3C' },
+    { name: 'OP', bits: 8, color: '#58a6ff',
+      extract: (_w, _i, info) => info.mnemonic },
+    { name: 'DMASK', bits: 4, color: '#db6d28', extract: () => '—' },
+    { name: 'DIM', bits: 3, color: '#39c5cf', extract: () => '—' },
+    { name: '', bits: 8, color: '#21262d', extract: () => '—' },
+    { name: 'NSA', bits: 3, color: '#d29922', extract: () => '0' },
+  ],
+  [
+    { name: '', bits: 6, color: '#21262d', extract: () => '—' },
+    { name: 'SSAMP', bits: 5, color: '#8b949e',
+      extract: (_w, instr) => instr.src2 ? `s${instr.src2.value}` : '—' },
+    { name: 'SRSRC', bits: 5, color: '#f0883e',
+      extract: (_w, instr) => instr.src1 ? `s${instr.src1.value}` : '—' },
+    { name: 'VDATA', bits: 8, color: '#39d353',
+      extract: (_w, instr) => `v${instr.dst.value}` },
+    { name: 'VADDR', bits: 8, color: '#bc8cff',
+      extract: (_w, instr) => `v${instr.src0.value}` },
+  ],
+];
+
 function getLayout(format: InstructionFormat, instr: ParsedInstruction): FormatLayout {
   // Check for VOP3 promotion: if a VOP1/VOP2 instruction has modifiers, it encodes as VOP3
   if (format === InstructionFormat.VOP3) return VOP3_FIELDS;
@@ -199,6 +304,10 @@ function getLayout(format: InstructionFormat, instr: ParsedInstruction): FormatL
     case InstructionFormat.SOPC: return SOPC_FIELDS;
     case InstructionFormat.SOPK: return SOPK_FIELDS;
     case InstructionFormat.SOPP: return SOPP_FIELDS;
+    case InstructionFormat.SMEM: return SMEM_FIELDS;
+    case InstructionFormat.MUBUF: return MUBUF_FIELDS;
+    case InstructionFormat.DS: return DS_FIELDS;
+    case InstructionFormat.MIMG: return MIMG_FIELDS;
     default: return VOP2_FIELDS;
   }
 }
