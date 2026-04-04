@@ -885,9 +885,16 @@ export class App {
   private addRevision(): void {
     // Save current first
     this.revisions[this.activeRevision] = this.editor.getSource();
-    // New revision starts as a copy of current
-    this.revisions.push(this.editor.getSource());
+    // New revision starts with a fresh template
+    let template = '; Write your solution below:\n\ns_endpgm\n';
+    if (this.currentPuzzle) {
+      const inputNames = this.currentPuzzle.inputs.map(i => `; ${i.name} in v${i.register}`).join('\n');
+      const outputNames = this.currentPuzzle.outputs.map(o => `; ${o.name} to v${o.register}`).join('\n');
+      template = `; ${this.currentPuzzle.title}\n${inputNames}\n${outputNames}\n; Write your solution below:\n\ns_endpgm\n`;
+    }
+    this.revisions.push(template);
     this.activeRevision = this.revisions.length - 1;
+    this.editor.setSource(template);
     this.renderRevisionTabs();
     this.saveSolution();
   }
