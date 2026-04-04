@@ -1,10 +1,13 @@
 #!/bin/sh
-# Auto-increment version number on each commit
+# Auto-increment patch version on each commit (0.5.X → 0.5.X+1)
 VERSION_FILE="src/version.ts"
 if [ -f "$VERSION_FILE" ]; then
-  CURRENT=$(grep -oP "[\d.]+" "$VERSION_FILE")
-  # Increment by 0.01 using awk for float math
-  NEW=$(echo "$CURRENT" | awk '{printf "%.2f", $1 + 0.01}')
+  CURRENT=$(grep -oP "[\d]+\.[\d]+\.[\d]+" "$VERSION_FILE")
+  MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+  MINOR=$(echo "$CURRENT" | cut -d. -f2)
+  PATCH=$(echo "$CURRENT" | cut -d. -f3)
+  PATCH=$((PATCH + 1))
+  NEW="$MAJOR.$MINOR.$PATCH"
   echo "export const VERSION = '$NEW';" > "$VERSION_FILE"
   git add "$VERSION_FILE"
 fi
