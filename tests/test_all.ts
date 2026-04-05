@@ -1358,6 +1358,434 @@ group('Labels and Branches');
 }
 
 // ════════════════════════════════════════════
+//  VOP3P — Packed 16-bit Operations
+// ════════════════════════════════════════════
+group('VOP3P Packed 16-bit Operations');
+
+// Helper: build VOP3P binary (2 dwords)
+// opSelHi default 0x7 = bits[2:0] set → all source hi reads from hi half
+function buildVOP3P(opcode: number, vdst: number, src0: number, src1: number, src2 = 0, opSelHi = 0x7): number[] {
+  const dword0 = (0x33 << 26) | ((opcode & 0x3FF) << 16) | ((opSelHi & 0xF) << 11) | (vdst & 0xFF);
+  const dword1 = ((src2 & 0x1FF) << 18) | ((src1 & 0x1FF) << 9) | (src0 & 0x1FF);
+  return [dword0 >>> 0, dword1 >>> 0];
+}
+
+// VGPR n encoded as 256 + n in 9-bit SRC fields
+const V0 = 256, V1 = 257, V2 = 258, V3 = 259;
+const ENDPGM = ((0x17F << 23) | (0x01 << 16)) >>> 0;
+
+// Pack two u16 into a u32: lo in [15:0], hi in [31:16]
+function pk(lo: number, hi: number): number {
+  return ((hi & 0xFFFF) << 16 | (lo & 0xFFFF)) >>> 0;
+}
+
+// ── v_pk_add_u16 (opcode 0x00A) ──
+
+// Basic add
+{
+  const words = buildVOP3P(0x00A, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(3, 5));       // v0 = {lo:3, hi:5}
+  emu.state.writeVGPR_u32(1, 0, pk(10, 20));      // v1 = {lo:10, hi:20}
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(13, 25), 'v_pk_add_u16: basic (3+10=13, 5+20=25)');
+}
+
+// Overflow wrapping
+{
+  const words = buildVOP3P(0x00A, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(0xFFF0, 0xFFFF));
+  emu.state.writeVGPR_u32(1, 0, pk(0x0020, 0x0001));
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 0x0010, 'v_pk_add_u16 overflow lo: 0xFFF0+0x20 wraps to 0x10');
+  assert((result >>> 16) === 0x0000, 'v_pk_add_u16 overflow hi: 0xFFFF+1 wraps to 0');
+}
+
+// Zero add
+{
+  const words = buildVOP3P(0x00A, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(100, 200));
+  emu.state.writeVGPR_u32(1, 0, pk(0, 0));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(100, 200), 'v_pk_add_u16: adding zero is identity');
+}
+
+// ── v_pk_add_i16 (opcode 0x002) ──
+{
+  const words = buildVOP3P(0x002, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(10, 30));
+  emu.state.writeVGPR_u32(1, 0, pk(5, 7));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(15, 37), 'v_pk_add_i16: basic (10+5=15, 30+7=37)');
+}
+
+// ── v_pk_sub_u16 (opcode 0x00B) ──
+{
+  const words = buildVOP3P(0x00B, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(20, 100));
+  emu.state.writeVGPR_u32(1, 0, pk(5, 30));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(15, 70), 'v_pk_sub_u16: basic (20-5=15, 100-30=70)');
+}
+
+// Underflow wrapping
+{
+  const words = buildVOP3P(0x00B, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(0, 5));
+  emu.state.writeVGPR_u32(1, 0, pk(1, 10));
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 0xFFFF, 'v_pk_sub_u16 underflow lo: 0-1 wraps to 0xFFFF');
+  assert((result >>> 16) === ((5 - 10) & 0xFFFF), 'v_pk_sub_u16 underflow hi: 5-10 wraps');
+}
+
+// ── v_pk_sub_i16 (opcode 0x003) ──
+{
+  const words = buildVOP3P(0x003, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(50, 200));
+  emu.state.writeVGPR_u32(1, 0, pk(25, 100));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(25, 100), 'v_pk_sub_i16: basic (50-25=25, 200-100=100)');
+}
+
+// ── v_pk_mul_lo_u16 (opcode 0x001) ──
+{
+  const words = buildVOP3P(0x001, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(7, 10));
+  emu.state.writeVGPR_u32(1, 0, pk(6, 5));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(42, 50), 'v_pk_mul_lo_u16: (7*6=42, 10*5=50)');
+}
+
+// Multiply truncating to low 16 bits
+{
+  const words = buildVOP3P(0x001, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(0x100, 0x200));
+  emu.state.writeVGPR_u32(1, 0, pk(0x100, 0x100));
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 0x0000, 'v_pk_mul_lo_u16 truncate lo: 0x100*0x100 = 0x10000 → lo16=0');
+  assert((result >>> 16) === 0x0000, 'v_pk_mul_lo_u16 truncate hi: 0x200*0x100 = 0x20000 → lo16=0');
+}
+
+// ── v_pk_max_u16 (opcode 0x00C) ──
+{
+  const words = buildVOP3P(0x00C, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(10, 50));
+  emu.state.writeVGPR_u32(1, 0, pk(20, 30));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(20, 50), 'v_pk_max_u16: max(10,20)=20, max(50,30)=50');
+}
+
+// ── v_pk_min_u16 (opcode 0x00D) ──
+{
+  const words = buildVOP3P(0x00D, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(10, 50));
+  emu.state.writeVGPR_u32(1, 0, pk(20, 30));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(10, 30), 'v_pk_min_u16: min(10,20)=10, min(50,30)=30');
+}
+
+// ── v_pk_max_i16 (opcode 0x007) — signed comparisons ──
+{
+  const words = buildVOP3P(0x007, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  // -5 in u16 = 0xFFFB, -10 in u16 = 0xFFF6
+  emu.state.writeVGPR_u32(0, 0, pk(0xFFFB, 100));   // {lo:-5, hi:100}
+  emu.state.writeVGPR_u32(1, 0, pk(0xFFF6, 0xFFF6)); // {lo:-10, hi:-10}
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 0xFFFB, 'v_pk_max_i16 lo: max(-5,-10) = -5 (0xFFFB)');
+  assert((result >>> 16) === 100, 'v_pk_max_i16 hi: max(100,-10) = 100');
+}
+
+// Positive vs negative
+{
+  const words = buildVOP3P(0x007, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(5, 0xFFFF));    // {lo:5, hi:-1}
+  emu.state.writeVGPR_u32(1, 0, pk(0xFFFE, 10));    // {lo:-2, hi:10}
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 5, 'v_pk_max_i16: max(5,-2)=5');
+  assert((result >>> 16) === 10, 'v_pk_max_i16: max(-1,10)=10');
+}
+
+// ── v_pk_min_i16 (opcode 0x008) — signed comparisons ──
+{
+  const words = buildVOP3P(0x008, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(0xFFFB, 100));   // {lo:-5, hi:100}
+  emu.state.writeVGPR_u32(1, 0, pk(0xFFF6, 0xFFF6)); // {lo:-10, hi:-10}
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 0xFFF6, 'v_pk_min_i16 lo: min(-5,-10) = -10 (0xFFF6)');
+  assert((result >>> 16) === 0xFFF6, 'v_pk_min_i16 hi: min(100,-10) = -10');
+}
+
+// ── v_pk_lshlrev_b16 (opcode 0x004) ──
+{
+  const words = buildVOP3P(0x004, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  // lshlrev: dst = src1 << src0
+  emu.state.writeVGPR_u32(0, 0, pk(2, 4));     // shift amounts {lo:2, hi:4}
+  emu.state.writeVGPR_u32(1, 0, pk(3, 1));     // values {lo:3, hi:1}
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(12, 16), 'v_pk_lshlrev_b16: (3<<2=12, 1<<4=16)');
+}
+
+// Shift with truncation to 16 bits
+{
+  const words = buildVOP3P(0x004, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(15, 8));
+  emu.state.writeVGPR_u32(1, 0, pk(1, 0xFF));
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 0x8000, 'v_pk_lshlrev_b16: 1<<15 = 0x8000');
+  assert((result >>> 16) === 0xFF00, 'v_pk_lshlrev_b16: 0xFF<<8 = 0xFF00');
+}
+
+// ── v_pk_lshrrev_b16 (opcode 0x005) ──
+{
+  const words = buildVOP3P(0x005, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  // lshrrev: dst = src1 >>> src0
+  emu.state.writeVGPR_u32(0, 0, pk(2, 4));     // shift amounts
+  emu.state.writeVGPR_u32(1, 0, pk(0xFF, 0xF000)); // values
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === (0xFF >>> 2), 'v_pk_lshrrev_b16 lo: 0xFF>>>2 = 0x3F');
+  assert((result >>> 16) === (0xF000 >>> 4), 'v_pk_lshrrev_b16 hi: 0xF000>>>4 = 0x0F00');
+}
+
+// Logical shift fills zeros (no sign extension)
+{
+  const words = buildVOP3P(0x005, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(1, 1));
+  emu.state.writeVGPR_u32(1, 0, pk(0x8000, 0xFFFF));
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 0x4000, 'v_pk_lshrrev_b16: 0x8000>>>1 = 0x4000 (no sign ext)');
+  assert((result >>> 16) === 0x7FFF, 'v_pk_lshrrev_b16: 0xFFFF>>>1 = 0x7FFF');
+}
+
+// ── v_pk_ashrrev_i16 (opcode 0x006) — arithmetic shift with sign extension ──
+{
+  const words = buildVOP3P(0x006, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  // ashrrev: dst = (signed)src1 >> src0
+  emu.state.writeVGPR_u32(0, 0, pk(1, 4));
+  emu.state.writeVGPR_u32(1, 0, pk(0x8000, 0xFFF0)); // -32768, -16
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  // -32768 >> 1 = -16384 = 0xC000
+  assert((result & 0xFFFF) === 0xC000, 'v_pk_ashrrev_i16 lo: 0x8000>>1 = 0xC000 (sign extended)');
+  // -16 >> 4 = -1 = 0xFFFF
+  assert((result >>> 16) === 0xFFFF, 'v_pk_ashrrev_i16 hi: -16>>4 = -1 (0xFFFF)');
+}
+
+// Positive value arithmetic shift
+{
+  const words = buildVOP3P(0x006, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(2, 3));
+  emu.state.writeVGPR_u32(1, 0, pk(100, 0x7FFF)); // positive values
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 25, 'v_pk_ashrrev_i16: 100>>2 = 25 (positive)');
+  assert((result >>> 16) === (0x7FFF >> 3), 'v_pk_ashrrev_i16: 0x7FFF>>3 = 0x0FFF');
+}
+
+// ── v_pk_mad_u16 (opcode 0x009) — multiply-add with 3 sources ──
+{
+  // v_pk_mad_u16 v3, v0, v1, v2
+  const words = buildVOP3P(0x009, 3, V0, V1, V2);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(3, 5));     // src0 = {3, 5}
+  emu.state.writeVGPR_u32(1, 0, pk(4, 6));     // src1 = {4, 6}
+  emu.state.writeVGPR_u32(2, 0, pk(10, 20));   // src2 = {10, 20}
+  emu.run();
+  // lo: 3*4+10=22, hi: 5*6+20=50
+  assert(emu.state.readVGPR_u32(3, 0) === pk(22, 50), 'v_pk_mad_u16: (3*4+10=22, 5*6+20=50)');
+}
+
+// ── v_pk_mad_i16 (opcode 0x000) ──
+{
+  const words = buildVOP3P(0x000, 3, V0, V1, V2);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(2, 3));
+  emu.state.writeVGPR_u32(1, 0, pk(7, 8));
+  emu.state.writeVGPR_u32(2, 0, pk(1, 2));
+  emu.run();
+  // lo: 2*7+1=15, hi: 3*8+2=26
+  assert(emu.state.readVGPR_u32(3, 0) === pk(15, 26), 'v_pk_mad_i16: (2*7+1=15, 3*8+2=26)');
+}
+
+// ── v_pk_add_f16 (opcode 0x00F) — packed float16 add ──
+// The emulator uses simplified f16: execute fn does float math, result & 0xFFFF
+{
+  const words = buildVOP3P(0x00F, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  // Use small integer values that are exact in f16
+  // f16(1.0) = 0x3C00, f16(2.0) = 0x4000, f16(3.0) = 0x4200
+  emu.state.writeVGPR_u32(0, 0, pk(1, 3));
+  emu.state.writeVGPR_u32(1, 0, pk(2, 4));
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  // The execute fn is: asFloat(a + b) — but these are raw u16 values being added as numbers
+  // Actually the float ops pass u16 halves through the execute fn which treats them as numbers
+  assert((result & 0xFFFF) === 3, 'v_pk_add_f16 lo: 1+2=3 (simplified)');
+  assert((result >>> 16) === 7, 'v_pk_add_f16 hi: 3+4=7 (simplified)');
+}
+
+// ── v_pk_mul_f16 (opcode 0x010) — packed float16 multiply ──
+{
+  const words = buildVOP3P(0x010, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(3, 5));
+  emu.state.writeVGPR_u32(1, 0, pk(4, 6));
+  emu.run();
+  const result = emu.state.readVGPR_u32(2, 0);
+  assert((result & 0xFFFF) === 12, 'v_pk_mul_f16 lo: 3*4=12 (simplified)');
+  assert((result >>> 16) === 30, 'v_pk_mul_f16 hi: 5*6=30 (simplified)');
+}
+
+// ── v_pk_min_f16 (opcode 0x011) ──
+{
+  const words = buildVOP3P(0x011, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(10, 50));
+  emu.state.writeVGPR_u32(1, 0, pk(20, 30));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(10, 30), 'v_pk_min_f16: min(10,20)=10, min(50,30)=30');
+}
+
+// ── v_pk_max_f16 (opcode 0x012) ──
+{
+  const words = buildVOP3P(0x012, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(10, 50));
+  emu.state.writeVGPR_u32(1, 0, pk(20, 30));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(20, 50), 'v_pk_max_f16: max(10,20)=20, max(50,30)=50');
+}
+
+// ── v_pk_fma_f16 (opcode 0x00E) — packed fused multiply-add f16 ──
+{
+  const words = buildVOP3P(0x00E, 3, V0, V1, V2);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(2, 3));
+  emu.state.writeVGPR_u32(1, 0, pk(5, 4));
+  emu.state.writeVGPR_u32(2, 0, pk(1, 2));
+  emu.run();
+  const result = emu.state.readVGPR_u32(3, 0);
+  // lo: 2*5+1=11, hi: 3*4+2=14
+  assert((result & 0xFFFF) === 11, 'v_pk_fma_f16 lo: 2*5+1=11 (simplified)');
+  assert((result >>> 16) === 14, 'v_pk_fma_f16 hi: 3*4+2=14 (simplified)');
+}
+
+// ── v_pk_max_u16 with equal values ──
+{
+  const words = buildVOP3P(0x00C, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(42, 99));
+  emu.state.writeVGPR_u32(1, 0, pk(42, 99));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(42, 99), 'v_pk_max_u16 equal: max(42,42)=42, max(99,99)=99');
+}
+
+// ── v_pk_min_u16 with boundary values ──
+{
+  const words = buildVOP3P(0x00D, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(0, 0xFFFF));
+  emu.state.writeVGPR_u32(1, 0, pk(0xFFFF, 0));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(0, 0), 'v_pk_min_u16 boundary: min(0,0xFFFF)=0, min(0xFFFF,0)=0');
+}
+
+// ── v_pk_lshlrev_b16 shift by zero ──
+{
+  const words = buildVOP3P(0x004, 2, V0, V1);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(0, 0));
+  emu.state.writeVGPR_u32(1, 0, pk(0x1234, 0xABCD));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === pk(0x1234, 0xABCD), 'v_pk_lshlrev_b16: shift by 0 is identity');
+}
+
+// ── v_pk_mad_u16 with zero addend ──
+{
+  const words = buildVOP3P(0x009, 3, V0, V1, V2);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(100, 200));
+  emu.state.writeVGPR_u32(1, 0, pk(3, 2));
+  emu.state.writeVGPR_u32(2, 0, pk(0, 0));
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === pk(300, 400), 'v_pk_mad_u16 zero addend: (100*3+0=300, 200*2+0=400)');
+}
+
+// ── v_pk_mad_u16 overflow wrapping ──
+{
+  const words = buildVOP3P(0x009, 3, V0, V1, V2);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pk(0xFFFF, 0x100));
+  emu.state.writeVGPR_u32(1, 0, pk(2, 0x100));
+  emu.state.writeVGPR_u32(2, 0, pk(1, 1));
+  emu.run();
+  const result = emu.state.readVGPR_u32(3, 0);
+  // lo: (0xFFFF * 2 + 1) & 0xFFFF = (0x1FFFF) & 0xFFFF = 0xFFFF
+  assert((result & 0xFFFF) === 0xFFFF, 'v_pk_mad_u16 overflow lo: (0xFFFF*2+1) & 0xFFFF');
+  // hi: (0x100 * 0x100 + 1) & 0xFFFF = (0x10001) & 0xFFFF = 1
+  assert((result >>> 16) === 1, 'v_pk_mad_u16 overflow hi: (0x100*0x100+1) & 0xFFFF');
+}
+
+// ════════════════════════════════════════════
 //  Edge Cases
 // ════════════════════════════════════════════
 group('Edge Cases');
