@@ -321,6 +321,87 @@ const SDWA_TUTORIAL: Tutorial = {
   ],
 };
 
+// ── Tutorial 06: Packed FP16 ──
+
+const PACKED_FP16: Tutorial = {
+  id: 'tut-packed-fp16',
+  title: 'Packed FP16',
+  description: 'Double your throughput by processing two half-precision floats per instruction with VOP3P.',
+  steps: [
+    {
+      title: 'Why Half Precision?',
+      text:
+        'Full 32-bit float (f32) gives ~7 digits of precision, but many workloads don\'t need that much. <strong>Half precision</strong> (f16, 16-bit float) gives ~3.5 digits — plenty for neural networks, image processing, and many graphics operations.\n\n' +
+        'The key advantage: since f16 is half the size of f32, AMD GPUs can process <strong>two f16 values in a single 32-bit register</strong>. The <code>v_pk_*</code> (packed) instructions operate on both halves simultaneously, effectively <strong>doubling your throughput</strong> for free.\n\n' +
+        'This is why ML training moved to f16 — the same hardware does twice the work per cycle.',
+    },
+    {
+      title: 'Packed Register Layout',
+      text:
+        'A single 32-bit VGPR holds two f16 values:\n\n' +
+        '• <strong>Lo half</strong> — bits [15:0] — the lower f16 value\n' +
+        '• <strong>Hi half</strong> — bits [31:16] — the upper f16 value\n\n' +
+        'When you look at the register in <strong>F16 mode</strong> (click the F16 button in the VGPRs panel), each register splits into <code>v0.lo</code> and <code>v0.hi</code> columns showing both halves.\n\n' +
+        'The <code>v_pk_*</code> instructions process both halves in parallel — one instruction, two results.',
+    },
+    {
+      title: 'Your First Packed Add',
+      text:
+        'Let\'s try <code>v_pk_add_f16</code>. This adds the lo halves together and the hi halves together in a single instruction.\n\n' +
+        'We pack two values into each register:\n' +
+        '• v0 = {hi: 3.0, lo: 1.0}\n' +
+        '• v1 = {hi: 4.0, lo: 2.0}\n\n' +
+        'After <code>v_pk_add_f16 v2, v0, v1</code>:\n' +
+        '• v2.lo = 1.0 + 2.0 = <strong>3.0</strong>\n' +
+        '• v2.hi = 3.0 + 4.0 = <strong>7.0</strong>\n\n' +
+        'Switch the VGPRs panel to <strong>F16</strong> mode and step through to see both halves update.',
+      code: '; Pack f16 values: v0 = {3.0, 1.0}, v1 = {4.0, 2.0}\n; f16(1.0)=0x3C00, f16(2.0)=0x4000\n; f16(3.0)=0x4200, f16(4.0)=0x4400\nv_mov_b32 v0, 0x42003C00\nv_mov_b32 v1, 0x44004000\n;\n; Packed add: both halves in one instruction\nv_pk_add_f16 v2, v0, v1\ns_endpgm',
+    },
+    {
+      title: 'Packed Multiply',
+      text:
+        '<code>v_pk_mul_f16</code> multiplies both halves independently. Combined with <code>v_pk_add_f16</code>, you can build efficient dot products, matrix multiplies, and convolutions on f16 data.\n\n' +
+        'There\'s also <code>v_pk_fma_f16</code> — a fused multiply-add that does <code>a*b+c</code> on both halves in one instruction. This is the workhorse of neural network inference.\n\n' +
+        'Step through this example: multiply two packed pairs, then FMA with an accumulator.',
+      code: '; v0 = {2.0, 3.0}, v1 = {4.0, 5.0}\nv_mov_b32 v0, 0x40004200\nv_mov_b32 v1, 0x44004500\n;\n; Packed multiply: lo=3*5=15, hi=2*4=8\nv_pk_mul_f16 v2, v0, v1\n;\n; FMA: v3 = v0 * v1 + v2 (accumulate)\n; lo = 3*5+15 = 30, hi = 2*4+8 = 16\nv_pk_fma_f16 v3, v0, v1, v2\ns_endpgm',
+    },
+    {
+      title: 'The Full Packed Toolkit',
+      text:
+        'VOP3P includes a complete set of packed f16 operations:\n\n' +
+        '🔢 <strong>Arithmetic:</strong> <code>v_pk_add_f16</code>, <code>v_pk_mul_f16</code>, <code>v_pk_fma_f16</code>\n\n' +
+        '📉 <strong>Comparison:</strong> <code>v_pk_min_f16</code>, <code>v_pk_max_f16</code>\n\n' +
+        '🔧 <strong>Integer packed:</strong> <code>v_pk_add_u16</code>, <code>v_pk_mul_lo_u16</code>, <code>v_pk_lshlrev_b16</code>, <code>v_pk_max/min_i16/u16</code>, and more\n\n' +
+        '🔄 <strong>Mixed precision:</strong> <code>v_fma_mix_f32</code> — takes f16 inputs and produces f32 output, bridging between precision levels\n\n' +
+        'All VOP3P instructions use the <code>0x33</code> encoding prefix and have OP_SEL/OP_SEL_HI modifiers to control which half of each source to read.',
+    },
+    {
+      title: 'OP_SEL — Half Selection',
+      text:
+        'By default, the lo operation reads from the lo half and the hi operation reads from the hi half. But <strong>OP_SEL</strong> modifiers let you override this:\n\n' +
+        '• <code>op_sel:[0,0]</code> — both lo and hi operations read from <em>lo</em> halves (broadcast lo)\n' +
+        '• <code>op_sel:[1,1]</code> — both operations read from <em>hi</em> halves (broadcast hi)\n' +
+        '• <code>op_sel:[1,0]</code> — swap: lo operation reads hi, hi operation reads lo\n\n' +
+        'This is powerful for matrix operations where you need to broadcast one element across both halves, or reorder packed data without extra instructions.\n\n' +
+        '<em>Note: OP_SEL assembly syntax is not yet supported in the editor — the default (lo reads lo, hi reads hi) is used automatically.</em>',
+    },
+    {
+      title: 'Performance: 2× Throughput',
+      text:
+        'The key insight for performance:\n\n' +
+        '• One <code>v_pk_add_f16</code> does the same work as <strong>two</strong> <code>v_add_f32</code> instructions\n' +
+        '• Same cycle count, same register pressure, twice the data\n' +
+        '• For workloads that can tolerate f16 precision, this is a free 2× speedup\n\n' +
+        'Real-world uses:\n' +
+        '• <strong>Neural networks</strong> — training and inference in f16/mixed precision\n' +
+        '• <strong>Image processing</strong> — HDR images stored as f16\n' +
+        '• <strong>Physics simulation</strong> — particle systems, fluid dynamics at reduced precision\n' +
+        '• <strong>Audio processing</strong> — f16 is more than enough for audio samples\n\n' +
+        'The puzzles ahead will challenge you to use packed operations to solve problems in half the instructions.',
+    },
+  ],
+};
+
 // ── All Tutorials ──
 
 export const ALL_TUTORIALS: Tutorial[] = [
@@ -328,6 +409,7 @@ export const ALL_TUTORIALS: Tutorial[] = [
   BRANCHING,
   INTRA_WAVE,
   SDWA_TUTORIAL,
+  PACKED_FP16,
 ];
 
 export function getTutorialById(id: string): Tutorial | undefined {
