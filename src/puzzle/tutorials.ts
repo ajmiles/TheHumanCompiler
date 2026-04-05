@@ -246,12 +246,88 @@ const INTRA_WAVE: Tutorial = {
   ],
 };
 
+// ── Tutorial 05: Sub-Dword Addressing (SDWA) ──
+
+const SDWA_TUTORIAL: Tutorial = {
+  id: 'tut-sdwa',
+  title: 'Sub-Dword Addressing',
+  description: 'Extract and manipulate individual bytes and 16-bit words within 32-bit registers using SDWA modifiers.',
+  steps: [
+    {
+      title: 'What is SDWA?',
+      text:
+        'GPU registers are 32 bits wide, but data often comes in smaller pieces — 8-bit color channels, 16-bit integers, packed formats. <strong>SDWA</strong> (Sub-Dword Addressing) lets you operate on individual <em>bytes</em> or <em>words</em> within a register without manual shifting and masking.\n\n' +
+        'SDWA is a <em>modifier</em> on existing VOP1/VOP2 instructions. It adds source selectors (which part to read), destination selectors (which part to write), and sign/zero extension — all in a single instruction.',
+    },
+    {
+      title: 'Source Selectors',
+      text:
+        'The <code>src0_sel</code> modifier selects which portion of the source register to use:\n\n' +
+        '• <code>BYTE_0</code> — bits [7:0] (lowest byte)\n' +
+        '• <code>BYTE_1</code> — bits [15:8]\n' +
+        '• <code>BYTE_2</code> — bits [23:16]\n' +
+        '• <code>BYTE_3</code> — bits [31:24] (highest byte)\n' +
+        '• <code>WORD_0</code> — bits [15:0] (lower 16 bits)\n' +
+        '• <code>WORD_1</code> — bits [31:16] (upper 16 bits)\n' +
+        '• <code>DWORD</code> — all 32 bits (default)\n\n' +
+        'Try this: v0 is loaded with <code>0xAABBCCDD</code>. We extract each byte into separate registers. Switch VGPRs to <strong>HEX</strong> mode to see the results clearly.',
+      code: '; v0 = 0xAABBCCDD\nv_mov_b32 v0, 0xAABBCCDD\n;\n; Extract each byte\nv_mov_b32 v1, v0 src0_sel:BYTE_0\nv_mov_b32 v2, v0 src0_sel:BYTE_1\nv_mov_b32 v3, v0 src0_sel:BYTE_2\nv_mov_b32 v4, v0 src0_sel:BYTE_3\n;\n; Extract each word\nv_mov_b32 v5, v0 src0_sel:WORD_0\nv_mov_b32 v6, v0 src0_sel:WORD_1\ns_endpgm',
+    },
+    {
+      title: 'Sign Extension',
+      text:
+        'By default, the extracted sub-dword is <strong>zero-extended</strong> to 32 bits. Adding <code>src0_sext</code> <strong>sign-extends</strong> instead — the top bit of the selected portion is replicated into the upper bits.\n\n' +
+        'This matters when working with signed data packed into bytes. For example, the signed byte <code>0xFF</code> is -1, but zero-extended it becomes 255.\n\n' +
+        'Try this: v0 has <code>0x00000080</code> (byte 0 = 0x80 = -128 as signed). Without sext, extracting BYTE_0 gives 0x80 (128). With sext, it gives 0xFFFFFF80 (-128).\n\n' +
+        'Switch VGPRs to <strong>I32</strong> mode to see the signed interpretation.',
+      code: '; v0 = 0x80 (byte 0 = -128 signed)\nv_mov_b32 v0, 0x00000080\n;\n; Zero-extend (default): 0x80 = 128\nv_mov_b32 v1, v0 src0_sel:BYTE_0\n;\n; Sign-extend: 0xFFFFFF80 = -128\nv_mov_b32 v2, v0 src0_sel:BYTE_0 src0_sext\ns_endpgm',
+    },
+    {
+      title: 'Destination Selectors',
+      text:
+        '<code>dst_sel</code> controls which portion of the destination register to write. Combined with <code>dst_unused</code>, you control what happens to the bits you <em>don\'t</em> write:\n\n' +
+        '• <code>dst_unused:UNUSED_PAD</code> — zero the unused bits (default)\n' +
+        '• <code>dst_unused:UNUSED_SEXT</code> — sign-extend the written portion\n' +
+        '• <code>dst_unused:UNUSED_PRESERVE</code> — keep the old destination value in unused bits\n\n' +
+        'Try this: we write a value into BYTE_1 of the destination, with different unused modes. Switch to <strong>HEX</strong> to see how the surrounding bytes differ.',
+      code: '; Source: v0 = 0x42 (the value to write)\nv_mov_b32 v0, 0x42\n;\n; Write to BYTE_1, pad unused with zeros\nv_mov_b32 v1, v0 dst_sel:BYTE_1 dst_unused:UNUSED_PAD\n; Result: 0x00004200\n;\n; Write to BYTE_1, preserve rest\nv_mov_b32 v2, 0xFFFFFFFF\nv_mov_b32 v2, v0 dst_sel:BYTE_1 dst_unused:UNUSED_PRESERVE\n; Result: 0xFFFF42FF\ns_endpgm',
+    },
+    {
+      title: 'Practical Example: Byte Swap',
+      text:
+        'SDWA makes byte manipulation trivial. Here\'s a common operation: swapping the low and high bytes of a 16-bit word (endian swap of the lower 16 bits).\n\n' +
+        'Without SDWA, this requires multiple shift and mask instructions. With SDWA, we extract BYTE_0 and BYTE_1 separately and reassemble them.\n\n' +
+        'v0 starts with <code>0x00001234</code>. After the swap, the lower 16 bits become <code>0x3412</code>.',
+      code: '; v0 = 0x00001234\nv_mov_b32 v0, 0x00001234\n;\n; Extract byte 0 (0x34), write to byte 1 position\nv_mov_b32 v1, v0 src0_sel:BYTE_0 dst_sel:BYTE_1 dst_unused:UNUSED_PAD\n;\n; Extract byte 1 (0x12), write to byte 0, preserve byte 1\nv_mov_b32 v1, v0 src0_sel:BYTE_1 dst_sel:BYTE_0 dst_unused:UNUSED_PRESERVE\n; v1 = 0x00003412 (bytes swapped!)\ns_endpgm',
+    },
+    {
+      title: 'SDWA with ALU Operations',
+      text:
+        'SDWA isn\'t just for moves — it works with any VOP1/VOP2 instruction. You can add bytes, multiply words, or compare sub-dword values directly.\n\n' +
+        'Both sources can have independent selectors with <code>src0_sel</code> and <code>src1_sel</code>. This lets you do things like "add byte 0 of v0 to byte 2 of v1" in a single instruction.\n\n' +
+        'Try this: we add the low byte of v0 to the high byte of v1, storing the result as a full dword.',
+      code: '; v0 = 0x00000003 (byte 0 = 3)\nv_mov_b32 v0, 0x00000003\n; v1 = 0x05000000 (byte 3 = 5)\nv_mov_b32 v1, 0x05000000\n;\n; Add byte 0 of v0 + byte 3 of v1 → v2\nv_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_3\n; v2 = 8 (3 + 5)\ns_endpgm',
+    },
+    {
+      title: 'Key takeaways',
+      text:
+        'SDWA in summary:\n\n' +
+        '• <strong>Source selectors</strong> (<code>src0_sel</code>, <code>src1_sel</code>) pick which byte or word to read — no manual shifting needed.\n\n' +
+        '• <strong>Sign extension</strong> (<code>src0_sext</code>) interprets the sub-dword as signed and extends to 32 bits.\n\n' +
+        '• <strong>Destination selectors</strong> (<code>dst_sel</code>) write to a specific byte/word position, with <code>dst_unused</code> controlling the rest.\n\n' +
+        '• Works on any VOP1/VOP2 instruction — moves, adds, multiplies, comparisons.\n\n' +
+        '• Eliminates common shift-and-mask patterns, saving instructions when packing/unpacking data.',
+    },
+  ],
+};
+
 // ── All Tutorials ──
 
 export const ALL_TUTORIALS: Tutorial[] = [
   WELCOME_TO_GPU,
   BRANCHING,
   INTRA_WAVE,
+  SDWA_TUTORIAL,
 ];
 
 export function getTutorialById(id: string): Tutorial | undefined {
