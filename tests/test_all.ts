@@ -4872,6 +4872,79 @@ group('VOP3 Additional Instructions');
 }
 
 // ════════════════════════════════════════════
+//  VOP1 — Indexed Register Move (movrel*)
+// ════════════════════════════════════════════
+group('VOP1 Indexed Register Move');
+
+// v_movrels_b32: vdst = v[vsrc + M0]
+{
+  const emu = setup([
+    'v_mov_b32 v0, 0x10',
+    'v_mov_b32 v1, 0x20',
+    'v_mov_b32 v2, 0x30',
+    'v_mov_b32 v3, 0x40',
+    's_mov_b32 m0, 2',          // M0 = 2
+    'v_movrels_b32 v5, v0',     // v5 = v[0 + 2] = v2 = 0x30
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(5, 0) === 0x30, 'v_movrels_b32: v5 = v[0+M0] = v2 = 0x30');
+}
+
+// v_movrels_b32: M0 = 0 (identity)
+{
+  const emu = setup([
+    'v_mov_b32 v3, 0xAA',
+    's_mov_b32 m0, 0',
+    'v_movrels_b32 v5, v3',     // v5 = v[3+0] = v3
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(5, 0) === 0xAA, 'v_movrels_b32: M0=0 identity');
+}
+
+// v_movreld_b32: v[vdst + M0] = vsrc
+{
+  const emu = setup([
+    'v_mov_b32 v0, 0xFF',
+    's_mov_b32 m0, 3',          // M0 = 3
+    'v_movreld_b32 v1, v0',     // v[1+3] = v4 = v0 = 0xFF
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(4, 0) === 0xFF, 'v_movreld_b32: v[1+M0] = v4 = 0xFF');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'v_movreld_b32: v1 unchanged');
+}
+
+// v_movrelsd_b32: v[vdst + M0] = v[vsrc + M0]
+{
+  const emu = setup([
+    'v_mov_b32 v0, 0x11',
+    'v_mov_b32 v1, 0x22',
+    'v_mov_b32 v2, 0x33',
+    's_mov_b32 m0, 1',          // M0 = 1
+    'v_movrelsd_b32 v5, v0',    // v[5+1] = v6 = v[0+1] = v1 = 0x22
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(6, 0) === 0x22, 'v_movrelsd_b32: v[5+M0]=v6 gets v[0+M0]=v1=0x22');
+}
+
+// v_movrelsd_2_b32: v[vdst + M0 + 1] = v[vsrc + M0]
+{
+  const emu = setup([
+    'v_mov_b32 v0, 0xAA',
+    'v_mov_b32 v1, 0xBB',
+    'v_mov_b32 v2, 0xCC',
+    's_mov_b32 m0, 1',          // M0 = 1
+    'v_movrelsd_2_b32 v5, v0',  // v[5+1+1] = v7 = v[0+1] = v1 = 0xBB
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(7, 0) === 0xBB, 'v_movrelsd_2_b32: v[5+M0+1]=v7 gets v[0+M0]=v1=0xBB');
+}
+
+// ════════════════════════════════════════════
 //  Edge Cases
 // ════════════════════════════════════════════
 group('Edge Cases');

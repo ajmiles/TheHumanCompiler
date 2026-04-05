@@ -17,6 +17,7 @@ import {
   vgprIndex,
   EXEC_LO,
   VCC_LO,
+  M0_REG,
 } from '../isa/constants';
 import { GPUState } from './state';
 import { ResolvedInstruction } from './decoder';
@@ -765,6 +766,60 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       const srcVal = state.readVGPR_u32(src0Reg, lane);
       state.writeVGPR_u32(decoded.dst, lane, srcVal);
       state.writeVGPR_u32(src0Reg, lane, dstVal);
+    }
+    return;
+  }
+
+  // v_movreld_b32: v[vdst + M0] = vsrc0
+  if (opcodeInfo.mnemonic === 'v_movreld_b32') {
+    const exec = state.exec;
+    const m0 = state.readSGPR(M0_REG) >>> 0;
+    const src0Reg = decoded.src0Encoded >= 256 ? decoded.src0Encoded - 256 : decoded.src0Encoded;
+    const dstReg = (decoded.dst + m0) & 0xFF;
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+      state.writeVGPR_u32(dstReg, lane, state.readVGPR_u32(src0Reg, lane));
+    }
+    return;
+  }
+
+  // v_movrels_b32: vdst = v[vsrc0 + M0]
+  if (opcodeInfo.mnemonic === 'v_movrels_b32') {
+    const exec = state.exec;
+    const m0 = state.readSGPR(M0_REG) >>> 0;
+    const src0Reg = decoded.src0Encoded >= 256 ? decoded.src0Encoded - 256 : decoded.src0Encoded;
+    const srcReg = (src0Reg + m0) & 0xFF;
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+      state.writeVGPR_u32(decoded.dst, lane, state.readVGPR_u32(srcReg, lane));
+    }
+    return;
+  }
+
+  // v_movrelsd_b32: v[vdst + M0] = v[vsrc0 + M0]
+  if (opcodeInfo.mnemonic === 'v_movrelsd_b32') {
+    const exec = state.exec;
+    const m0 = state.readSGPR(M0_REG) >>> 0;
+    const src0Reg = decoded.src0Encoded >= 256 ? decoded.src0Encoded - 256 : decoded.src0Encoded;
+    const srcReg = (src0Reg + m0) & 0xFF;
+    const dstReg = (decoded.dst + m0) & 0xFF;
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+      state.writeVGPR_u32(dstReg, lane, state.readVGPR_u32(srcReg, lane));
+    }
+    return;
+  }
+
+  // v_movrelsd_2_b32: v[vdst + M0 + 1] = v[vsrc0 + M0]
+  if (opcodeInfo.mnemonic === 'v_movrelsd_2_b32') {
+    const exec = state.exec;
+    const m0 = state.readSGPR(M0_REG) >>> 0;
+    const src0Reg = decoded.src0Encoded >= 256 ? decoded.src0Encoded - 256 : decoded.src0Encoded;
+    const srcReg = (src0Reg + m0) & 0xFF;
+    const dstReg = (decoded.dst + m0 + 1) & 0xFF;
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+      state.writeVGPR_u32(dstReg, lane, state.readVGPR_u32(srcReg, lane));
     }
     return;
   }

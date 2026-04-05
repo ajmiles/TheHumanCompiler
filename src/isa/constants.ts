@@ -52,7 +52,7 @@ export const VGPR_SRC_MAX = 511;
 
 // Register file sizes
 export const NUM_VGPRS = 256;
-export const NUM_SGPRS = 106;
+export const NUM_SGPRS = 128;
 export const WAVE_WIDTH = 32;
 
 // VOP1 encoding marker: bits [31:25] = 0b0111111 = 0x3F
