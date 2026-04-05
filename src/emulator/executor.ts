@@ -490,6 +490,19 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
 
     const result = (opcodeInfo.execute(src0Raw)) >>> 0;
 
+    // SCC for SOP1 bitwise/logic ops
+    const sop1mn = opcodeInfo.mnemonic;
+    if (sop1mn === 's_not_b32' || sop1mn === 's_not_b64' ||
+        sop1mn === 's_wqm_b32' || sop1mn === 's_wqm_b64' ||
+        sop1mn === 's_brev_b32' || sop1mn === 's_brev_b64' ||
+        sop1mn === 's_bitreplicate_b64_b32') {
+      state.scc = result !== 0 ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+    } else if (sop1mn === 's_abs_i32') {
+      state.scc = result !== 0 ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+    }
+
     const dst = decoded.dst;
     if (dst === EXEC_LO) {
       state.exec = result;
@@ -509,8 +522,34 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     const src1 = resolveSsrc0(state, decoded.src1!, decoded.literal);
 
     // s_cselect_b32: select src0 if SCC==1, else src1
-    if (opcodeInfo.mnemonic === 's_cselect_b32') {
+    if (opcodeInfo.mnemonic === 's_cselect_b32' || opcodeInfo.mnemonic === 's_cselect_b64') {
       const result = (state.scc ? src0 : src1) >>> 0;
+      const dst = decoded.dst;
+      if (dst === EXEC_LO) { state.exec = result; state.modifiedRegs.add('EXEC'); }
+      else if (dst === VCC_LO) { state.vcc = result; state.modifiedRegs.add('VCC'); }
+      else { state.writeSGPR(dst, result); }
+      return;
+    }
+
+    // s_addc_u32: add with carry — sdst = src0 + src1 + SCC
+    if (opcodeInfo.mnemonic === 's_addc_u32') {
+      const sum = (src0 >>> 0) + (src1 >>> 0) + state.scc;
+      const result = sum >>> 0;
+      state.scc = sum > 0xFFFFFFFF ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+      const dst = decoded.dst;
+      if (dst === EXEC_LO) { state.exec = result; state.modifiedRegs.add('EXEC'); }
+      else if (dst === VCC_LO) { state.vcc = result; state.modifiedRegs.add('VCC'); }
+      else { state.writeSGPR(dst, result); }
+      return;
+    }
+
+    // s_subb_u32: subtract with borrow — sdst = src0 - src1 - SCC
+    if (opcodeInfo.mnemonic === 's_subb_u32') {
+      const diff = (src0 >>> 0) - (src1 >>> 0) - state.scc;
+      const result = diff >>> 0;
+      state.scc = diff < 0 ? 1 : 0;
+      state.modifiedRegs.add('SCC');
       const dst = decoded.dst;
       if (dst === EXEC_LO) { state.exec = result; state.modifiedRegs.add('EXEC'); }
       else if (dst === VCC_LO) { state.vcc = result; state.modifiedRegs.add('VCC'); }
@@ -521,20 +560,28 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     const result = (opcodeInfo.execute(src0, src1)) >>> 0;
 
     // SCC: set for bitwise ops if result != 0, for add if overflow
-    if (opcodeInfo.mnemonic === 's_and_b32' || opcodeInfo.mnemonic === 's_and_b64' ||
-        opcodeInfo.mnemonic === 's_or_b64' || opcodeInfo.mnemonic === 's_xor_b64' ||
-        opcodeInfo.mnemonic === 's_andn2_b64') {
+    const mn = opcodeInfo.mnemonic;
+    if (mn === 's_and_b32' || mn === 's_and_b64' ||
+        mn === 's_or_b64' || mn === 's_xor_b64' ||
+        mn === 's_andn2_b64' || mn === 's_or_b32' || mn === 's_xor_b32' ||
+        mn === 's_andn2_b32' || mn === 's_nand_b32' || mn === 's_nor_b32' ||
+        mn === 's_lshl_b32' || mn === 's_lshr_b32' || mn === 's_ashr_i32' ||
+        mn === 's_lshl_b64' || mn === 's_lshr_b64' || mn === 's_ashr_i64' ||
+        mn === 's_bfm_b32' || mn === 's_bfe_u32' || mn === 's_bfe_i32' ||
+        mn === 's_absdiff_i32' || mn === 's_min_i32' || mn === 's_min_u32' ||
+        mn === 's_max_i32' || mn === 's_max_u32') {
       state.scc = result !== 0 ? 1 : 0;
       state.modifiedRegs.add('SCC');
-    } else if (opcodeInfo.mnemonic === 's_lshl_b32') {
-      state.scc = result !== 0 ? 1 : 0;
-      state.modifiedRegs.add('SCC');
-    } else if (opcodeInfo.mnemonic === 's_add_i32') {
+    } else if (mn === 's_add_i32') {
       // Overflow: check if signs of inputs match but differ from result sign
       const signA = (src0 >>> 31) & 1;
       const signB = (src1 >>> 31) & 1;
       const signR = (result >>> 31) & 1;
       state.scc = (signA === signB && signA !== signR) ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+    } else if (mn === 's_sub_i32') {
+      // Borrow: unsigned borrow-out
+      state.scc = ((src0 >>> 0) < (src1 >>> 0)) ? 1 : 0;
       state.modifiedRegs.add('SCC');
     }
 
@@ -560,8 +607,54 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
-  // SOPK: scalar with inline 16-bit constant — hardware config, NOP in emulator
+  // SOPK: scalar with inline 16-bit constant
   if (decoded.format === InstructionFormat.SOPK) {
+    const mn = opcodeInfo.mnemonic;
+
+    // Skip hardware config instructions
+    if (mn === 's_setreg_imm32_b32' || mn === 's_waitcnt_vscnt') {
+      return;
+    }
+
+    const rawSimm16 = decoded.simm16 ?? 0;
+    // Sign-extend 16-bit immediate to 32-bit
+    const signExtSimm16 = ((rawSimm16 << 16) >> 16);
+    const dst = decoded.dst;
+
+    if (mn === 's_movk_i32') {
+      const result = signExtSimm16 >>> 0;
+      state.writeSGPR(dst, result);
+      return;
+    }
+
+    if (mn === 's_addk_i32') {
+      const srcVal = state.readSGPR(dst);
+      const sum = (srcVal >>> 0) + (signExtSimm16 >>> 0);
+      const result = sum >>> 0;
+      state.scc = sum > 0xFFFFFFFF ? 1 : 0;
+      state.writeSGPR(dst, result);
+      state.modifiedRegs.add('SCC');
+      return;
+    }
+
+    if (mn === 's_mulk_i32') {
+      const srcVal = state.readSGPR(dst);
+      const result = Math.imul(srcVal, signExtSimm16) | 0;
+      state.writeSGPR(dst, result >>> 0);
+      return;
+    }
+
+    // s_cmpk_* — compare instructions
+    if (mn.startsWith('s_cmpk_')) {
+      const srcVal = state.readSGPR(dst);
+      // For unsigned compares, use zero-extended immediate
+      const isUnsigned = mn.endsWith('_u32');
+      const immVal = isUnsigned ? (rawSimm16 & 0xFFFF) : signExtSimm16;
+      state.scc = opcodeInfo.execute(srcVal, immVal) ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+      return;
+    }
+
     return;
   }
 

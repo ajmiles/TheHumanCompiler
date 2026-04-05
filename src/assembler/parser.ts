@@ -92,6 +92,7 @@ export function parse(tokens: Token[]): ParseResult {
       InstructionFormat.SOPP, InstructionFormat.SOP2, InstructionFormat.SOPC,
       InstructionFormat.SMEM, InstructionFormat.MUBUF,
       InstructionFormat.DS, InstructionFormat.MIMG,
+      InstructionFormat.SOPK,
     ]);
     if (!assembleableFormats.has(info.format)) {
       while (pos < tokens.length && peek().type !== TokenType.NEWLINE && peek().type !== TokenType.EOF) {
@@ -274,6 +275,48 @@ export function parse(tokens: Token[]): ParseResult {
       if (expectClose !== null && ri < rawTokens.length && rawTokens[ri].type === expectClose) {
         ri++;
       }
+    }
+
+    // SOPK: 1 register operand + 1 inline 16-bit immediate
+    // Syntax: s_movk_i32 sdst, simm16 / s_cmpk_eq_i32 sdst, simm16
+    if (info.format === InstructionFormat.SOPK) {
+      const nullOp: Operand = { type: OperandType.INLINE_INT, value: 0, encoded: 0 };
+      let dstOp: Operand = nullOp;
+      let simm16: number = 0;
+
+      // Skip hardware config instructions
+      if (info.mnemonic === 's_waitcnt_vscnt') {
+        for (const tok of rawTokens) {
+          if (tok.type === TokenType.NUMBER) {
+            simm16 = Number(tok.value) & 0xFFFF;
+          }
+        }
+      } else if (info.mnemonic === 's_setreg_imm32_b32') {
+        for (const tok of rawTokens) {
+          if (tok.type === TokenType.NUMBER) {
+            simm16 = Number(tok.value) & 0xFFFF;
+          }
+        }
+      } else {
+        // Standard SOPK: sdst, simm16
+        if (operandGroups.length >= 1) {
+          const resolved = parseSgprDestOperand(operandGroups[0].token, errors);
+          if (resolved) dstOp = resolved;
+        }
+        if (operandGroups.length >= 2) {
+          simm16 = Number(operandGroups[1].token.value) & 0xFFFF;
+        }
+      }
+
+      instructions.push({
+        mnemonic: mnemonicToken.value,
+        dst: dstOp,
+        src0: nullOp,
+        line: mnemonicToken.line,
+        column: mnemonicToken.column,
+        simm16,
+      });
+      continue;
     }
 
     // SOPP: optional operand — label reference for branches, or numeric (s_waitcnt)

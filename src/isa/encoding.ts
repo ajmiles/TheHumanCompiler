@@ -71,6 +71,7 @@ import {
   SOPK_SDST_SHIFT,
   SOPK_SDST_MASK,
   SOPK_SIMM16_MASK,
+  SOPK_PREFIX,
   SMEM_OP_SHIFT,
   SMEM_OP_MASK,
   SMEM_SDATA_SHIFT,
@@ -161,6 +162,10 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
 
   if (info.format === InstructionFormat.SOPP) {
     return encodeSOPP(info.opcode, instr.simm16);
+  }
+
+  if (info.format === InstructionFormat.SOPK) {
+    return encodeSOPK(info.opcode, instr);
   }
 
   if (info.format === InstructionFormat.SOP2) {
@@ -404,6 +409,18 @@ function encodeSOPP(opcode: number, simm16 = 0): number[] {
   const word = (SOPP_ENCODING_PREFIX << SOP1_PREFIX_SHIFT)
     | ((opcode & SOPP_OP_MASK) << SOPP_OP_SHIFT)
     | (simm16 & 0xFFFF);
+  return [(word >>> 0)];
+}
+
+function encodeSOPK(opcode: number, instr: ParsedInstruction): number[] {
+  // SOPK: bits[31:28]=0b1011, [27:23]=OP(5), [22:16]=SDST(7), [15:0]=SIMM16(16)
+  const sdst = instr.dst.encoded & SOPK_SDST_MASK;
+  const simm16 = (instr.simm16 ?? 0) & SOPK_SIMM16_MASK;
+
+  const word = (SOPK_PREFIX << 28)
+    | ((opcode & SOPK_OP_MASK) << SOPK_OP_SHIFT)
+    | ((sdst & SOPK_SDST_MASK) << SOPK_SDST_SHIFT)
+    | simm16;
   return [(word >>> 0)];
 }
 
@@ -910,16 +927,24 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       const ssrc1 = (word >>> SOP2_SSRC1_SHIFT) & SOP2_SSRC1_MASK;
       const ssrc0 = word & SOP2_SSRC0_MASK;
 
-      instructions.push({
+      const decoded: DecodedInstruction = {
         format,
         opcode,
         dst: 0,
         src0Encoded: ssrc0,
         src1: ssrc1,
         address,
-      });
+      };
 
       i++;
+
+      // SOPC supports literal when SSRC0 or SSRC1 == 0xFF
+      if ((ssrc0 === 0xFF || ssrc1 === 0xFF) && i < binary.length) {
+        decoded.literal = binary[i];
+        i++;
+      }
+
+      instructions.push(decoded);
     } else if (format === InstructionFormat.SOP2) {
       // SOP2: bits[31:30]=10, [29:23]=OP(7), [22:16]=SDST(7), [15:8]=SSRC1(8), [7:0]=SSRC0(8)
       const opcode = (word >>> SOP2_OP_SHIFT) & SOP2_OP_MASK;
