@@ -88,44 +88,37 @@ export class RegisterDisplay {
     const vgprLabel = document.createElement('span');
     vgprLabel.textContent = 'VGPRs';
 
-    const headerRight = document.createElement('div');
-    headerRight.style.display = 'flex';
-    headerRight.style.gap = '8px';
-    headerRight.style.alignItems = 'center';
+    vgprHeader.appendChild(vgprLabel);
+    vgprSection.appendChild(vgprHeader);
 
-    // VGPR format toggle
-    const toggle = document.createElement('div');
-    toggle.className = 'format-toggle';
+    // VGPR format toggle — 4x2 grid with transpose button
+    const toggleGrid = document.createElement('div');
+    toggleGrid.className = 'format-toggle';
+    toggleGrid.style.display = 'grid';
+    toggleGrid.style.gridTemplateColumns = 'repeat(4, 1fr)';
+    toggleGrid.style.gap = '2px';
+    toggleGrid.style.margin = '4px 8px';
 
     type VgprMode = 'f32' | 'hex' | 'u32' | 'i32' | 'f16' | 'u16' | 'i16';
-    const modes: Array<{ id: VgprMode; label: string }> = [
-      { id: 'f32', label: 'F32' },
-      { id: 'f16', label: 'F16' },
+    // Row 1: U32 I32 HEX [Transpose]
+    // Row 2: F32 F16 U16 I16
+    const row1: Array<{ id: VgprMode; label: string } | 'transpose'> = [
       { id: 'u32', label: 'U32' },
       { id: 'i32', label: 'I32' },
+      { id: 'hex', label: 'HEX' },
+      'transpose',
+    ];
+    const row2: Array<{ id: VgprMode; label: string }> = [
+      { id: 'f32', label: 'F32' },
+      { id: 'f16', label: 'F16' },
       { id: 'u16', label: 'U16' },
       { id: 'i16', label: 'I16' },
-      { id: 'hex', label: 'HEX' },
     ];
+
     const modeBtns: HTMLButtonElement[] = [];
-    for (const m of modes) {
-      const btn = document.createElement('button');
-      btn.className = 'format-toggle__btn' + (m.id === 'f32' ? ' format-toggle__btn--active' : '');
-      btn.textContent = m.label;
-      btn.onclick = () => { this.vgprMode = m.id; updateVgprToggle(); };
-      modeBtns.push(btn);
-      toggle.appendChild(btn);
-    }
+    const modes: Array<{ id: VgprMode; label: string }> = [];
 
-    const updateVgprToggle = () => {
-      for (let i = 0; i < modes.length; i++) {
-        modeBtns[i].classList.toggle('format-toggle__btn--active', this.vgprMode === modes[i].id);
-      }
-      this.rerender();
-    };
-    this._updateVgprToggle = updateVgprToggle;
-
-    // Transpose toggle
+    // Transpose button
     const transposeBtn = document.createElement('button');
     transposeBtn.className = 'format-toggle__btn format-toggle__btn--active';
     transposeBtn.textContent = '⇄';
@@ -136,9 +129,30 @@ export class RegisterDisplay {
       this.rerender();
     };
 
-    headerRight.append(toggle, transposeBtn);
-    vgprHeader.append(vgprLabel, headerRight);
-    vgprSection.appendChild(vgprHeader);
+    for (const item of [...row1, ...row2]) {
+      if (item === 'transpose') {
+        toggleGrid.appendChild(transposeBtn);
+      } else {
+        const m = item;
+        modes.push(m);
+        const btn = document.createElement('button');
+        btn.className = 'format-toggle__btn' + (m.id === 'f32' ? ' format-toggle__btn--active' : '');
+        btn.textContent = m.label;
+        btn.onclick = () => { this.vgprMode = m.id; updateVgprToggle(); };
+        modeBtns.push(btn);
+        toggleGrid.appendChild(btn);
+      }
+    }
+
+    const updateVgprToggle = () => {
+      for (let i = 0; i < modes.length; i++) {
+        modeBtns[i].classList.toggle('format-toggle__btn--active', this.vgprMode === modes[i].id);
+      }
+      this.rerender();
+    };
+    this._updateVgprToggle = updateVgprToggle;
+
+    vgprSection.appendChild(toggleGrid);
 
     this.vgprScrollWrapper = document.createElement('div');
     this.vgprScrollWrapper.className = 'vgpr-scroll-wrapper';
