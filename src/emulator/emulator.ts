@@ -64,6 +64,21 @@ export class Emulator {
       } else {
         this.state.pc++;
       }
+    } else if (instr.decoded.format === 'SOP1') {
+      const mnemonic = instr.opcodeInfo.mnemonic;
+      if (mnemonic === 's_setpc_b64' || mnemonic === 's_swappc_b64') {
+        // PC = ssrc0 (byte address / 4 → instruction index)
+        const src0 = instr.decoded.src0Encoded;
+        let addr: number;
+        if (src0 >= 0 && src0 <= 105) {
+          addr = this.state.readSGPR(src0);
+        } else {
+          addr = 0;
+        }
+        this.state.pc = (addr >>> 2); // byte address → instruction index
+      } else {
+        this.state.pc++;
+      }
     } else {
       this.state.pc++;
     }

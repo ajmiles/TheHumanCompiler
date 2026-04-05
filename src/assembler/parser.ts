@@ -316,6 +316,13 @@ export function parse(tokens: Token[]): ParseResult {
       expectedCount = 2; // always 2 source operands
     }
 
+    // Adjust expected count for special SOP1 instructions with unusual operand counts
+    if (info.format === InstructionFormat.SOP1) {
+      if (info.mnemonic === 's_getpc_b64' || info.mnemonic === 's_setpc_b64') {
+        expectedCount = 1;
+      }
+    }
+
     if (operandGroups.length !== expectedCount) {
       errors.push(wrongOperandCount(expectedCount, operandGroups.length, mnemonicToken.line, mnemonicToken.column));
       continue;
@@ -433,6 +440,20 @@ function parseOperands(
   }
 
   if (format === InstructionFormat.SOP1) {
+    // s_getpc_b64: only sdst, no source
+    if (mnemonic === 's_getpc_b64') {
+      const dst = parseSgprDestOperand(tokens[0], errors);
+      if (!dst) return null;
+      const nullOp: Operand = { type: OperandType.INLINE_INT, value: 0, encoded: 0 };
+      return { dst, src0: nullOp };
+    }
+    // s_setpc_b64: only ssrc0, no dest
+    if (mnemonic === 's_setpc_b64') {
+      const src0 = parseSsrc0Operand(tokens[0], errors);
+      if (!src0) return null;
+      const nullDst: Operand = { type: OperandType.INLINE_INT, value: 0, encoded: 0 };
+      return { dst: nullDst, src0 };
+    }
     // SOP1: sdst, ssrc0
     const dst = parseSgprDestOperand(tokens[0], errors);
     if (!dst) return null;

@@ -438,6 +438,30 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
   if (decoded.format === InstructionFormat.SOP1) {
     const src0Raw = resolveSsrc0(state, decoded.src0Encoded, decoded.literal);
 
+    // s_getpc_b64: sdst = PC + 4 (address of next instruction, in bytes)
+    // In our emulator, PC is instruction index. Store (pc+1)*4 as byte address.
+    if (opcodeInfo.mnemonic === 's_getpc_b64') {
+      const nextPC = (state.pc + 1) * 4;
+      state.writeSGPR(decoded.dst, nextPC >>> 0);
+      state.writeSGPR(decoded.dst + 1, 0); // high 32 bits = 0
+      return;
+    }
+
+    // s_setpc_b64: PC = ssrc0 (handled in emulator.ts for actual PC update)
+    // Just mark it — the emulator checks the mnemonic after execution
+    if (opcodeInfo.mnemonic === 's_setpc_b64') {
+      return;
+    }
+
+    // s_swappc_b64: sdst = PC + 4; PC = ssrc0
+    // Save return address here, PC update handled in emulator.ts
+    if (opcodeInfo.mnemonic === 's_swappc_b64') {
+      const nextPC = (state.pc + 1) * 4;
+      state.writeSGPR(decoded.dst, nextPC >>> 0);
+      state.writeSGPR(decoded.dst + 1, 0);
+      return;
+    }
+
     // s_and_saveexec_b64: save EXEC to dst, then EXEC &= src0
     if (opcodeInfo.mnemonic === 's_and_saveexec_b64') {
       const oldExec = state.exec;

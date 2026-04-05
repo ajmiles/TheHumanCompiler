@@ -1720,6 +1720,33 @@ const SOP1_OPCODES: OpcodeInfo[] = [
     description: 'Save EXEC to sdst, then AND ssrc0 into EXEC (32-bit).\nsdst = EXEC_LO; EXEC_LO &= ssrc0',
     syntax: 's_and_saveexec_b32 sdst, ssrc0',
   },
+  {
+    mnemonic: 's_getpc_b64',
+    format: InstructionFormat.SOP1,
+    opcode: 0x1C,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Get program counter. Stores address of next instruction into SGPR pair.\nsdst = PC + 4',
+    syntax: 's_getpc_b64 sdst',
+  },
+  {
+    mnemonic: 's_setpc_b64',
+    format: InstructionFormat.SOP1,
+    opcode: 0x1D,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Set program counter. Jumps to address in SGPR pair.\nPC = ssrc0',
+    syntax: 's_setpc_b64 ssrc0',
+  },
+  {
+    mnemonic: 's_swappc_b64',
+    format: InstructionFormat.SOP1,
+    opcode: 0x1E,
+    operandCount: 2,
+    execute: (a) => a,
+    description: 'Swap program counter. Saves return address and jumps (function call).\nsdst = PC + 4; PC = ssrc0',
+    syntax: 's_swappc_b64 sdst, ssrc0',
+  },
 ];
 
 // ── SOPP Instructions (scalar, no operands / immediate only) ──

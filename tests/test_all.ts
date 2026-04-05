@@ -1453,6 +1453,52 @@ group('Labels and Branches');
 }
 
 // ════════════════════════════════════════════
+//  PC Manipulation — s_getpc, s_setpc, s_swappc
+// ════════════════════════════════════════════
+group('PC Manipulation');
+
+// s_getpc_b64: stores address of next instruction
+{
+  const emu = setup([
+    's_getpc_b64 s0',     // s0 = (PC+1)*4 = 1*4 = 4
+    's_mov_b32 s2, 99',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(0) === 4, 's_getpc_b64: s0 = 4 (next instruction byte address)');
+  assert(emu.state.readSGPR(2) === 99, 's_getpc_b64: execution continues normally');
+}
+
+// s_setpc_b64: jump to address in SGPR
+{
+  const emu = setup([
+    's_getpc_b64 s0',      // s0 = 4 (byte addr of instruction 1)
+    's_add_i32 s0, s0, 8', // s0 = 12 (byte addr of instruction 3)
+    's_setpc_b64 s0',      // jump to instruction 3
+    's_mov_b32 s2, 99',    // skipped
+    's_mov_b32 s2, 42',    // instruction 3 (target): this executes
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 42, 's_setpc_b64: jumped over s2=99, s2=42');
+}
+
+// s_swappc_b64: save return address and jump (function call)
+{
+  const emu = setup([
+    's_mov_b32 s4, 0',
+    's_getpc_b64 s0',       // s0 = 8 (byte addr of instruction 2)
+    's_add_i32 s0, s0, 12', // s0 = 20 (byte addr of instruction 5 = "func")
+    's_swappc_b64 s2, s0',  // s2 = return addr (4*4=16), jump to instruction 5
+    's_endpgm',             // instruction 4: return here after func
+    's_mov_b32 s4, 77',     // instruction 5 ("func"): set s4=77
+    's_setpc_b64 s2',       // return to saved address (instruction 4)
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(4) === 77, 's_swappc_b64: function executed (s4=77)');
+}
+
+// ════════════════════════════════════════════
 //  VOP3P — Packed 16-bit Operations
 // ════════════════════════════════════════════
 group('VOP3P Packed 16-bit Operations');
