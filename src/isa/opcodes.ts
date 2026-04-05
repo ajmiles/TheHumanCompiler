@@ -1911,6 +1911,8 @@ const DS_OPCODES: OpcodeInfo[] = [
   { mnemonic: 'ds_swizzle_b32', format: InstructionFormat.DS, opcode: 0x35, operandCount: 2, execute: (a) => a, description: 'Cross-lane data swizzle in LDS.', syntax: 'ds_swizzle_b32 vdst, vsrc' },
   { mnemonic: 'ds_read_b32', format: InstructionFormat.DS, opcode: 0x36, operandCount: 2, execute: (a) => a, description: 'Read 32 bits from LDS.', syntax: 'ds_read_b32 vdst, vaddr' },
   { mnemonic: 'ds_read2st64_b32', format: InstructionFormat.DS, opcode: 0x38, operandCount: 2, execute: (a) => a, description: 'Read two 32-bit values from LDS with stride 64.', syntax: 'ds_read2st64_b32 vdst, vaddr' },
+  { mnemonic: 'ds_permute_b32', format: InstructionFormat.DS, opcode: 0x3E, operandCount: 3, execute: (a) => a, description: 'Forward lane permute (no LDS access).\nvdst[vaddr/4] = vdata', syntax: 'ds_permute_b32 vdst, vaddr, vdata' },
+  { mnemonic: 'ds_bpermute_b32', format: InstructionFormat.DS, opcode: 0x3F, operandCount: 3, execute: (a) => a, description: 'Backward lane permute (no LDS access).\nvdst = vdata[vaddr/4]', syntax: 'ds_bpermute_b32 vdst, vaddr, vdata' },
 ];
 
 // ── Lookup Tables ──

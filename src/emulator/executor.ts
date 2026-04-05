@@ -394,6 +394,46 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
+  // DS: ds_bpermute_b32 — backward permute: each lane reads from lane[vaddr/4]
+  if (opcodeInfo.mnemonic === 'ds_bpermute_b32') {
+    const exec = state.exec;
+    const addrReg = decoded.src0Encoded;  // ADDR = VGPR with lane indices * 4
+    const dataReg = decoded.src1!;        // DATA0 = source VGPR
+    const dstReg = decoded.dst;
+    const results: Array<{ lane: number; value: number }> = [];
+
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+      const addr = state.readVGPR_u32(addrReg, lane);
+      const srcLane = (addr >>> 2) & 31; // addr is byte offset, divide by 4
+      results.push({ lane, value: state.readVGPR_u32(dataReg, srcLane) });
+    }
+    for (const { lane, value } of results) {
+      state.writeVGPR_u32(dstReg, lane, value);
+    }
+    return;
+  }
+
+  // DS: ds_permute_b32 — forward permute: lane writes its data to lane[vaddr/4]
+  if (opcodeInfo.mnemonic === 'ds_permute_b32') {
+    const exec = state.exec;
+    const addrReg = decoded.src0Encoded;  // ADDR = VGPR with dest lane indices * 4
+    const dataReg = decoded.src1!;        // DATA0 = source VGPR
+    const dstReg = decoded.dst;
+    const results: Array<{ lane: number; value: number }> = [];
+
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+      const addr = state.readVGPR_u32(addrReg, lane);
+      const dstLane = (addr >>> 2) & 31;
+      results.push({ lane: dstLane, value: state.readVGPR_u32(dataReg, lane) });
+    }
+    for (const { lane, value } of results) {
+      state.writeVGPR_u32(dstReg, lane, value);
+    }
+    return;
+  }
+
   // SOP1: scalar instruction — values are already u32
   if (decoded.format === InstructionFormat.SOP1) {
     const src0Raw = resolveSsrc0(state, decoded.src0Encoded, decoded.literal);

@@ -1091,6 +1091,101 @@ function setupSwizzle(offsetHex: string): Emulator {
 }
 
 // ════════════════════════════════════════════
+//  DS — ds_permute_b32, ds_bpermute_b32
+// ════════════════════════════════════════════
+group('DS (ds_permute / ds_bpermute)');
+
+// Helper: load lane index into v0 for all 32 lanes
+function setupLaneIndices(): string[] {
+  const lines: string[] = [];
+  for (let i = 0; i < 32; i++) {
+    const mask = (1 << i) >>> 0;
+    lines.push(`s_mov_b32 exec_lo, 0x${mask.toString(16).padStart(8, '0')}`);
+    lines.push(`v_mov_b32 v0, ${i}`);
+  }
+  lines.push('s_mov_b32 exec_lo, 0xFFFFFFFF');
+  return lines;
+}
+
+// ds_bpermute_b32: each lane reads from lane[vaddr/4]
+// Set v1 = lane * 4 (byte address of own lane) reversed: lane 0 reads lane 31, etc.
+{
+  const lines = setupLaneIndices();
+  // v1 = (31 - lane) * 4 = reverse lane index as byte addr
+  for (let i = 0; i < 32; i++) {
+    const mask = (1 << i) >>> 0;
+    lines.push(`s_mov_b32 exec_lo, 0x${mask.toString(16).padStart(8, '0')}`);
+    lines.push(`v_mov_b32 v1, ${(31 - i) * 4}`);
+  }
+  lines.push('s_mov_b32 exec_lo, 0xFFFFFFFF');
+  lines.push('ds_bpermute_b32 v2, v1, v0');
+  lines.push('s_endpgm');
+  const emu = setup(lines.join('\n'));
+  emu.run();
+  // Lane 0 reads from lane 31 (value 31), lane 31 reads from lane 0 (value 0)
+  assert(emu.state.readVGPR_u32(2, 0) === 31, 'ds_bpermute: lane 0 reads lane 31');
+  assert(emu.state.readVGPR_u32(2, 31) === 0, 'ds_bpermute: lane 31 reads lane 0');
+  assert(emu.state.readVGPR_u32(2, 15) === 16, 'ds_bpermute: lane 15 reads lane 16');
+  assert(emu.state.readVGPR_u32(2, 16) === 15, 'ds_bpermute: lane 16 reads lane 15');
+}
+
+// ds_bpermute_b32: broadcast lane 5 to all lanes
+{
+  const lines = setupLaneIndices();
+  // v1 = 5*4 = 20 for all lanes (all read from lane 5)
+  lines.push('v_mov_b32 v1, 20');
+  lines.push('ds_bpermute_b32 v2, v1, v0');
+  lines.push('s_endpgm');
+  const emu = setup(lines.join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 5, 'ds_bpermute broadcast: lane 0 = 5');
+  assert(emu.state.readVGPR_u32(2, 15) === 5, 'ds_bpermute broadcast: lane 15 = 5');
+  assert(emu.state.readVGPR_u32(2, 31) === 5, 'ds_bpermute broadcast: lane 31 = 5');
+}
+
+// ds_permute_b32: forward permute — each lane sends its data to lane[vaddr/4]
+// Lane N sends its value to lane (31-N)
+{
+  const lines = setupLaneIndices();
+  // v1 = (31 - lane) * 4
+  for (let i = 0; i < 32; i++) {
+    const mask = (1 << i) >>> 0;
+    lines.push(`s_mov_b32 exec_lo, 0x${mask.toString(16).padStart(8, '0')}`);
+    lines.push(`v_mov_b32 v1, ${(31 - i) * 4}`);
+  }
+  lines.push('s_mov_b32 exec_lo, 0xFFFFFFFF');
+  lines.push('ds_permute_b32 v2, v1, v0');
+  lines.push('s_endpgm');
+  const emu = setup(lines.join('\n'));
+  emu.run();
+  // Lane 0 sent value 0 to lane 31, lane 31 sent value 31 to lane 0
+  assert(emu.state.readVGPR_u32(2, 0) === 31, 'ds_permute reverse: lane 0 gets 31');
+  assert(emu.state.readVGPR_u32(2, 31) === 0, 'ds_permute reverse: lane 31 gets 0');
+  assert(emu.state.readVGPR_u32(2, 10) === 21, 'ds_permute reverse: lane 10 gets 21');
+}
+
+// ds_permute_b32: rotate — each lane sends to lane+1 (wrapping)
+{
+  const lines = setupLaneIndices();
+  // v1 = ((lane + 1) % 32) * 4
+  for (let i = 0; i < 32; i++) {
+    const mask = (1 << i) >>> 0;
+    lines.push(`s_mov_b32 exec_lo, 0x${mask.toString(16).padStart(8, '0')}`);
+    lines.push(`v_mov_b32 v1, ${((i + 1) % 32) * 4}`);
+  }
+  lines.push('s_mov_b32 exec_lo, 0xFFFFFFFF');
+  lines.push('ds_permute_b32 v2, v1, v0');
+  lines.push('s_endpgm');
+  const emu = setup(lines.join('\n'));
+  emu.run();
+  // Lane 0 sent to lane 1, lane 1 sent to lane 2, ..., lane 31 sent to lane 0
+  // So lane 1 has value 0, lane 2 has value 1, lane 0 has value 31
+  assert(emu.state.readVGPR_u32(2, 0) === 31, 'ds_permute rotate: lane 0 gets 31 (from lane 31)');
+  assert(emu.state.readVGPR_u32(2, 1) === 0, 'ds_permute rotate: lane 1 gets 0 (from lane 0)');
+  assert(emu.state.readVGPR_u32(2, 31) === 30, 'ds_permute rotate: lane 31 gets 30');
+}
+
+// ════════════════════════════════════════════
 //  DPP16 — row_shr, row_shl, row_ror, quad_perm, wave_shl/shr, row_mirror
 // ════════════════════════════════════════════
 group('DPP16');

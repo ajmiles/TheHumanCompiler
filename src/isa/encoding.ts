@@ -465,8 +465,8 @@ function encodeDS(opcode: number, instr: ParsedInstruction): number[] {
   const offset0 = offset & 0xFF;
   const offset1 = (offset >>> 8) & 0xFF;
   const vdst = instr.dst.encoded & 0xFF;
-  const data0 = instr.src0.encoded & 0xFF;  // source VGPR
-  const addr = 0; // unused for ds_swizzle
+  const data0 = (instr.src1?.encoded ?? instr.src0.encoded) & 0xFF;
+  const addr = instr.src1 ? (instr.src0.encoded & 0xFF) : 0;
 
   const dword0 = (DS_ENCODING_PREFIX << 26)
     | ((opcode & DS_OP_MASK) << DS_OP_SHIFT)
