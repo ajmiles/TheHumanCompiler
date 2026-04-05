@@ -378,11 +378,21 @@ const PACKED_FP16: Tutorial = {
     {
       title: 'OP_SEL — Half Selection',
       text:
-        'By default, the lo operation reads from the lo half and the hi operation reads from the hi half. But <strong>OP_SEL</strong> modifiers let you override this:\n\n' +
-        '• <code>op_sel:[0,0]</code> — both lo and hi operations read from <em>lo</em> halves (broadcast lo)\n' +
-        '• <code>op_sel:[1,1]</code> — both operations read from <em>hi</em> halves (broadcast hi)\n' +
-        '• <code>op_sel:[1,0]</code> — swap: lo operation reads hi, hi operation reads lo\n\n' +
-        'This is powerful for matrix operations where you need to broadcast one element across both halves, or reorder packed data without extra instructions.',
+        'By default, the lo operation reads from the lo half and the hi operation reads from the hi half. <strong>op_sel</strong> overrides the <em>lo</em> operation\'s source selection, and <strong>op_sel_hi</strong> overrides the <em>hi</em> operation\'s.\n\n' +
+        '<code>op_sel:[src0_bit, src1_bit]</code> — for the <em>lo</em> result: 0 = read lo half, 1 = read hi half\n' +
+        '<code>op_sel_hi:[src0_bit, src1_bit]</code> — for the <em>hi</em> result: same meaning\n\n' +
+        'Try this: v0 = {hi: 2.0, lo: 1.0}. With <code>op_sel:[0,0]</code> the lo operation adds lo+lo = 1+1 = 2. With default op_sel_hi, the hi operation adds hi+hi = 2+2 = 4. So v1 = {4.0, 2.0}.\n\n' +
+        'Switch to <strong>F16</strong> mode to see the halves.',
+      code: '; v0 = {hi: 2.0, lo: 1.0}\n; f16(1.0)=0x3C00, f16(2.0)=0x4000\nv_mov_b32 v0, 0x40003C00\n;\n; Default: lo=lo+lo, hi=hi+hi → {4.0, 2.0}\nv_pk_add_f16 v1, v0, v0\n;\n; op_sel:[1,0]: lo reads (hi + lo) = 2+1 = 3\n; op_sel_hi default: hi reads (hi + hi) = 2+2 = 4\n; Result: {4.0, 3.0}\nv_pk_add_f16 v2, v0, v0 op_sel:[1,0]\n;\n; op_sel:[1,1]: lo reads (hi + hi) = 2+2 = 4\n; hi still reads (hi + hi) = 4 → {4.0, 4.0}\n; Broadcasts the hi value to both halves!\nv_pk_add_f16 v3, v0, v0 op_sel:[1,1]\ns_endpgm',
+    },
+    {
+      title: 'OP_SEL_HI — Hi-Half Override',
+      text:
+        '<code>op_sel_hi</code> controls what the <em>hi</em> operation reads. By default all sources read from their hi half (op_sel_hi = [1,1]). Setting a bit to 0 makes the hi operation read from the <em>lo</em> half instead.\n\n' +
+        'This is how you broadcast the lo value to both halves:\n' +
+        '<code>op_sel_hi:[0,0]</code> — hi operation reads lo halves (same as lo operation)\n\n' +
+        'Step through: v0 = {hi: 5.0, lo: 3.0}. With <code>op_sel_hi:[0,0]</code>, both lo and hi operations read the lo halves and add them: 3+3 = 6 in both positions → v1 = {6.0, 6.0}.',
+      code: '; v0 = {hi: 5.0, lo: 3.0}\n; f16(3.0)=0x4200, f16(5.0)=0x4500\nv_mov_b32 v0, 0x45004200\n;\n; Default: lo=lo+lo=6, hi=hi+hi=10 → {10.0, 6.0}\nv_pk_add_f16 v1, v0, v0\n;\n; op_sel_hi:[0,0]: hi also reads lo halves\n; Both operations: lo+lo = 3+3 = 6 → {6.0, 6.0}\nv_pk_add_f16 v2, v0, v0 op_sel_hi:[0,0]\n;\n; Combine: op_sel:[1,1] op_sel_hi:[1,1]\n; Both operations read hi: 5+5 = 10 → {10.0, 10.0}\nv_pk_add_f16 v3, v0, v0 op_sel:[1,1] op_sel_hi:[1,1]\ns_endpgm',
     },
     {
       title: 'Performance: 2× Throughput',
