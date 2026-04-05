@@ -4945,6 +4945,110 @@ group('VOP1 Indexed Register Move');
 }
 
 // ════════════════════════════════════════════
+//  VOP1 — Rounding Conversions & Reciprocal
+// ════════════════════════════════════════════
+group('VOP1 Rounding Conversions');
+
+// v_cvt_rpi_i32_f32: round to positive infinity (round half up)
+{
+  const emu = setup('v_cvt_rpi_i32_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 2.5); emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 3, 'v_cvt_rpi_i32_f32: 2.5 → 3');
+}
+{
+  const emu = setup('v_cvt_rpi_i32_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -1.5); emu.run();
+  assert((emu.state.readVGPR_u32(1, 0) | 0) === -1, 'v_cvt_rpi_i32_f32: -1.5 → -1');
+}
+
+// v_cvt_flr_i32_f32: floor
+{
+  const emu = setup('v_cvt_flr_i32_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 2.9); emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 2, 'v_cvt_flr_i32_f32: 2.9 → 2');
+}
+{
+  const emu = setup('v_cvt_flr_i32_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -0.1); emu.run();
+  assert((emu.state.readVGPR_u32(1, 0) | 0) === -1, 'v_cvt_flr_i32_f32: -0.1 → -1');
+}
+
+// v_cvt_off_f32_i4: signed 4-bit to float
+{
+  const emu = setup('v_cvt_off_f32_i4 v1, v0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5); emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 5.0), 'v_cvt_off_f32_i4: 5 → 5.0');
+}
+{
+  const emu = setup('v_cvt_off_f32_i4 v1, v0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xF); emu.run(); // 0xF = -1 in signed 4-bit
+  assert(approx(emu.state.readVGPR(1, 0), -1.0), 'v_cvt_off_f32_i4: 0xF → -1.0');
+}
+
+// v_rcp_iflag_f32
+{
+  const emu = setup('v_rcp_iflag_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 4.0); emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 0.25), 'v_rcp_iflag_f32: 1/4 = 0.25');
+}
+
+// ════════════════════════════════════════════
+//  SOP1 — Conditional Move & Indexed SGPR Move
+// ════════════════════════════════════════════
+group('SOP1 Conditional/Indexed Move');
+
+// s_cmov_b32: move only when SCC=1
+{
+  const emu = setup([
+    's_mov_b32 s0, 10',
+    's_mov_b32 s1, 99',
+    's_cmp_eq_u32 s0, 10',  // SCC=1
+    's_cmov_b32 s2, s1',     // s2 = 99 (SCC=1)
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 99, 's_cmov_b32: SCC=1 → move executed');
+}
+{
+  const emu = setup([
+    's_mov_b32 s0, 10',
+    's_mov_b32 s1, 99',
+    's_mov_b32 s2, 42',
+    's_cmp_eq_u32 s0, 5',   // SCC=0
+    's_cmov_b32 s2, s1',     // s2 unchanged (SCC=0)
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 42, 's_cmov_b32: SCC=0 → move not executed');
+}
+
+// s_movrels_b32: sdst = s[ssrc0 + M0]
+{
+  const emu = setup([
+    's_mov_b32 s0, 0xAA',
+    's_mov_b32 s1, 0xBB',
+    's_mov_b32 s2, 0xCC',
+    's_mov_b32 m0, 2',
+    's_movrels_b32 s5, s0',  // s5 = s[0+2] = s2 = 0xCC
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(5) === (0xCC >>> 0), 's_movrels_b32: s5 = s[0+M0] = s2 = 0xCC');
+}
+
+// s_movreld_b32: s[sdst + M0] = ssrc0
+{
+  const emu = setup([
+    's_mov_b32 s0, 0xFF',
+    's_mov_b32 m0, 3',
+    's_movreld_b32 s1, s0',  // s[1+3] = s4 = s0 = 0xFF
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(4) === (0xFF >>> 0), 's_movreld_b32: s[1+M0] = s4 = 0xFF');
+}
+
+// ════════════════════════════════════════════
 //  Edge Cases
 // ════════════════════════════════════════════
 group('Edge Cases');

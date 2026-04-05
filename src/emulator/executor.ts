@@ -463,6 +463,37 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       return;
     }
 
+    // s_cmov_b32/b64: conditional move — only write if SCC==1
+    if (opcodeInfo.mnemonic === 's_cmov_b32' || opcodeInfo.mnemonic === 's_cmov_b64') {
+      if (state.scc === 1) {
+        const dst = decoded.dst;
+        if (dst === EXEC_LO) { state.exec = src0Raw; state.modifiedRegs.add('EXEC'); }
+        else if (dst === VCC_LO) { state.vcc = src0Raw; state.modifiedRegs.add('VCC'); }
+        else { state.writeSGPR(dst, src0Raw); }
+      }
+      return;
+    }
+
+    // s_movrels_b32: sdst = s[ssrc0 + M0]
+    if (opcodeInfo.mnemonic === 's_movrels_b32' || opcodeInfo.mnemonic === 's_movrels_b64') {
+      const m0 = state.readSGPR(M0_REG) >>> 0;
+      const srcIdx = (decoded.src0Encoded + m0) & 0x7F;
+      const val = state.readSGPR(srcIdx);
+      const dst = decoded.dst;
+      if (dst === EXEC_LO) { state.exec = val; state.modifiedRegs.add('EXEC'); }
+      else if (dst === VCC_LO) { state.vcc = val; state.modifiedRegs.add('VCC'); }
+      else { state.writeSGPR(dst, val); }
+      return;
+    }
+
+    // s_movreld_b32: s[sdst + M0] = ssrc0
+    if (opcodeInfo.mnemonic === 's_movreld_b32' || opcodeInfo.mnemonic === 's_movreld_b64') {
+      const m0 = state.readSGPR(M0_REG) >>> 0;
+      const dstIdx = (decoded.dst + m0) & 0x7F;
+      state.writeSGPR(dstIdx, src0Raw);
+      return;
+    }
+
     // s_and_saveexec_b64: save EXEC to dst, then EXEC &= src0
     if (opcodeInfo.mnemonic === 's_and_saveexec_b64') {
       const oldExec = state.exec;
