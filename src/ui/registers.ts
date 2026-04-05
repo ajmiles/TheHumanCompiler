@@ -13,17 +13,39 @@ function floatToHex(val: number): string {
 
 function formatFloat(val: number, full: boolean): string {
   if (full) {
-    // Show enough digits to distinguish any f32 value
     const s = val.toPrecision(9);
-    // Trim trailing zeros after decimal point but keep at least one
     return s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '.0');
   }
   return val.toFixed(2);
 }
 
+/** Convert a 16-bit IEEE 754 half-precision float to a JS number. */
+function f16ToF32(h: number): number {
+  const sign = (h >>> 15) & 1;
+  const exp = (h >>> 10) & 0x1F;
+  const frac = h & 0x3FF;
+  if (exp === 0) {
+    if (frac === 0) return sign ? -0 : 0;
+    return (sign ? -1 : 1) * Math.pow(2, -14) * (frac / 1024);
+  }
+  if (exp === 0x1F) {
+    if (frac === 0) return sign ? -Infinity : Infinity;
+    return NaN;
+  }
+  return (sign ? -1 : 1) * Math.pow(2, exp - 15) * (1 + frac / 1024);
+}
+
+function formatF16(bits: number): string {
+  const v = f16ToF32(bits);
+  if (Number.isNaN(v)) return 'NaN';
+  if (!Number.isFinite(v)) return v > 0 ? 'Inf' : '-Inf';
+  if (v === 0) return '0.00';
+  return v.toPrecision(4);
+}
+
 export class RegisterDisplay {
   private container: HTMLElement;
-  private vgprMode: 'f32' | 'hex' | 'uint' = 'f32';
+  private vgprMode: 'f32' | 'hex' | 'uint' | 'f16' = 'f32';
   private _updateVgprToggle: (() => void) | null = null;
   private sgprMode: 'hex' | 'uint' | 'f32' = 'hex';
   private vgprScrollWrapper!: HTMLElement;
@@ -50,7 +72,7 @@ export class RegisterDisplay {
   }
 
   /** Set the VGPR display mode programmatically (e.g. when loading a puzzle). */
-  setVGPRMode(mode: 'f32' | 'hex' | 'uint'): void {
+  setVGPRMode(mode: 'f32' | 'hex' | 'uint' | 'f16'): void {
     this.vgprMode = mode;
     this._updateVgprToggle?.();
   }
@@ -87,10 +109,15 @@ export class RegisterDisplay {
     uintBtn.className = 'format-toggle__btn';
     uintBtn.textContent = 'UINT';
 
+    const f16Btn = document.createElement('button');
+    f16Btn.className = 'format-toggle__btn';
+    f16Btn.textContent = 'F16';
+
     const updateVgprToggle = () => {
       floatBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'f32');
       hexBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'hex');
       uintBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'uint');
+      f16Btn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'f16');
       this.rerender();
     };
     this._updateVgprToggle = updateVgprToggle;
@@ -98,8 +125,9 @@ export class RegisterDisplay {
     floatBtn.onclick = () => { this.vgprMode = 'f32'; updateVgprToggle(); };
     hexBtn.onclick = () => { this.vgprMode = 'hex'; updateVgprToggle(); };
     uintBtn.onclick = () => { this.vgprMode = 'uint'; updateVgprToggle(); };
+    f16Btn.onclick = () => { this.vgprMode = 'f16'; updateVgprToggle(); };
 
-    toggle.append(floatBtn, hexBtn, uintBtn);
+    toggle.append(floatBtn, hexBtn, uintBtn, f16Btn);
 
     // Transpose toggle
     const transposeBtn = document.createElement('button');
@@ -213,6 +241,7 @@ export class RegisterDisplay {
 
   /** Rows = registers, Columns = lanes (original layout) */
   private renderVGPRsNormal(state: GPUState, regCount: number, lanes: number): void {
+    const isF16 = this.vgprMode === 'f16';
     const table = document.createElement('table');
     table.className = 'vgpr-table';
 
@@ -250,28 +279,49 @@ export class RegisterDisplay {
 
     const tbody = document.createElement('tbody');
     for (let r = 0; r < regCount; r++) {
-      const row = document.createElement('tr');
-      const nameCell = document.createElement('td');
-      nameCell.textContent = `v${r}`;
-      row.appendChild(nameCell);
-
-      const isModified = state.modifiedRegs.has(`v${r}`);
-
-      for (let l = 0; l < lanes; l++) {
-        const td = document.createElement('td');
-        const val = state.readVGPR(r, l);
-        const full = this.fullPrecisionLanes.has(l);
-        if (this.vgprMode === 'hex') {
-          td.textContent = floatToHex(val);
-        } else if (this.vgprMode === 'uint') {
-          td.textContent = (state.readVGPR_u32(r, l) >>> 0).toString();
-        } else {
-          td.textContent = formatFloat(val, full);
+      if (isF16) {
+        // Two rows per register: v0.lo and v0.hi
+        const isModified = state.modifiedRegs.has(`v${r}`);
+        for (const half of ['lo', 'hi'] as const) {
+          const row = document.createElement('tr');
+          const nameCell = document.createElement('td');
+          nameCell.textContent = `v${r}.${half}`;
+          nameCell.style.fontSize = '10px';
+          row.appendChild(nameCell);
+          for (let l = 0; l < lanes; l++) {
+            const td = document.createElement('td');
+            const raw = state.readVGPR_u32(r, l);
+            const bits = half === 'lo' ? (raw & 0xFFFF) : (raw >>> 16);
+            td.textContent = formatF16(bits);
+            if (isModified) td.classList.add('modified');
+            row.appendChild(td);
+          }
+          tbody.appendChild(row);
         }
-        if (isModified) td.classList.add('modified');
-        row.appendChild(td);
+      } else {
+        const row = document.createElement('tr');
+        const nameCell = document.createElement('td');
+        nameCell.textContent = `v${r}`;
+        row.appendChild(nameCell);
+
+        const isModified = state.modifiedRegs.has(`v${r}`);
+
+        for (let l = 0; l < lanes; l++) {
+          const td = document.createElement('td');
+          const val = state.readVGPR(r, l);
+          const full = this.fullPrecisionLanes.has(l);
+          if (this.vgprMode === 'hex') {
+            td.textContent = floatToHex(val);
+          } else if (this.vgprMode === 'uint') {
+            td.textContent = (state.readVGPR_u32(r, l) >>> 0).toString();
+          } else {
+            td.textContent = formatFloat(val, full);
+          }
+          if (isModified) td.classList.add('modified');
+          row.appendChild(td);
+        }
+        tbody.appendChild(row);
       }
-      tbody.appendChild(row);
     }
     table.appendChild(tbody);
     this.vgprScrollWrapper.replaceChildren(table);
@@ -279,6 +329,7 @@ export class RegisterDisplay {
 
   /** Rows = lanes, Columns = registers (transposed layout) */
   private renderVGPRsTransposed(state: GPUState, regCount: number, lanes: number): void {
+    const isF16 = this.vgprMode === 'f16';
     const table = document.createElement('table');
     table.className = 'vgpr-table';
 
@@ -291,14 +342,22 @@ export class RegisterDisplay {
     headerRow.appendChild(laneTh);
 
     for (let r = 0; r < regCount; r++) {
-      const th = document.createElement('th');
-      th.textContent = `v${r}`;
-      th.style.cursor = 'pointer';
-      th.title = `v${r}`;
-      if (state.modifiedRegs.has(`v${r}`)) {
-        th.classList.add('vgpr-table__th--full');
+      if (isF16) {
+        for (const half of ['lo', 'hi'] as const) {
+          const th = document.createElement('th');
+          th.textContent = `v${r}.${half}`;
+          th.style.fontSize = '10px';
+          if (state.modifiedRegs.has(`v${r}`)) th.classList.add('vgpr-table__th--full');
+          headerRow.appendChild(th);
+        }
+      } else {
+        const th = document.createElement('th');
+        th.textContent = `v${r}`;
+        th.style.cursor = 'pointer';
+        th.title = `v${r}`;
+        if (state.modifiedRegs.has(`v${r}`)) th.classList.add('vgpr-table__th--full');
+        headerRow.appendChild(th);
       }
-      headerRow.appendChild(th);
     }
     thead.appendChild(headerRow);
     table.appendChild(thead);
@@ -311,17 +370,28 @@ export class RegisterDisplay {
       row.appendChild(laneCell);
 
       for (let r = 0; r < regCount; r++) {
-        const td = document.createElement('td');
-        const val = state.readVGPR(r, l);
-        if (this.vgprMode === 'hex') {
-          td.textContent = floatToHex(val);
-        } else if (this.vgprMode === 'uint') {
-          td.textContent = (state.readVGPR_u32(r, l) >>> 0).toString();
+        if (isF16) {
+          const raw = state.readVGPR_u32(r, l);
+          for (const half of ['lo', 'hi'] as const) {
+            const td = document.createElement('td');
+            const bits = half === 'lo' ? (raw & 0xFFFF) : (raw >>> 16);
+            td.textContent = formatF16(bits);
+            if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
+            row.appendChild(td);
+          }
         } else {
-          td.textContent = formatFloat(val, false);
+          const td = document.createElement('td');
+          const val = state.readVGPR(r, l);
+          if (this.vgprMode === 'hex') {
+            td.textContent = floatToHex(val);
+          } else if (this.vgprMode === 'uint') {
+            td.textContent = (state.readVGPR_u32(r, l) >>> 0).toString();
+          } else {
+            td.textContent = formatFloat(val, false);
+          }
+          if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
+          row.appendChild(td);
         }
-        if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
-        row.appendChild(td);
       }
       tbody.appendChild(row);
     }
