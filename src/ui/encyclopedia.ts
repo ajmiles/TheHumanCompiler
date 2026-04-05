@@ -23,22 +23,38 @@ interface FormatSpec {
 
 const FORMATS: FormatSpec[] = [
   {
-    name: 'VOP2',
-    fullName: 'Vector ALU — 2 Sources (32-bit)',
+    name: 'SOPP',
+    fullName: 'Scalar Program Control (32-bit)',
     totalBits: 32,
     words: 1,
     fields: [[
-      { name: '0', bits: 1, color: '#f85149', description: 'Encoding bit — always 0 for VOP2' },
-      { name: 'OP', bits: 6, color: '#58a6ff', description: 'Opcode — selects the operation (e.g. 0x03 = v_add_f32)' },
-      { name: 'VDST', bits: 8, color: '#39d353', description: 'Destination VGPR index (0–255)' },
-      { name: 'VSRC1', bits: 8, color: '#d29922', description: 'Second source — must be a VGPR (0–255)' },
-      { name: 'SRC0', bits: 9, color: '#bc8cff', description: 'First source — 9-bit encoded: VGPR (256+), SGPR (0–105), inline constant, or literal' },
+      { name: '0x17F', bits: 9, color: '#f85149', description: 'Encoding prefix — 101111111 identifies SOPP' },
+      { name: 'OP', bits: 7, color: '#58a6ff', description: 'Opcode — selects the operation (e.g. 0x01 = s_endpgm)' },
+      { name: 'SIMM16', bits: 16, color: '#bc8cff', description: '16-bit signed immediate — used for branch offsets (unused by s_endpgm)' },
     ]],
-    description: 'The most common ALU format. Two source operands, one destination. SRC0 can be a VGPR, SGPR, or inline constant. VSRC1 must always be a VGPR. If you need source modifiers (abs/neg), the assembler automatically promotes to VOP3.',
+    description: 'Scalar program control instructions — no register operands. Used for program termination (s_endpgm), branches, barriers, and other control flow. The 16-bit SIMM16 field provides a branch offset for jump instructions.',
     operandRules: [
-      'SRC0 (9-bit): SGPR (0–105), VGPR (256–511), inline int (128–192), inline float (240–247), literal (255 + next dword)',
-      'VSRC1 (8-bit): VGPR only (0–255)',
-      'VDST (8-bit): VGPR only (0–255)',
+      'No register operands — instruction is fully encoded in 32 bits',
+      'SIMM16: signed 16-bit immediate, used as branch offset in dwords',
+      's_endpgm: terminates the shader program (SIMM16 = 0)',
+    ],
+  },
+  {
+    name: 'SOP1',
+    fullName: 'Scalar ALU — 1 Source (32-bit)',
+    totalBits: 32,
+    words: 1,
+    fields: [[
+      { name: '0x17D', bits: 9, color: '#f85149', description: 'Encoding prefix — 101111101 identifies SOP1' },
+      { name: 'SDST', bits: 7, color: '#39d353', description: 'Destination SGPR index, or special register (EXEC, VCC)' },
+      { name: 'OP', bits: 8, color: '#58a6ff', description: 'Opcode — selects the operation (e.g. 0x03 = s_mov_b32)' },
+      { name: 'SSRC0', bits: 8, color: '#bc8cff', description: 'Source — SGPR, special register, or inline constant' },
+    ]],
+    description: 'Scalar operations execute once per wavefront (not per lane). Used for control flow, setting EXEC mask, and scalar math. SDST can target EXEC or VCC to control which lanes are active.',
+    operandRules: [
+      'SSRC0 (8-bit): SGPR (0–105), special registers (EXEC=126, VCC=106), inline constants',
+      'SDST (7-bit): SGPR or special register (EXEC, VCC, M0)',
+      'Scalar instructions are not per-lane — they execute once for the whole wavefront',
     ],
   },
   {
@@ -56,6 +72,25 @@ const FORMATS: FormatSpec[] = [
     operandRules: [
       'SRC0 (9-bit): SGPR, VGPR, inline constant, or literal',
       'VDST (8-bit): VGPR only',
+    ],
+  },
+  {
+    name: 'VOP2',
+    fullName: 'Vector ALU — 2 Sources (32-bit)',
+    totalBits: 32,
+    words: 1,
+    fields: [[
+      { name: '0', bits: 1, color: '#f85149', description: 'Encoding bit — always 0 for VOP2' },
+      { name: 'OP', bits: 6, color: '#58a6ff', description: 'Opcode — selects the operation (e.g. 0x03 = v_add_f32)' },
+      { name: 'VDST', bits: 8, color: '#39d353', description: 'Destination VGPR index (0–255)' },
+      { name: 'VSRC1', bits: 8, color: '#d29922', description: 'Second source — must be a VGPR (0–255)' },
+      { name: 'SRC0', bits: 9, color: '#bc8cff', description: 'First source — 9-bit encoded: VGPR (256+), SGPR (0–105), inline constant, or literal' },
+    ]],
+    description: 'The most common ALU format. Two source operands, one destination. SRC0 can be a VGPR, SGPR, or inline constant. VSRC1 must always be a VGPR. If you need source modifiers (abs/neg), the assembler automatically promotes to VOP3.',
+    operandRules: [
+      'SRC0 (9-bit): SGPR (0–105), VGPR (256–511), inline int (128–192), inline float (240–247), literal (255 + next dword)',
+      'VSRC1 (8-bit): VGPR only (0–255)',
+      'VDST (8-bit): VGPR only (0–255)',
     ],
   },
   {
@@ -107,41 +142,6 @@ const FORMATS: FormatSpec[] = [
       'SRC0 (9-bit): SGPR, VGPR, inline constant, or literal',
       'VSRC1 (8-bit): VGPR only',
       'VCC is a 32-bit mask: bit N = comparison result for lane N',
-    ],
-  },
-  {
-    name: 'SOP1',
-    fullName: 'Scalar ALU — 1 Source (32-bit)',
-    totalBits: 32,
-    words: 1,
-    fields: [[
-      { name: '0x17D', bits: 9, color: '#f85149', description: 'Encoding prefix — 101111101 identifies SOP1' },
-      { name: 'SDST', bits: 7, color: '#39d353', description: 'Destination SGPR index, or special register (EXEC, VCC)' },
-      { name: 'OP', bits: 8, color: '#58a6ff', description: 'Opcode — selects the operation (e.g. 0x03 = s_mov_b32)' },
-      { name: 'SSRC0', bits: 8, color: '#bc8cff', description: 'Source — SGPR, special register, or inline constant' },
-    ]],
-    description: 'Scalar operations execute once per wavefront (not per lane). Used for control flow, setting EXEC mask, and scalar math. SDST can target EXEC or VCC to control which lanes are active.',
-    operandRules: [
-      'SSRC0 (8-bit): SGPR (0–105), special registers (EXEC=126, VCC=106), inline constants',
-      'SDST (7-bit): SGPR or special register (EXEC, VCC, M0)',
-      'Scalar instructions are not per-lane — they execute once for the whole wavefront',
-    ],
-  },
-  {
-    name: 'SOPP',
-    fullName: 'Scalar Program Control (32-bit)',
-    totalBits: 32,
-    words: 1,
-    fields: [[
-      { name: '0x17F', bits: 9, color: '#f85149', description: 'Encoding prefix — 101111111 identifies SOPP' },
-      { name: 'OP', bits: 7, color: '#58a6ff', description: 'Opcode — selects the operation (e.g. 0x01 = s_endpgm)' },
-      { name: 'SIMM16', bits: 16, color: '#bc8cff', description: '16-bit signed immediate — used for branch offsets (unused by s_endpgm)' },
-    ]],
-    description: 'Scalar program control instructions — no register operands. Used for program termination (s_endpgm), branches, barriers, and other control flow. The 16-bit SIMM16 field provides a branch offset for jump instructions.',
-    operandRules: [
-      'No register operands — instruction is fully encoded in 32 bits',
-      'SIMM16: signed 16-bit immediate, used as branch offset in dwords',
-      's_endpgm: terminates the shader program (SIMM16 = 0)',
     ],
   },
 ];
