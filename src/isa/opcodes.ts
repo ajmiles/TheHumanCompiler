@@ -63,6 +63,28 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     syntax: 'v_mul_f32 vdst, src0, vsrc1',
   },
   {
+    mnemonic: 'v_dot4c_i32_i8',
+    format: InstructionFormat.VOP2,
+    opcode: 0x0D,
+    operandCount: 3,
+    execute: (a, b) => {
+      // Dot product of 4 signed bytes, accumulated into vdst
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0;
+      let sum = 0;
+      for (let i = 0; i < 4; i++) {
+        let a8 = (s0 >>> (i * 8)) & 0xFF;
+        let b8 = (s1 >>> (i * 8)) & 0xFF;
+        if (a8 > 127) a8 -= 256;
+        if (b8 > 127) b8 -= 256;
+        sum += a8 * b8;
+      }
+      return sum;
+    },
+    description: 'Dot product of 4 signed bytes, accumulated.\nvdst += src0.b0×vsrc1.b0 + src0.b1×vsrc1.b1 + src0.b2×vsrc1.b2 + src0.b3×vsrc1.b3',
+    syntax: 'v_dot4c_i32_i8 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
     mnemonic: 'v_min_f32',
     format: InstructionFormat.VOP2,
     opcode: 0x0F,
@@ -119,6 +141,24 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     description: 'Bitwise XNOR of two 32-bit values per lane.\nvdst = ~(src0 ^ vsrc1)',
     syntax: 'v_xnor_b32 vdst, src0, vsrc1',
     isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_madmk_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x20,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Multiply-add with inline constant K: vdst = src0 × K + vsrc1.\nK is a 32-bit literal always following the instruction word.',
+    syntax: 'v_madmk_f32 vdst, src0, K, vsrc1',
+  },
+  {
+    mnemonic: 'v_madak_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x21,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Multiply-add with inline constant K: vdst = src0 × vsrc1 + K.\nK is a 32-bit literal always following the instruction word.',
+    syntax: 'v_madak_f32 vdst, src0, vsrc1, K',
   },
   {
     mnemonic: 'v_min_i32',
@@ -400,6 +440,15 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     syntax: 'v_sub_f16 vdst, src0, vsrc1',
   },
   {
+    mnemonic: 'v_subrev_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x34,
+    operandCount: 3,
+    execute: (a, b) => asFloat((b ?? 0) - a),
+    description: 'Reverse subtract two 16-bit floats.\nvdst = vsrc1 - src0',
+    syntax: 'v_subrev_f16 vdst, src0, vsrc1',
+  },
+  {
     mnemonic: 'v_mul_f16',
     format: InstructionFormat.VOP2,
     opcode: 0x35,
@@ -416,6 +465,24 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     execute: (a, b) => asFloat(a * (b ?? 0)),
     description: 'Fused multiply-accumulate f16: vdst = src0 × vsrc1 + vdst.',
     syntax: 'v_fmac_f16 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_fmamk_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x37,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Fused multiply-add with inline constant K (f16): vdst = src0 × K + vsrc1.\nK is a 32-bit literal always following the instruction word.',
+    syntax: 'v_fmamk_f16 vdst, src0, K, vsrc1',
+  },
+  {
+    mnemonic: 'v_fmaak_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x38,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Fused multiply-add with inline constant K (f16): vdst = src0 × vsrc1 + K.\nK is a 32-bit literal always following the instruction word.',
+    syntax: 'v_fmaak_f16 vdst, src0, vsrc1, K',
   },
   {
     mnemonic: 'v_max_f16',
@@ -443,6 +510,15 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     execute: (a, b) => asFloat(a * Math.pow(2, (b ?? 0) | 0)),
     description: 'Load exponent f16: vdst = src0 × 2^vsrc1.',
     syntax: 'v_ldexp_f16 vdst, src0, vsrc1',
+  },
+  {
+    mnemonic: 'v_pk_fmac_f16',
+    format: InstructionFormat.VOP2,
+    opcode: 0x3C,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'Packed FMA-accumulate f16: vdst += src0 × vsrc1 (packed f16 operation).',
+    syntax: 'v_pk_fmac_f16 vdst, src0, vsrc1',
   },
 ];
 
@@ -947,6 +1023,50 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     execute: (a) => asFloat(Math.cos(a * 2 * Math.PI)),
     description: 'Cosine of a 16-bit float (input in turns).\nvdst = cos(2π × src0)',
     syntax: 'v_cos_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_sat_pk_u8_i16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x62,
+    operandCount: 2,
+    execute: (a) => {
+      const lo16 = (a << 16) >> 16;
+      const hi16 = (a >> 16);
+      const loByte = Math.max(0, Math.min(255, lo16));
+      const hiByte = Math.max(0, Math.min(255, hi16));
+      return ((hiByte << 8) | loByte) >>> 0;
+    },
+    description: 'Pack two signed i16 halves to two unsigned u8 bytes with saturation.\nlo_byte = clamp(src0[15:0], 0, 255), hi_byte = clamp(src0[31:16], 0, 255).\nResult = (hi_byte << 8) | lo_byte',
+    syntax: 'v_sat_pk_u8_i16 vdst, src0',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_cvt_norm_i16_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x63,
+    operandCount: 2,
+    execute: (a) => {
+      const clamped = Math.max(-1.0, Math.min(1.0, a));
+      const val = Math.round(clamped * 32767);
+      return (val & 0xFFFF) >>> 0;
+    },
+    description: 'Convert f16 to normalized i16.\nvdst = (i16)(src0 × 32767)',
+    syntax: 'v_cvt_norm_i16_f16 vdst, src0',
+    integerOutput: true,
+  },
+  {
+    mnemonic: 'v_cvt_norm_u16_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x64,
+    operandCount: 2,
+    execute: (a) => {
+      const clamped = Math.max(0.0, Math.min(1.0, a));
+      const val = Math.round(clamped * 65535);
+      return (val & 0xFFFF) >>> 0;
+    },
+    description: 'Convert f16 to normalized u16.\nvdst = (u16)(src0 × 65535)',
+    syntax: 'v_cvt_norm_u16_f16 vdst, src0',
+    integerOutput: true,
   },
 ];
 
@@ -2049,6 +2169,66 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     },
     description: 'Masked sum of absolute differences: skips byte comparisons where src0 byte is 0.\nvdst = Σ(src0[i]!=0 ? |src0[i]-src1[i]| : 0) + src2',
     syntax: 'v_msad_u8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_qsad_pk_u16_u8',
+    format: InstructionFormat.VOP3,
+    opcode: 0x172,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      // Simplified quad SAD: compute 4 SADs of consecutive bytes, accumulate with src2
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0;
+      let sum = (c ?? 0) >>> 0;
+      for (let i = 0; i < 4; i++) {
+        const a8 = (s0 >>> (i * 8)) & 0xFF;
+        const b8 = (s1 >>> (i * 8)) & 0xFF;
+        sum += Math.abs(a8 - b8);
+      }
+      return sum >>> 0;
+    },
+    description: 'Quad SAD of packed unsigned bytes, accumulated.\nvdst = Σ|src0[i] - src1[i]| + src2 (4 bytes, simplified)',
+    syntax: 'v_qsad_pk_u16_u8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mqsad_pk_u16_u8',
+    format: InstructionFormat.VOP3,
+    opcode: 0x173,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      // Simplified masked quad SAD: like qsad but skip bytes where src0 is 0
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0;
+      let sum = (c ?? 0) >>> 0;
+      for (let i = 0; i < 4; i++) {
+        const a8 = (s0 >>> (i * 8)) & 0xFF;
+        const b8 = (s1 >>> (i * 8)) & 0xFF;
+        if (a8 !== 0) sum += Math.abs(a8 - b8);
+      }
+      return sum >>> 0;
+    },
+    description: 'Masked quad SAD of packed unsigned bytes, accumulated.\nvdst = Σ(src0[i]!=0 ? |src0[i]-src1[i]| : 0) + src2 (simplified)',
+    syntax: 'v_mqsad_pk_u16_u8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mqsad_u32_u8',
+    format: InstructionFormat.VOP3,
+    opcode: 0x175,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      // Simplified masked quad SAD producing u32 result
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0;
+      let sum = (c ?? 0) >>> 0;
+      for (let i = 0; i < 4; i++) {
+        const a8 = (s0 >>> (i * 8)) & 0xFF;
+        const b8 = (s1 >>> (i * 8)) & 0xFF;
+        if (a8 !== 0) sum += Math.abs(a8 - b8);
+      }
+      return sum >>> 0;
+    },
+    description: 'Masked quad SAD producing u32 result.\nvdst = Σ(src0[i]!=0 ? |src0[i]-src1[i]| : 0) + src2 (u32, simplified)',
+    syntax: 'v_mqsad_u32_u8 vdst, src0, src1, src2',
     isIntegerOp: true,
   },
   {

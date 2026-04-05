@@ -3,7 +3,7 @@
 import { assemble } from '../src/assembler/assembler';
 import { Emulator } from '../src/emulator/emulator';
 import { decodeBinary, disassemble } from '../src/isa/encoding';
-import { lookupByOpcode } from '../src/isa/opcodes';
+import { lookupByOpcode, lookupByMnemonic } from '../src/isa/opcodes';
 
 // ── Test Harness ──
 
@@ -5127,6 +5127,387 @@ group('SDWA Sub-Dword Addressing');
   emu.state.writeVGPR_u32(1, 0, 0x12340000);
   emu.run();
   assert(emu.state.readVGPR_u32(1, 0) === 0x1234AABB, 'SDWA: WORD_0 preserve upper');
+}
+
+// ════════════════════════════════════════════
+//  New VALU Instructions
+// ════════════════════════════════════════════
+group('New VALU Instructions');
+
+// Helper: build VOP2 binary word
+function buildVOP2(opcode: number, vdst: number, vsrc1: number, src0: number): number {
+  return (((opcode & 0x3F) << 25) | ((vdst & 0xFF) << 17) | ((vsrc1 & 0xFF) << 9) | (src0 & 0x1FF)) >>> 0;
+}
+
+// Helper: build VOP1 binary word
+function buildVOP1(opcode: number, vdst: number, src0: number): number {
+  return ((0x3F << 25) | ((opcode & 0xFF) << 17) | ((vdst & 0xFF) << 9) | (src0 & 0x1FF)) >>> 0;
+}
+
+// VOP3 helper for 3-source ops
+function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number, src2: number): number[] {
+  const dword0 = ((0x34 << 26) | ((opcode & 0x3FF) << 16) | (vdst & 0xFF)) >>> 0;
+  const dword1 = (((src2 & 0x1FF) << 18) | ((src1 & 0x1FF) << 9) | (src0 & 0x1FF)) >>> 0;
+  return [dword0, dword1];
+}
+
+// ── v_madmk_f32 (opcode 0x20): vdst = src0 * K + vsrc1 ──
+{
+  // v_madmk_f32 v2, v0, K=2.0, v1 → v2 = v0 * 2.0 + v1
+  const word = buildVOP2(0x20, 2, 1, 256 + 0); // src0=v0, vsrc1=v1, vdst=v2
+  const kBits = floatBits(2.0);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR(0, 0, 3.0);   // src0 = 3.0
+  emu.state.writeVGPR(1, 0, 10.0);  // vsrc1 = 10.0
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 16.0), 'v_madmk_f32: 3.0 * 2.0 + 10.0 = 16.0');
+}
+
+// v_madmk_f32 with negative K
+{
+  const word = buildVOP2(0x20, 2, 1, 256 + 0);
+  const kBits = floatBits(-0.5);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR(0, 0, 4.0);
+  emu.state.writeVGPR(1, 0, 5.0);
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 3.0), 'v_madmk_f32: 4.0 * (-0.5) + 5.0 = 3.0');
+}
+
+// ── v_madak_f32 (opcode 0x21): vdst = src0 * vsrc1 + K ──
+{
+  // v_madak_f32 v2, v0, v1, K=100.0 → v2 = v0 * v1 + 100.0
+  const word = buildVOP2(0x21, 2, 1, 256 + 0);
+  const kBits = floatBits(100.0);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR(0, 0, 3.0);
+  emu.state.writeVGPR(1, 0, 5.0);
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 115.0), 'v_madak_f32: 3.0 * 5.0 + 100.0 = 115.0');
+}
+
+// v_madak_f32 with K=0
+{
+  const word = buildVOP2(0x21, 2, 1, 256 + 0);
+  const kBits = floatBits(0.0);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR(0, 0, 7.0);
+  emu.state.writeVGPR(1, 0, 3.0);
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 21.0), 'v_madak_f32: 7.0 * 3.0 + 0.0 = 21.0');
+}
+
+// ── v_subrev_f16 (opcode 0x34): vdst = vsrc1 - src0 ──
+{
+  const emu = setup('v_subrev_f16 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.0);
+  emu.state.writeVGPR(1, 0, 10.0);
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 7.0), 'v_subrev_f16: 10.0 - 3.0 = 7.0');
+}
+
+// v_subrev_f16 with larger src0
+{
+  const emu = setup('v_subrev_f16 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 10.0);
+  emu.state.writeVGPR(1, 0, 3.0);
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), -7.0), 'v_subrev_f16: 3.0 - 10.0 = -7.0');
+}
+
+// ── v_fmamk_f16 (opcode 0x37): vdst = src0 * K + vsrc1 ──
+{
+  const word = buildVOP2(0x37, 2, 1, 256 + 0);
+  const kBits = floatBits(3.0);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR(0, 0, 2.0);
+  emu.state.writeVGPR(1, 0, 4.0);
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 10.0), 'v_fmamk_f16: 2.0 * 3.0 + 4.0 = 10.0');
+}
+
+// ── v_fmaak_f16 (opcode 0x38): vdst = src0 * vsrc1 + K ──
+{
+  const word = buildVOP2(0x38, 2, 1, 256 + 0);
+  const kBits = floatBits(50.0);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR(0, 0, 5.0);
+  emu.state.writeVGPR(1, 0, 4.0);
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 70.0), 'v_fmaak_f16: 5.0 * 4.0 + 50.0 = 70.0');
+}
+
+// ── v_pk_fmac_f16 (opcode 0x3C): vdst += src0 * vsrc1 (packed f16) ──
+{
+  const word = buildVOP2(0x3C, 2, 1, 256 + 0);
+  const binary = new Uint32Array([word, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  // v0 = packed(lo=2.0, hi=3.0), v1 = packed(lo=4.0, hi=5.0), v2 = packed(lo=1.0, hi=10.0)
+  emu.state.writeVGPR_u32(0, 0, pkf16(2.0, 3.0));
+  emu.state.writeVGPR_u32(1, 0, pkf16(4.0, 5.0));
+  emu.state.writeVGPR_u32(2, 0, pkf16(1.0, 10.0));
+  emu.run();
+  // vdst_lo = 1.0 + 2.0*4.0 = 9.0, vdst_hi = 10.0 + 3.0*5.0 = 25.0
+  const r = emu.state.readVGPR_u32(2, 0);
+  const rLoF16 = r & 0xFFFF;
+  const rHiF16 = (r >>> 16) & 0xFFFF;
+  // f16 for 9.0 = 0x4880, f16 for 25.0 = 0x4E40
+  assert(rLoF16 === f16(9.0), `v_pk_fmac_f16: lo = 9.0 (got 0x${rLoF16.toString(16)})`);
+  assert(rHiF16 === f16(25.0), `v_pk_fmac_f16: hi = 25.0 (got 0x${rHiF16.toString(16)})`);
+}
+
+// v_pk_fmac_f16 with zeros
+{
+  const word = buildVOP2(0x3C, 2, 1, 256 + 0);
+  const binary = new Uint32Array([word, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, pkf16(0.0, 0.0));
+  emu.state.writeVGPR_u32(1, 0, pkf16(4.0, 5.0));
+  emu.state.writeVGPR_u32(2, 0, pkf16(7.0, 8.0));
+  emu.run();
+  const r = emu.state.readVGPR_u32(2, 0);
+  assert((r & 0xFFFF) === f16(7.0), 'v_pk_fmac_f16 zeros: lo preserved 7.0');
+  assert(((r >>> 16) & 0xFFFF) === f16(8.0), 'v_pk_fmac_f16 zeros: hi preserved 8.0');
+}
+
+// ── v_dot4c_i32_i8 (opcode 0x0D): vdst += dot4(src0, src1) ──
+{
+  const emu = setup('v_dot4c_i32_i8 v2, v0, v1\ns_endpgm');
+  // src0 = bytes [1, 2, 3, 4], src1 = bytes [5, 6, 7, 8]
+  emu.state.writeVGPR_u32(0, 0, (4 << 24) | (3 << 16) | (2 << 8) | 1);
+  emu.state.writeVGPR_u32(1, 0, (8 << 24) | (7 << 16) | (6 << 8) | 5);
+  emu.state.writeVGPR_u32(2, 0, 100); // accumulator
+  emu.run();
+  // 1*5 + 2*6 + 3*7 + 4*8 = 5 + 12 + 21 + 32 = 70; 70 + 100 = 170
+  assert(emu.state.readVGPR_u32(2, 0) === 170, 'v_dot4c_i32_i8: 1*5+2*6+3*7+4*8 + 100 = 170');
+}
+
+// v_dot4c_i32_i8 with negative bytes
+{
+  const emu = setup('v_dot4c_i32_i8 v2, v0, v1\ns_endpgm');
+  // src0 = bytes [255(-1), 254(-2), 0, 1], src1 = bytes [1, 1, 1, 1]
+  emu.state.writeVGPR_u32(0, 0, (1 << 24) | (0 << 16) | (254 << 8) | 255);
+  emu.state.writeVGPR_u32(1, 0, (1 << 24) | (1 << 16) | (1 << 8) | 1);
+  emu.state.writeVGPR_u32(2, 0, 10); // accumulator
+  emu.run();
+  // (-1)*1 + (-2)*1 + 0*1 + 1*1 = -1 + -2 + 0 + 1 = -2; -2 + 10 = 8
+  assert(emu.state.readVGPR_u32(2, 0) === 8, 'v_dot4c_i32_i8 neg: -1+(-2)+0+1 + 10 = 8');
+}
+
+// v_dot4c_i32_i8 with zero accumulator
+{
+  const emu = setup('v_dot4c_i32_i8 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (2 << 24) | (2 << 16) | (2 << 8) | 2);
+  emu.state.writeVGPR_u32(1, 0, (3 << 24) | (3 << 16) | (3 << 8) | 3);
+  emu.state.writeVGPR_u32(2, 0, 0);
+  emu.run();
+  // 2*3 * 4 = 24
+  assert(emu.state.readVGPR_u32(2, 0) === 24, 'v_dot4c_i32_i8 zero accum: 2*3*4 = 24');
+}
+
+// ── v_sat_pk_u8_i16 (opcode 0x62): pack two i16 to u8 with saturation ──
+{
+  const emu = setup('v_sat_pk_u8_i16 v1, v0\ns_endpgm');
+  // lo16 = 200, hi16 = 100 → both in [0,255] → result = (100 << 8) | 200 = 0x64C8
+  emu.state.writeVGPR_u32(0, 0, (100 << 16) | 200);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === ((100 << 8) | 200), 'v_sat_pk_u8_i16: normal values');
+}
+
+// v_sat_pk_u8_i16 with saturation (negative clamped to 0)
+{
+  const emu = setup('v_sat_pk_u8_i16 v1, v0\ns_endpgm');
+  // lo16 = -10 (0xFFF6), hi16 = 300 (0x012C) → lo clamped to 0, hi clamped to 255
+  const lo16 = (-10) & 0xFFFF;
+  const hi16 = 300 & 0xFFFF;
+  emu.state.writeVGPR_u32(0, 0, (hi16 << 16) | lo16);
+  emu.run();
+  // lo_byte = 0, hi_byte = 255 → result = (255 << 8) | 0 = 0xFF00
+  assert(emu.state.readVGPR_u32(1, 0) === 0xFF00, 'v_sat_pk_u8_i16: saturation neg/overflow');
+}
+
+// v_sat_pk_u8_i16 with both halves zero
+{
+  const emu = setup('v_sat_pk_u8_i16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'v_sat_pk_u8_i16: zeros');
+}
+
+// ── v_cvt_norm_i16_f16 (opcode 0x63): vdst = (i16)(src0 * 32767) ──
+{
+  const emu = setup('v_cvt_norm_i16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 1.0);
+  emu.run();
+  const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
+  assert(result === 32767, 'v_cvt_norm_i16_f16: 1.0 → 32767');
+}
+
+// v_cvt_norm_i16_f16 with 0.5
+{
+  const emu = setup('v_cvt_norm_i16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.5);
+  emu.run();
+  const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
+  // 0.5 * 32767 = 16383.5 → rounds to 16384
+  assert(result === 16384, `v_cvt_norm_i16_f16: 0.5 → ~16384 (got ${result})`);
+}
+
+// v_cvt_norm_i16_f16 with 0.0
+{
+  const emu = setup('v_cvt_norm_i16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.0);
+  emu.run();
+  const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
+  assert(result === 0, 'v_cvt_norm_i16_f16: 0.0 → 0');
+}
+
+// ── v_cvt_norm_u16_f16 (opcode 0x64): vdst = (u16)(src0 * 65535) ──
+{
+  const emu = setup('v_cvt_norm_u16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 1.0);
+  emu.run();
+  const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
+  assert(result === 65535, 'v_cvt_norm_u16_f16: 1.0 → 65535');
+}
+
+// v_cvt_norm_u16_f16 with 0.5
+{
+  const emu = setup('v_cvt_norm_u16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.5);
+  emu.run();
+  const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
+  // 0.5 * 65535 = 32767.5 → rounds to 32768
+  assert(result === 32768, `v_cvt_norm_u16_f16: 0.5 → ~32768 (got ${result})`);
+}
+
+// v_cvt_norm_u16_f16 with 0.0
+{
+  const emu = setup('v_cvt_norm_u16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.0);
+  emu.run();
+  const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
+  assert(result === 0, 'v_cvt_norm_u16_f16: 0.0 → 0');
+}
+
+// ── v_qsad_pk_u16_u8 (opcode 0x172) ──
+{
+  const words = buildVOP3_3src(0x172, 2, V0, V1, V2);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  // src0 = [10, 20, 30, 40], src1 = [15, 25, 35, 45]
+  emu.state.writeVGPR_u32(0, 0, (40 << 24) | (30 << 16) | (20 << 8) | 10);
+  emu.state.writeVGPR_u32(1, 0, (45 << 24) | (35 << 16) | (25 << 8) | 15);
+  emu.state.writeVGPR_u32(2, 0, 0); // accumulator
+  emu.run();
+  // |10-15| + |20-25| + |30-35| + |40-45| = 5+5+5+5 = 20
+  assert(emu.state.readVGPR_u32(2, 0) === 20, 'v_qsad_pk_u16_u8: SAD = 20');
+}
+
+// ── v_mqsad_pk_u16_u8 (opcode 0x173) ──
+{
+  const words = buildVOP3_3src(0x173, 2, V0, V1, V2);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  // src0 = [0, 20, 0, 40] (mask: skip byte 0 and 2), src1 = [15, 25, 35, 45]
+  emu.state.writeVGPR_u32(0, 0, (40 << 24) | (0 << 16) | (20 << 8) | 0);
+  emu.state.writeVGPR_u32(1, 0, (45 << 24) | (35 << 16) | (25 << 8) | 15);
+  emu.state.writeVGPR_u32(2, 0, 5); // accumulator
+  emu.run();
+  // skip byte0 (0), |20-25|=5, skip byte2 (0), |40-45|=5 → 5+5+5 = 15
+  assert(emu.state.readVGPR_u32(2, 0) === 15, 'v_mqsad_pk_u16_u8: masked SAD + accum = 15');
+}
+
+// ── v_mqsad_u32_u8 (opcode 0x175) ──
+{
+  const words = buildVOP3_3src(0x175, 2, V0, V1, V2);
+  const binary = new Uint32Array([...words, ENDPGM]);
+  const emu = new Emulator(); emu.load(binary);
+  emu.state.writeVGPR_u32(0, 0, (100 << 24) | (50 << 16) | (0 << 8) | 200);
+  emu.state.writeVGPR_u32(1, 0, (90 << 24) | (60 << 16) | (0 << 8) | 180);
+  emu.state.writeVGPR_u32(2, 0, 1000);
+  emu.run();
+  // |200-180|=20, skip byte1 (0), |50-60|=10, |100-90|=10 → 20+10+10+1000 = 1040
+  assert(emu.state.readVGPR_u32(2, 0) === 1040, 'v_mqsad_u32_u8: masked SAD u32 = 1040');
+}
+
+// ── v_fmac_f16: accumulate test (similar to v_fmac_f32) ──
+{
+  const emu = setup('v_fmac_f16 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.0);  // src0
+  emu.state.writeVGPR(1, 0, 4.0);  // vsrc1
+  emu.state.writeVGPR(2, 0, 10.0); // vdst (accumulator)
+  emu.run();
+  // vdst = 3.0 * 4.0 + 10.0 = 22.0
+  assert(approx(emu.state.readVGPR(2, 0), 22.0), 'v_fmac_f16: 3.0 * 4.0 + 10.0 = 22.0');
+}
+
+// ── Decode roundtrip tests for binary-only instructions ──
+
+// v_madmk_f32 decode roundtrip
+{
+  const word = buildVOP2(0x20, 3, 1, 256 + 0);
+  const kBits = floatBits(5.0);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const decoded = decodeBinary(binary);
+  assert(decoded.length === 2, 'v_madmk_f32 decode: 2 instructions (madmk + endpgm)');
+  assert(decoded[0].opcode === 0x20, 'v_madmk_f32 decode: opcode 0x20');
+  assert(decoded[0].literal === kBits, 'v_madmk_f32 decode: literal K preserved');
+  assert(decoded[0].dst === 3, 'v_madmk_f32 decode: vdst=3');
+}
+
+// v_madak_f32 decode roundtrip
+{
+  const word = buildVOP2(0x21, 4, 2, 256 + 1);
+  const kBits = floatBits(7.5);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const decoded = decodeBinary(binary);
+  assert(decoded.length === 2, 'v_madak_f32 decode: 2 instructions');
+  assert(decoded[0].opcode === 0x21, 'v_madak_f32 decode: opcode 0x21');
+  assert(decoded[0].literal === kBits, 'v_madak_f32 decode: literal K preserved');
+}
+
+// v_fmamk_f16 decode roundtrip
+{
+  const word = buildVOP2(0x37, 2, 1, 256 + 0);
+  const kBits = floatBits(1.5);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const decoded = decodeBinary(binary);
+  assert(decoded[0].opcode === 0x37, 'v_fmamk_f16 decode: opcode 0x37');
+  assert(decoded[0].literal === kBits, 'v_fmamk_f16 decode: literal K preserved');
+}
+
+// v_fmaak_f16 decode roundtrip
+{
+  const word = buildVOP2(0x38, 2, 1, 256 + 0);
+  const kBits = floatBits(2.5);
+  const binary = new Uint32Array([word, kBits, ENDPGM]);
+  const decoded = decodeBinary(binary);
+  assert(decoded[0].opcode === 0x38, 'v_fmaak_f16 decode: opcode 0x38');
+  assert(decoded[0].literal === kBits, 'v_fmaak_f16 decode: literal K preserved');
+}
+
+// ── Opcode lookup tests ──
+{
+  assert(lookupByMnemonic('v_madmk_f32') !== undefined, 'lookup: v_madmk_f32 exists');
+  assert(lookupByMnemonic('v_madak_f32') !== undefined, 'lookup: v_madak_f32 exists');
+  assert(lookupByMnemonic('v_subrev_f16') !== undefined, 'lookup: v_subrev_f16 exists');
+  assert(lookupByMnemonic('v_fmamk_f16') !== undefined, 'lookup: v_fmamk_f16 exists');
+  assert(lookupByMnemonic('v_fmaak_f16') !== undefined, 'lookup: v_fmaak_f16 exists');
+  assert(lookupByMnemonic('v_pk_fmac_f16') !== undefined, 'lookup: v_pk_fmac_f16 exists');
+  assert(lookupByMnemonic('v_dot4c_i32_i8') !== undefined, 'lookup: v_dot4c_i32_i8 exists');
+  assert(lookupByMnemonic('v_sat_pk_u8_i16') !== undefined, 'lookup: v_sat_pk_u8_i16 exists');
+  assert(lookupByMnemonic('v_cvt_norm_i16_f16') !== undefined, 'lookup: v_cvt_norm_i16_f16 exists');
+  assert(lookupByMnemonic('v_cvt_norm_u16_f16') !== undefined, 'lookup: v_cvt_norm_u16_f16 exists');
+  assert(lookupByMnemonic('v_qsad_pk_u16_u8') !== undefined, 'lookup: v_qsad_pk_u16_u8 exists');
+  assert(lookupByMnemonic('v_mqsad_pk_u16_u8') !== undefined, 'lookup: v_mqsad_pk_u16_u8 exists');
+  assert(lookupByMnemonic('v_mqsad_u32_u8') !== undefined, 'lookup: v_mqsad_u32_u8 exists');
 }
 
 // ════════════════════════════════════════════

@@ -826,6 +826,12 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
           result = opcodeInfo.execute(src0Raw, src1Raw, src2Raw);
         } else {
           result = opcodeInfo.execute(src0Raw, src1Raw);
+          if (opcodeInfo.mnemonic === 'v_dot4c_i32_i8') {
+            // Dot-product accumulate: vdst += dot4(src0, src1)
+            const dstVal = state.readVGPR_u32(decoded.dst, lane);
+            result = (result + (dstVal | 0)) | 0;
+            result = result >>> 0;
+          }
         }
       } else {
         result = opcodeInfo.execute(src0Raw);
@@ -874,6 +880,30 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
           // Fused multiply-accumulate: vdst += src0 * vsrc1
           const dstVal = bitsToFloat(state.readVGPR_u32(decoded.dst, lane));
           result = asFloat(src0Val * src1Val + dstVal);
+        } else if (opcodeInfo.mnemonic === 'v_fmac_f16') {
+          // Fused multiply-accumulate f16: vdst += src0 * vsrc1
+          const dstVal = bitsToFloat(state.readVGPR_u32(decoded.dst, lane));
+          result = asFloat(src0Val * src1Val + dstVal);
+        } else if (opcodeInfo.mnemonic === 'v_madmk_f32' || opcodeInfo.mnemonic === 'v_fmamk_f16') {
+          // vdst = src0 * K + vsrc1 — literal is K
+          const kVal = decoded.literal !== undefined ? bitsToFloat(decoded.literal) : 0;
+          result = asFloat(src0Val * kVal + src1Val);
+        } else if (opcodeInfo.mnemonic === 'v_madak_f32' || opcodeInfo.mnemonic === 'v_fmaak_f16') {
+          // vdst = src0 * vsrc1 + K — literal is K
+          const kVal = decoded.literal !== undefined ? bitsToFloat(decoded.literal) : 0;
+          result = asFloat(src0Val * src1Val + kVal);
+        } else if (opcodeInfo.mnemonic === 'v_pk_fmac_f16') {
+          // Packed FMA-accumulate: vdst += src0 * vsrc1 (packed f16)
+          const dstRaw = state.readVGPR_u32(decoded.dst, lane);
+          const s0Lo = f16ToF32(src0Raw & 0xFFFF);
+          const s0Hi = f16ToF32((src0Raw >>> 16) & 0xFFFF);
+          const s1Lo = f16ToF32(src1Raw & 0xFFFF);
+          const s1Hi = f16ToF32((src1Raw >>> 16) & 0xFFFF);
+          const dLo = f16ToF32(dstRaw & 0xFFFF);
+          const dHi = f16ToF32((dstRaw >>> 16) & 0xFFFF);
+          const rLo = f32ToF16(dLo + s0Lo * s1Lo);
+          const rHi = f32ToF16(dHi + s0Hi * s1Hi);
+          result = bitsToFloat(((rHi & 0xFFFF) << 16) | (rLo & 0xFFFF));
         } else {
           result = opcodeInfo.execute(src0Val, src1Val);
         }

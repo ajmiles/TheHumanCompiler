@@ -1144,6 +1144,11 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
           decoded.literal = extraWord;
         }
         i++;
+      } else if ((opcode === 0x20 || opcode === 0x21 || opcode === 0x37 || opcode === 0x38) && i < binary.length) {
+        // v_madmk_f32 (0x20), v_madak_f32 (0x21), v_fmamk_f16 (0x37), v_fmaak_f16 (0x38)
+        // always have a literal constant K following the instruction word
+        decoded.literal = binary[i];
+        i++;
       }
 
       instructions.push(decoded);
