@@ -584,6 +584,54 @@ const FIBONACCI: Puzzle = {
   optimalInstructions: 11,
 };
 
+// ── Puzzle 13: Channel Max ──
+// Find the maximum byte across 4 RGBA channels and replicate it to all 4 bytes.
+
+const chanMaxInput: number[] = [];
+{
+  let s = 0x1337BEEF;
+  for (let i = 0; i < 64; i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    // Generate 4 random bytes packed into a u32
+    const b0 = (s & 0xFF);
+    const b1 = ((s >>> 8) & 0xFF);
+    const b2 = ((s >>> 16) & 0xFF);
+    const b3 = ((s >>> 23) & 0xFF);
+    chanMaxInput.push(((b3 << 24) | (b2 << 16) | (b1 << 8) | b0) >>> 0);
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+  }
+}
+const chanMaxExpected = chanMaxInput.map(v => {
+  const b0 = v & 0xFF;
+  const b1 = (v >>> 8) & 0xFF;
+  const b2 = (v >>> 16) & 0xFF;
+  const b3 = (v >>> 24) & 0xFF;
+  const mx = Math.max(b0, b1, b2, b3);
+  return ((mx << 24) | (mx << 16) | (mx << 8) | mx) >>> 0;
+});
+
+const CHANNEL_MAX: Puzzle = {
+  id: 'channel-max',
+  title: 'Channel Max',
+  description:
+    'Each lane has a packed RGBA color in v0 (4 bytes: R=[7:0], G=[15:8], B=[23:16], A=[31:24]). ' +
+    'Find the maximum of the 4 bytes and output a dword with that max value replicated in all 4 byte positions.',
+  inputs: [
+    { name: 'RGBA', register: 0, values: chanMaxInput, isInteger: true },
+  ],
+  outputs: [
+    { name: 'MaxAll', register: 1, values: chanMaxExpected, isInteger: true },
+  ],
+  hints: [
+    'Use SDWA src0_sel/src1_sel:BYTE_N to extract individual bytes.',
+    'v_max_u32 with SDWA selectors lets you compare bytes directly.',
+    'Build up the max: max(R,G) → max(that,B) → max(that,A).',
+    'To replicate a byte to all 4 positions, use v_mul_u32_u24 with 0x01010101.',
+    'Or use SDWA dst_sel:BYTE_N with dst_unused:UNUSED_PRESERVE to write each byte.',
+  ],
+  optimalInstructions: 5,
+};
+
 // ── All Puzzles ──
 
 export const ALL_PUZZLES: Puzzle[] = [
@@ -599,6 +647,7 @@ export const ALL_PUZZLES: Puzzle[] = [
   WAVE_AVERAGE,
   RNG_ITERATE,
   FIBONACCI,
+  CHANNEL_MAX,
 ];
 
 export function getPuzzleById(id: string): Puzzle | undefined {
