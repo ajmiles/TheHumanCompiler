@@ -535,6 +535,55 @@ const RNG_ITERATE: Puzzle = {
   optimalInstructions: 10,
 };
 
+// ── Puzzle 12: Fibonacci ──
+// Compute fib(N) for each lane. N is in v0 (integer, varies per lane).
+
+function fib(n: number): number {
+  if (n <= 0) return 0;
+  if (n === 1) return 1;
+  let a = 0, b = 1;
+  for (let i = 2; i <= n; i++) {
+    const t = (a + b) >>> 0;
+    a = b;
+    b = t;
+  }
+  return b >>> 0;
+}
+
+const fibInput: number[] = [];
+{
+  let s = 0xABCD;
+  for (let i = 0; i < 64; i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    fibInput.push((s % 20) + 1); // N in range 1–20
+  }
+}
+const fibExpected = fibInput.map(n => fib(n));
+
+const FIBONACCI: Puzzle = {
+  id: 'fibonacci',
+  title: 'Fibonacci',
+  description:
+    'Compute the Nth Fibonacci number for each lane. N is an integer in v0 (1–20, varies per lane). ' +
+    'Output fib(N) in v1. fib(1)=1, fib(2)=1, fib(3)=2, fib(4)=3, fib(5)=5, … ' +
+    'Each lane has a different N, so you\'ll need a loop that runs until all lanes are done.',
+  inputs: [
+    { name: 'N', register: 0, values: fibInput, isInteger: true },
+  ],
+  outputs: [
+    { name: 'fib(N)', register: 1, values: fibExpected, isInteger: true },
+  ],
+  hints: [
+    'Initialize: v1=0 (fib prev), v2=1 (fib curr), v3=v0 (counter).',
+    'Loop body: v4 = v1 + v2, v1 = v2, v2 = v4, v3 -= 1.',
+    'Use v_cmp_gt_u32 to check which lanes still have v3 > 1.',
+    'v_cmpx_gt_u32 writes to EXEC — lanes with v3 <= 1 stop participating.',
+    'Save/restore EXEC around the loop so lanes rejoin after the loop ends.',
+    'After the loop, v2 holds fib(N) for each lane — copy to v1.',
+  ],
+  optimalInstructions: 11,
+};
+
 // ── All Puzzles ──
 
 export const ALL_PUZZLES: Puzzle[] = [
@@ -549,6 +598,7 @@ export const ALL_PUZZLES: Puzzle[] = [
   QUAD_AVERAGE,
   WAVE_AVERAGE,
   RNG_ITERATE,
+  FIBONACCI,
 ];
 
 export function getPuzzleById(id: string): Puzzle | undefined {

@@ -39,7 +39,7 @@ function buildLevelOrder(): LevelItem[] {
   if (t2) { levels.push({ kind: 'tutorial', data: t2 }); usedTutorialIds.add(t2.id); }
 
   // Remaining puzzles except deferred ones (placed after their tutorials)
-  const deferredPuzzles = new Set(['quad-average', 'wave-average', 'rng-iterate']);
+  const deferredPuzzles = new Set(['quad-average', 'wave-average', 'rng-iterate', 'fibonacci']);
   for (const p of ALL_PUZZLES) {
     if (!usedPuzzleIds.has(p.id) && !deferredPuzzles.has(p.id)) {
       levels.push({ kind: 'puzzle', data: p });
@@ -54,10 +54,12 @@ function buildLevelOrder(): LevelItem[] {
       usedTutorialIds.add(t.id);
       // Place power-raise after branching tutorial
       if (t.id === 'tut-branching') {
-        const pr = getPuzzleById('rng-iterate');
-        if (pr && !usedPuzzleIds.has(pr.id)) {
-          levels.push({ kind: 'puzzle', data: pr });
-          usedPuzzleIds.add(pr.id);
+        for (const pid of ['rng-iterate', 'fibonacci']) {
+          const p = getPuzzleById(pid);
+          if (p && !usedPuzzleIds.has(p.id)) {
+            levels.push({ kind: 'puzzle', data: p });
+            usedPuzzleIds.add(p.id);
+          }
         }
       }
       // Place wave-comm puzzles right after intra-wave tutorial
