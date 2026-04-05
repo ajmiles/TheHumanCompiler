@@ -36,6 +36,7 @@ function registerLanguage(): void {
       case InstructionFormat.VOP1:
       case InstructionFormat.VOP2:
       case InstructionFormat.VOP3:
+      case InstructionFormat.VOP3P:
       case InstructionFormat.VOPC:
         valuMnemonics.push(op.mnemonic);
         break;

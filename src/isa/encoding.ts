@@ -492,7 +492,7 @@ export function detectFormat(word: number): InstructionFormat {
   if (prefix6 === 0x38) return InstructionFormat.MUBUF;
   if (prefix6 === VOP3_ENCODING_PREFIX) return InstructionFormat.VOP3;   // 0x34
   if (prefix6 === 0x35) return InstructionFormat.VOP3;  // VOP3B — treat as VOP3 for decoding
-  if (prefix6 === 0x33) return InstructionFormat.VOP3;  // VOP3P — treat as VOP3 for decoding
+  if (prefix6 === 0x33) return InstructionFormat.VOP3P;  // VOP3P — packed operations
   if (prefix6 === DS_ENCODING_PREFIX) return InstructionFormat.DS; // 0x36
 
   // 9-bit prefix checks (bits [31:23])
@@ -635,6 +635,52 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
       }
       // Check for literal constant (any source field == 255)
       else if ((src0 === LITERAL_CONST || src1 === LITERAL_CONST || src2 === LITERAL_CONST) && i < binary.length) {
+        decoded.literal = binary[i];
+        i++;
+      }
+
+      instructions.push(decoded);
+    } else if (format === InstructionFormat.VOP3P) {
+      // VOP3P: 2 dwords (packed 16-bit operations)
+      // Dword 0: [31:26]=0x33, [25:16]=OP(10), [15]=CLAMP, [14:11]=OP_SEL_HI(4), [10:8]=NEG_HI(3), [7:0]=VDST(8)
+      // Dword 1: [31:29]=NEG(3), [28:27]=OP_SEL(2), [26:18]=SRC2(9), [17:9]=SRC1(9), [8:0]=SRC0(9)
+      if (i + 1 >= binary.length) break;
+      const dword0 = word;
+      const dword1 = binary[i + 1];
+
+      const opcode = (dword0 >>> 16) & 0x3FF;
+      const clampBit = (dword0 >>> 15) & 1;
+      const opSelHi = (dword0 >>> 11) & 0xF;
+      const negHi = (dword0 >>> 8) & 0x7;
+      const vdst = dword0 & 0xFF;
+
+      const negLo = (dword1 >>> 29) & 0x7;
+      const opSel = (dword1 >>> 27) & 0x3;
+      const src2 = (dword1 >>> 18) & 0x1FF;
+      const src1 = (dword1 >>> 9) & 0x1FF;
+      const src0 = dword1 & 0x1FF;
+
+      const decoded: DecodedInstruction = {
+        format: InstructionFormat.VOP3P,
+        opcode,
+        dst: vdst,
+        src0Encoded: src0,
+        src1: src1,
+        src2: src2,
+        address,
+        src0Neg: !!(negLo & 1),
+        src1Neg: !!(negLo & 2),
+        src2Neg: !!(negLo & 4),
+        clamp: clampBit ? true : undefined,
+        opSel,
+        opSelHi,
+        negHi,
+      };
+
+      i += 2;
+
+      // Check for literal constant
+      if ((src0 === LITERAL_CONST || src1 === LITERAL_CONST || src2 === LITERAL_CONST) && i < binary.length) {
         decoded.literal = binary[i];
         i++;
       }
@@ -1068,6 +1114,17 @@ export function disassemble(
       if (offset1) parts.push(`offset1:${offset1}`);
       return parts.join(' ');
     }
+  }
+
+  if (decoded.format === InstructionFormat.VOP3P) {
+    const dst = `v${decoded.dst}`;
+    const src0 = formatSrc0(decoded.src0Encoded, decoded.literal, isInt);
+    const src1 = formatSrc0(decoded.src1!, decoded.literal, isInt);
+    if (decoded.src2 !== undefined && decoded.src2 !== 0) {
+      const src2 = formatSrc0(decoded.src2, decoded.literal, isInt);
+      return `${mnemonic} ${dst}, ${src0}, ${src1}, ${src2}`;
+    }
+    return `${mnemonic} ${dst}, ${src0}, ${src1}`;
   }
 
   if (decoded.format === InstructionFormat.VOPC) {

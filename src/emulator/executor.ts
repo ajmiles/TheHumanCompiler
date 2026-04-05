@@ -207,6 +207,48 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     return;
   }
 
+  // VOP3P: packed 16-bit operations (two 16-bit ops per lane)
+  if (decoded.format === InstructionFormat.VOP3P) {
+    const exec = state.exec;
+    const opSel = decoded.opSel ?? 0;
+    const opSelHi = decoded.opSelHi ?? 0xC; // default: hi reads from hi half
+    const isFloat = !opcodeInfo.isIntegerOp;
+
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      if (((exec >>> lane) & 1) === 0) continue;
+
+      const s0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, lane);
+      const s1Raw = decoded.src1 !== undefined ? resolveRaw(state, decoded.src1, decoded.literal, lane) : 0;
+      const s2Raw = decoded.src2 !== undefined ? resolveRaw(state, decoded.src2, decoded.literal, lane) : 0;
+
+      // Extract 16-bit halves based on op_sel (lo) and op_sel_hi (hi)
+      const s0Lo = ((opSel & 1) ? (s0Raw >>> 16) : s0Raw) & 0xFFFF;
+      const s1Lo = ((opSel & 2) ? (s1Raw >>> 16) : s1Raw) & 0xFFFF;
+      const s0Hi = ((opSelHi & 1) ? (s0Raw >>> 16) : s0Raw) & 0xFFFF;
+      const s1Hi = ((opSelHi & 2) ? (s1Raw >>> 16) : s1Raw) & 0xFFFF;
+
+      let resultLo: number, resultHi: number;
+      if (isFloat) {
+        // f16 operations (simplified: use f32 math on f16 values)
+        // For now, just pass u16 through execute as-is
+        resultLo = opcodeInfo.execute(s0Lo, s1Lo, (opSel & 1) ? (s2Raw >>> 16) & 0xFFFF : s2Raw & 0xFFFF) & 0xFFFF;
+        resultHi = opcodeInfo.execute(s0Hi, s1Hi, (opSelHi & 1) ? (s2Raw >>> 16) & 0xFFFF : s2Raw & 0xFFFF) & 0xFFFF;
+      } else {
+        // Integer packed ops
+        resultLo = opcodeInfo.execute(s0Lo, s1Lo, s2Raw & 0xFFFF) & 0xFFFF;
+        resultHi = opcodeInfo.execute(s0Hi, s1Hi, (s2Raw >>> 16) & 0xFFFF) & 0xFFFF;
+      }
+
+      // Pack result: dst_hi selects which half to write
+      const dstHi = (opSelHi & 8); // bit 3 of opSelHi = dst half select
+      const result = dstHi
+        ? ((resultLo & 0xFFFF) | ((resultHi & 0xFFFF) << 16))
+        : ((resultLo & 0xFFFF) | ((resultHi & 0xFFFF) << 16));
+      state.writeVGPR_u32(decoded.dst, lane, result >>> 0);
+    }
+    return;
+  }
+
   // DS: ds_swizzle_b32 — cross-lane data permutation
   if (opcodeInfo.mnemonic === 'ds_swizzle_b32') {
     const exec = state.exec;

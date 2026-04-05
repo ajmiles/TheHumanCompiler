@@ -1081,10 +1081,10 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     syntax: 'v_lshrrev_b16 vdst, src0, src1',
     isIntegerOp: true,
   },
-  // VOP3P packed instructions (prefix 0x33, treated as VOP3)
+  // VOP3P packed instructions (prefix 0x33)
   {
     mnemonic: 'v_pk_mul_lo_u16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x001,
     operandCount: 3,
     execute: (a) => a,
@@ -1094,7 +1094,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
   {
     mnemonic: 'v_pk_sub_i16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x003,
     operandCount: 3,
     execute: (a) => a,
@@ -1104,7 +1104,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
   {
     mnemonic: 'v_pk_lshlrev_b16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x004,
     operandCount: 3,
     execute: (a) => a,
@@ -1114,7 +1114,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
   {
     mnemonic: 'v_pk_add_u16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x00A,
     operandCount: 3,
     execute: (a) => a,
@@ -1124,7 +1124,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
   {
     mnemonic: 'v_pk_fma_f16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x00E,
     operandCount: 4,
     execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
@@ -1133,7 +1133,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
   {
     mnemonic: 'v_pk_add_f16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x00F,
     operandCount: 3,
     execute: (a, b) => asFloat(a + (b ?? 0)),
@@ -1142,7 +1142,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
   {
     mnemonic: 'v_pk_mul_f16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x010,
     operandCount: 3,
     execute: (a, b) => asFloat(a * (b ?? 0)),
@@ -1151,7 +1151,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
   {
     mnemonic: 'v_pk_min_f16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x011,
     operandCount: 3,
     execute: (a, b) => Math.min(a, b ?? 0),
@@ -1160,7 +1160,7 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
   {
     mnemonic: 'v_pk_max_f16',
-    format: InstructionFormat.VOP3,
+    format: InstructionFormat.VOP3P,
     opcode: 0x012,
     operandCount: 3,
     execute: (a, b) => Math.max(a, b ?? 0),

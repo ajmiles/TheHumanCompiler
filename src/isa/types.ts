@@ -4,6 +4,7 @@ export enum InstructionFormat {
   VOP1 = 'VOP1',
   VOP2 = 'VOP2',
   VOP3 = 'VOP3',
+  VOP3P = 'VOP3P',
   VOPC = 'VOPC',
   SOP1 = 'SOP1',
   SOP2 = 'SOP2',
@@ -87,6 +88,10 @@ export interface DecodedInstruction {
   dpp8?: number[];     // DPP8: 8 lane selectors (3-bit each, within groups of 8)
   boundCtrl?: boolean; // DPP16: true = out-of-range reads return 0
   dppSrc0?: number;    // DPP: actual VGPR index for src0 (from DPP word bits [31:24])
+  // VOP3P packed modifiers
+  opSel?: number;      // OP_SEL bits: which 16-bit half to read from src0/src1
+  opSelHi?: number;    // OP_SEL_HI bits: src0/src1/src2/dst half selection (4 bits)
+  negHi?: number;      // NEG_HI bits: negate upper 16-bit half of src0/src1/src2
 }
 
 export type SemanticFn = (a: number, b?: number, c?: number) => number;
