@@ -45,7 +45,7 @@ function formatF16(bits: number): string {
 
 export class RegisterDisplay {
   private container: HTMLElement;
-  private vgprMode: 'f32' | 'hex' | 'uint' | 'f16' = 'f32';
+  private vgprMode: 'f32' | 'hex' | 'u32' | 'i32' | 'f16' | 'u16' | 'i16' = 'f32';
   private _updateVgprToggle: (() => void) | null = null;
   private sgprMode: 'hex' | 'uint' | 'f32' = 'hex';
   private vgprScrollWrapper!: HTMLElement;
@@ -72,7 +72,7 @@ export class RegisterDisplay {
   }
 
   /** Set the VGPR display mode programmatically (e.g. when loading a puzzle). */
-  setVGPRMode(mode: 'f32' | 'hex' | 'uint' | 'f16'): void {
+  setVGPRMode(mode: 'f32' | 'hex' | 'u32' | 'i32' | 'f16' | 'u16' | 'i16'): void {
     this.vgprMode = mode;
     this._updateVgprToggle?.();
   }
@@ -93,41 +93,37 @@ export class RegisterDisplay {
     headerRight.style.gap = '8px';
     headerRight.style.alignItems = 'center';
 
-    // F32/HEX/UINT toggle
+    // VGPR format toggle
     const toggle = document.createElement('div');
     toggle.className = 'format-toggle';
 
-    const floatBtn = document.createElement('button');
-    floatBtn.className = 'format-toggle__btn format-toggle__btn--active';
-    floatBtn.textContent = 'F32';
-
-    const hexBtn = document.createElement('button');
-    hexBtn.className = 'format-toggle__btn';
-    hexBtn.textContent = 'HEX';
-
-    const uintBtn = document.createElement('button');
-    uintBtn.className = 'format-toggle__btn';
-    uintBtn.textContent = 'UINT';
-
-    const f16Btn = document.createElement('button');
-    f16Btn.className = 'format-toggle__btn';
-    f16Btn.textContent = 'F16';
+    type VgprMode = 'f32' | 'hex' | 'u32' | 'i32' | 'f16' | 'u16' | 'i16';
+    const modes: Array<{ id: VgprMode; label: string }> = [
+      { id: 'f32', label: 'F32' },
+      { id: 'f16', label: 'F16' },
+      { id: 'u32', label: 'U32' },
+      { id: 'i32', label: 'I32' },
+      { id: 'u16', label: 'U16' },
+      { id: 'i16', label: 'I16' },
+      { id: 'hex', label: 'HEX' },
+    ];
+    const modeBtns: HTMLButtonElement[] = [];
+    for (const m of modes) {
+      const btn = document.createElement('button');
+      btn.className = 'format-toggle__btn' + (m.id === 'f32' ? ' format-toggle__btn--active' : '');
+      btn.textContent = m.label;
+      btn.onclick = () => { this.vgprMode = m.id; updateVgprToggle(); };
+      modeBtns.push(btn);
+      toggle.appendChild(btn);
+    }
 
     const updateVgprToggle = () => {
-      floatBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'f32');
-      hexBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'hex');
-      uintBtn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'uint');
-      f16Btn.classList.toggle('format-toggle__btn--active', this.vgprMode === 'f16');
+      for (let i = 0; i < modes.length; i++) {
+        modeBtns[i].classList.toggle('format-toggle__btn--active', this.vgprMode === modes[i].id);
+      }
       this.rerender();
     };
     this._updateVgprToggle = updateVgprToggle;
-
-    floatBtn.onclick = () => { this.vgprMode = 'f32'; updateVgprToggle(); };
-    hexBtn.onclick = () => { this.vgprMode = 'hex'; updateVgprToggle(); };
-    uintBtn.onclick = () => { this.vgprMode = 'uint'; updateVgprToggle(); };
-    f16Btn.onclick = () => { this.vgprMode = 'f16'; updateVgprToggle(); };
-
-    toggle.append(floatBtn, hexBtn, uintBtn, f16Btn);
 
     // Transpose toggle
     const transposeBtn = document.createElement('button');
@@ -168,7 +164,7 @@ export class RegisterDisplay {
 
     const sgprUintBtn = document.createElement('button');
     sgprUintBtn.className = 'format-toggle__btn';
-    sgprUintBtn.textContent = 'UINT';
+    sgprUintBtn.textContent = 'U32';
 
     const sgprHexBtn = document.createElement('button');
     sgprHexBtn.className = 'format-toggle__btn format-toggle__btn--active';
@@ -241,7 +237,7 @@ export class RegisterDisplay {
 
   /** Rows = registers, Columns = lanes (original layout) */
   private renderVGPRsNormal(state: GPUState, regCount: number, lanes: number): void {
-    const isF16 = this.vgprMode === 'f16';
+    const isSplit = this.vgprMode === 'f16' || this.vgprMode === 'u16' || this.vgprMode === 'i16';
     const table = document.createElement('table');
     table.className = 'vgpr-table';
 
@@ -279,7 +275,7 @@ export class RegisterDisplay {
 
     const tbody = document.createElement('tbody');
     for (let r = 0; r < regCount; r++) {
-      if (isF16) {
+      if (isSplit) {
         // Two rows per register: v0.lo and v0.hi
         const isModified = state.modifiedRegs.has(`v${r}`);
         for (const half of ['lo', 'hi'] as const) {
@@ -292,7 +288,7 @@ export class RegisterDisplay {
             const td = document.createElement('td');
             const raw = state.readVGPR_u32(r, l);
             const bits = half === 'lo' ? (raw & 0xFFFF) : (raw >>> 16);
-            td.textContent = formatF16(bits);
+            td.textContent = this.format16(bits);
             if (isModified) td.classList.add('modified');
             row.appendChild(td);
           }
@@ -308,15 +304,7 @@ export class RegisterDisplay {
 
         for (let l = 0; l < lanes; l++) {
           const td = document.createElement('td');
-          const val = state.readVGPR(r, l);
-          const full = this.fullPrecisionLanes.has(l);
-          if (this.vgprMode === 'hex') {
-            td.textContent = floatToHex(val);
-          } else if (this.vgprMode === 'uint') {
-            td.textContent = (state.readVGPR_u32(r, l) >>> 0).toString();
-          } else {
-            td.textContent = formatFloat(val, full);
-          }
+          td.textContent = this.format32(state, r, l);
           if (isModified) td.classList.add('modified');
           row.appendChild(td);
         }
@@ -329,7 +317,7 @@ export class RegisterDisplay {
 
   /** Rows = lanes, Columns = registers (transposed layout) */
   private renderVGPRsTransposed(state: GPUState, regCount: number, lanes: number): void {
-    const isF16 = this.vgprMode === 'f16';
+    const isSplit = this.vgprMode === 'f16' || this.vgprMode === 'u16' || this.vgprMode === 'i16';
     const table = document.createElement('table');
     table.className = 'vgpr-table';
 
@@ -342,7 +330,7 @@ export class RegisterDisplay {
     headerRow.appendChild(laneTh);
 
     for (let r = 0; r < regCount; r++) {
-      if (isF16) {
+      if (isSplit) {
         for (const half of ['lo', 'hi'] as const) {
           const th = document.createElement('th');
           th.textContent = `v${r}.${half}`;
@@ -370,25 +358,18 @@ export class RegisterDisplay {
       row.appendChild(laneCell);
 
       for (let r = 0; r < regCount; r++) {
-        if (isF16) {
+        if (isSplit) {
           const raw = state.readVGPR_u32(r, l);
           for (const half of ['lo', 'hi'] as const) {
             const td = document.createElement('td');
             const bits = half === 'lo' ? (raw & 0xFFFF) : (raw >>> 16);
-            td.textContent = formatF16(bits);
+            td.textContent = this.format16(bits);
             if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
             row.appendChild(td);
           }
         } else {
           const td = document.createElement('td');
-          const val = state.readVGPR(r, l);
-          if (this.vgprMode === 'hex') {
-            td.textContent = floatToHex(val);
-          } else if (this.vgprMode === 'uint') {
-            td.textContent = (state.readVGPR_u32(r, l) >>> 0).toString();
-          } else {
-            td.textContent = formatFloat(val, false);
-          }
+          td.textContent = this.format32(state, r, l);
           if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
           row.appendChild(td);
         }
@@ -397,6 +378,22 @@ export class RegisterDisplay {
     }
     table.appendChild(tbody);
     this.vgprScrollWrapper.replaceChildren(table);
+  }
+
+  /** Format a 32-bit VGPR value based on current mode. */
+  private format32(state: GPUState, reg: number, lane: number): string {
+    if (this.vgprMode === 'hex') return floatToHex(state.readVGPR(reg, lane));
+    if (this.vgprMode === 'u32') return (state.readVGPR_u32(reg, lane) >>> 0).toString();
+    if (this.vgprMode === 'i32') return (state.readVGPR_u32(reg, lane) | 0).toString();
+    return formatFloat(state.readVGPR(reg, lane), this.fullPrecisionLanes.has(lane));
+  }
+
+  /** Format a 16-bit half based on current mode (f16/u16/i16). */
+  private format16(bits: number): string {
+    if (this.vgprMode === 'f16') return formatF16(bits);
+    if (this.vgprMode === 'u16') return (bits & 0xFFFF).toString();
+    // i16: sign-extend from 16 to 32 bits
+    return ((bits << 16) >> 16).toString();
   }
 
   private renderSGPRs(state: GPUState): void {
