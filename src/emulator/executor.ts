@@ -43,6 +43,55 @@ function asFloat(v: number): number {
   return reinterpretF32[0];
 }
 
+/** Convert a 16-bit IEEE 754 half-precision float to a JS number. */
+function f16ToF32(h: number): number {
+  const sign = (h >>> 15) & 1;
+  const exp = (h >>> 10) & 0x1F;
+  const frac = h & 0x3FF;
+
+  if (exp === 0) {
+    if (frac === 0) return sign ? -0 : 0; // ±zero
+    // Denormal: value = (-1)^sign * 2^(-14) * (frac / 1024)
+    return (sign ? -1 : 1) * Math.pow(2, -14) * (frac / 1024);
+  }
+  if (exp === 0x1F) {
+    if (frac === 0) return sign ? -Infinity : Infinity;
+    return NaN;
+  }
+  // Normal: value = (-1)^sign * 2^(exp-15) * (1 + frac/1024)
+  return (sign ? -1 : 1) * Math.pow(2, exp - 15) * (1 + frac / 1024);
+}
+
+/** Convert a JS number to a 16-bit IEEE 754 half-precision float. */
+function f32ToF16(v: number): number {
+  if (Number.isNaN(v)) return 0x7E00; // NaN
+  if (!Number.isFinite(v)) return v > 0 ? 0x7C00 : 0xFC00; // ±Inf
+
+  const sign = v < 0 || (v === 0 && 1 / v === -Infinity) ? 1 : 0;
+  v = Math.abs(v);
+
+  if (v === 0) return sign << 15;
+
+  // Convert to f16 range
+  // f16 max normal = 65504, min normal = 2^-14 ≈ 6.1e-5, min denormal = 2^-24
+  if (v >= 65520) return (sign << 15) | 0x7C00; // overflow → ±Inf
+
+  if (v < Math.pow(2, -24)) return sign << 15; // underflow → ±0
+
+  if (v < Math.pow(2, -14)) {
+    // Denormal
+    const frac = Math.round(v / Math.pow(2, -24));
+    return (sign << 15) | (frac & 0x3FF);
+  }
+
+  // Normal
+  let exp = Math.floor(Math.log2(v));
+  let frac = Math.round((v / Math.pow(2, exp) - 1) * 1024);
+  if (frac >= 1024) { frac = 0; exp++; }
+  if (exp + 15 >= 0x1F) return (sign << 15) | 0x7C00; // overflow
+  return (sign << 15) | ((exp + 15) << 10) | (frac & 0x3FF);
+}
+
 /**
  * Resolve a source operand to raw u32 bits.
  *
@@ -226,17 +275,20 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       const s1Lo = ((opSel & 2) ? (s1Raw >>> 16) : s1Raw) & 0xFFFF;
       const s0Hi = ((opSelHi & 1) ? (s0Raw >>> 16) : s0Raw) & 0xFFFF;
       const s1Hi = ((opSelHi & 2) ? (s1Raw >>> 16) : s1Raw) & 0xFFFF;
+      const s2Lo = (s2Raw) & 0xFFFF;
+      const s2Hi = ((opSelHi & 4) ? (s2Raw >>> 16) : s2Raw) & 0xFFFF;
 
       let resultLo: number, resultHi: number;
       if (isFloat) {
-        // f16 operations (simplified: use f32 math on f16 values)
-        // For now, just pass u16 through execute as-is
-        resultLo = opcodeInfo.execute(s0Lo, s1Lo, (opSel & 1) ? (s2Raw >>> 16) & 0xFFFF : s2Raw & 0xFFFF) & 0xFFFF;
-        resultHi = opcodeInfo.execute(s0Hi, s1Hi, (opSelHi & 1) ? (s2Raw >>> 16) & 0xFFFF : s2Raw & 0xFFFF) & 0xFFFF;
+        // f16 operations: convert u16 → f32, execute, convert f32 → u16
+        const fResultLo = opcodeInfo.execute(f16ToF32(s0Lo), f16ToF32(s1Lo), f16ToF32(s2Lo));
+        const fResultHi = opcodeInfo.execute(f16ToF32(s0Hi), f16ToF32(s1Hi), f16ToF32(s2Hi));
+        resultLo = f32ToF16(fResultLo);
+        resultHi = f32ToF16(fResultHi);
       } else {
         // Integer packed ops
-        resultLo = opcodeInfo.execute(s0Lo, s1Lo, s2Raw & 0xFFFF) & 0xFFFF;
-        resultHi = opcodeInfo.execute(s0Hi, s1Hi, (s2Raw >>> 16) & 0xFFFF) & 0xFFFF;
+        resultLo = opcodeInfo.execute(s0Lo, s1Lo, s2Lo) & 0xFFFF;
+        resultHi = opcodeInfo.execute(s0Hi, s1Hi, s2Hi) & 0xFFFF;
       }
 
       // Pack result: dst_hi selects which half to write
