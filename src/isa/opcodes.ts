@@ -1929,6 +1929,166 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     syntax: 'v_bcnt_u32_b32 vdst, src0, src1',
     isIntegerOp: true,
   },
+  {
+    mnemonic: 'v_mad_legacy_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x140,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      if (a === 0 || (b ?? 0) === 0) return asFloat(0 + (c ?? 0));
+      return asFloat(a * (b ?? 0) + (c ?? 0));
+    },
+    description: 'Legacy multiply-add f32: if src0 or src1 is 0, treat product as 0.\nvdst = src0 × src1 + src2 (legacy zero handling)',
+    syntax: 'v_mad_legacy_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_mad_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x141,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
+    description: 'Multiply-add f32 (non-fused): src0 × src1 + src2.\nvdst = src0 × src1 + src2',
+    syntax: 'v_mad_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_mullit_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x150,
+    operandCount: 4,
+    execute: (a, b, _c) => {
+      if (a === 0 || (b ?? 0) === 0) return 0;
+      return asFloat(a * (b ?? 0));
+    },
+    description: 'Multiply-lit: special for lighting. Returns 0 if either source is 0.\nvdst = (src0 == 0 || src1 == 0) ? 0 : src0 × src1',
+    syntax: 'v_mullit_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_sad_hi_u8',
+    format: InstructionFormat.VOP3,
+    opcode: 0x15B,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0;
+      let sum = 0;
+      for (let i = 0; i < 4; i++) {
+        const a8 = (s0 >>> (i * 8)) & 0xFF;
+        const b8 = (s1 >>> (i * 8)) & 0xFF;
+        sum += Math.abs(a8 - b8);
+      }
+      return ((sum << 16) + ((c ?? 0) >>> 0)) >>> 0;
+    },
+    description: 'Sum of absolute differences of packed bytes, result shifted left by 16 bits, then accumulated.\nvdst = (Σ|src0[i] - src1[i]| << 16) + src2',
+    syntax: 'v_sad_hi_u8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_cvt_pk_u8_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x15E,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const f = new Float32Array(1);
+      const u = new Uint32Array(f.buffer);
+      u[0] = a >>> 0;
+      let val = Math.round(f[0]);
+      if (val < 0) val = 0;
+      if (val > 255) val = 255;
+      const byteIdx = (b ?? 0) & 3;
+      const prev = (c ?? 0) >>> 0;
+      const mask = ~(0xFF << (byteIdx * 8)) >>> 0;
+      return ((prev & mask) | ((val & 0xFF) << (byteIdx * 8))) >>> 0;
+    },
+    description: 'Convert float to unsigned 8-bit and pack into byte position.\nvdst = (src2 & ~(0xFF << (src1*8))) | (clamp(round(src0), 0, 255) << (src1*8))',
+    syntax: 'v_cvt_pk_u8_f32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_div_fixup_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x15F,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const quotient = a;
+      const denominator = b ?? 0;
+      const numerator = c ?? 0;
+      if (isNaN(denominator) || isNaN(numerator)) return NaN;
+      if (denominator === 0 && numerator === 0) return NaN;
+      if (!isFinite(denominator) && !isFinite(numerator)) return NaN;
+      if (denominator === 0) {
+        return (Math.sign(numerator) * Math.sign(denominator)) < 0 ? -Infinity : Infinity;
+      }
+      return asFloat(quotient);
+    },
+    description: 'Division fixup: handles special cases (NaN, Inf, zero) for division.\nvdst = divFixup(src0, src1, src2) where src0=quotient, src1=denom, src2=numer',
+    syntax: 'v_div_fixup_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_div_fmas_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x16F,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
+    description: 'Division FMA with scale using VCC: FMA with optional scale by 2^32 or 2^-32.\nvdst = src0 × src1 + src2 (with VCC-based scaling)',
+    syntax: 'v_div_fmas_f32 vdst, src0, src1, src2',
+    readsVCC: true,
+  },
+  {
+    mnemonic: 'v_msad_u8',
+    format: InstructionFormat.VOP3,
+    opcode: 0x171,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0;
+      let sum = (c ?? 0) >>> 0;
+      for (let i = 0; i < 4; i++) {
+        const a8 = (s0 >>> (i * 8)) & 0xFF;
+        const b8 = (s1 >>> (i * 8)) & 0xFF;
+        if (a8 !== 0) sum += Math.abs(a8 - b8);
+      }
+      return sum >>> 0;
+    },
+    description: 'Masked sum of absolute differences: skips byte comparisons where src0 byte is 0.\nvdst = Σ(src0[i]!=0 ? |src0[i]-src1[i]| : 0) + src2',
+    syntax: 'v_msad_u8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mad_u64_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x176,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const result = BigInt(a >>> 0) * BigInt((b ?? 0) >>> 0) + BigInt((c ?? 0) >>> 0);
+      return Number(result & 0xFFFFFFFFn) >>> 0;
+    },
+    description: 'Multiply-add unsigned 64-bit result: src0 × src1 + src2 (returns low 32 bits).\nvdst = lo32((uint)src0 × (uint)src1 + src2)',
+    syntax: 'v_mad_u64_u32 vdst, vcc, src0, src1, src2',
+    isIntegerOp: true,
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_mad_i64_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x177,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const result = BigInt(a | 0) * BigInt((b ?? 0) | 0) + BigInt((c ?? 0) | 0);
+      return Number(result & 0xFFFFFFFFn) >>> 0;
+    },
+    description: 'Multiply-add signed 64-bit result: src0 × src1 + src2 (returns low 32 bits).\nvdst = lo32((int)src0 × (int)src1 + src2)',
+    syntax: 'v_mad_i64_i32 vdst, vcc, src0, src1, src2',
+    isIntegerOp: true,
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_permlane16_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x377,
+    operandCount: 4,
+    execute: (a) => a,
+    description: 'Cross-lane permutation within groups of 16 lanes.',
+    syntax: 'v_permlane16_b32 vdst, vsrc0, ssrc1, ssrc2',
+    isIntegerOp: true,
+  },
 ];
 
 const VOPC_OPCODES: OpcodeInfo[] = [
