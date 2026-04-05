@@ -137,12 +137,27 @@ export function parse(tokens: Token[]): ParseResult {
       rawTokens.push(advance());
     }
 
-    // Extract trailing output modifiers (mul:2, mul:4, div:2, clamp) and DPP modifiers
+    // Extract trailing output modifiers (mul:2, mul:4, div:2, clamp), DPP and SDWA modifiers
     let omod = 0;
     let clamp = false;
     let dppCtrl: number | undefined;
     let dpp8: number[] | undefined;
     let boundCtrl: boolean | undefined;
+    let sdwaDstSel: number | undefined;
+    let sdwaDstUnused: number | undefined;
+    let sdwaSrc0Sel: number | undefined;
+    let sdwaSrc0Sext: boolean | undefined;
+    let sdwaSrc1Sel: number | undefined;
+    let sdwaSrc1Sext: boolean | undefined;
+
+    const SEL_MAP: Record<string, number> = {
+      'BYTE_0': 0, 'BYTE_1': 1, 'BYTE_2': 2, 'BYTE_3': 3,
+      'WORD_0': 4, 'WORD_1': 5, 'DWORD': 6,
+    };
+    const UNUSED_MAP: Record<string, number> = {
+      'UNUSED_PAD': 0, 'UNUSED_SEXT': 1, 'UNUSED_PRESERVE': 2,
+    };
+
     while (rawTokens.length > 0 && rawTokens[rawTokens.length - 1].type === TokenType.MODIFIER) {
       const mod = rawTokens.pop()!;
       const val = mod.value;
@@ -155,6 +170,8 @@ export function parse(tokens: Token[]): ParseResult {
         case 'row_half_mirror': dppCtrl = 0x141; break;
         case 'row_bcast15': dppCtrl = 0x142; break;
         case 'row_bcast31': dppCtrl = 0x143; break;
+        case 'src0_sext': sdwaSrc0Sext = true; break;
+        case 'src1_sext': sdwaSrc1Sext = true; break;
         default:
           if (val.startsWith('row_shl:')) dppCtrl = 0x100 + (parseInt(val.slice(8), 10) & 0xF);
           else if (val.startsWith('row_shr:')) dppCtrl = 0x110 + (parseInt(val.slice(8), 10) & 0xF);
@@ -165,15 +182,25 @@ export function parse(tokens: Token[]): ParseResult {
           else if (val.startsWith('wave_ror:')) dppCtrl = 0x13C;
           else if (val.startsWith('bound_ctrl:')) boundCtrl = val.slice(11) === '1';
           else if (val.startsWith('quad_perm:')) {
-            // quad_perm:[3,2,1,0] → 4 × 2-bit selectors
             const nums = val.slice(10).replace(/[[\]]/g, '').split(',').map(Number);
             if (nums.length === 4) {
               dppCtrl = (nums[0] & 3) | ((nums[1] & 3) << 2) | ((nums[2] & 3) << 4) | ((nums[3] & 3) << 6);
             }
           } else if (val.startsWith('dpp8:')) {
-            // dpp8:[7,6,5,4,3,2,1,0] → 8 × 3-bit selectors
             const nums = val.slice(5).replace(/[[\]]/g, '').split(',').map(Number);
             if (nums.length === 8) dpp8 = nums.map(n => n & 7);
+          } else if (val.startsWith('dst_sel:')) {
+            const selName = val.slice(8);
+            sdwaDstSel = SEL_MAP[selName] ?? 6;
+          } else if (val.startsWith('dst_unused:')) {
+            const unusedName = val.slice(11);
+            sdwaDstUnused = UNUSED_MAP[unusedName] ?? 0;
+          } else if (val.startsWith('src0_sel:')) {
+            const selName = val.slice(9);
+            sdwaSrc0Sel = SEL_MAP[selName] ?? 6;
+          } else if (val.startsWith('src1_sel:')) {
+            const selName = val.slice(9);
+            sdwaSrc1Sel = SEL_MAP[selName] ?? 6;
           }
           break;
       }
@@ -347,6 +374,12 @@ export function parse(tokens: Token[]): ParseResult {
       dppCtrl,
       dpp8,
       boundCtrl,
+      sdwaDstSel,
+      sdwaDstUnused,
+      sdwaSrc0Sel,
+      sdwaSrc0Sext,
+      sdwaSrc1Sel,
+      sdwaSrc1Sext,
     });
   }
 

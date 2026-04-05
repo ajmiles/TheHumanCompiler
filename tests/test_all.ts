@@ -1857,6 +1857,213 @@ group('Edge Cases');
 }
 
 // ════════════════════════════════════════════
+//  SDWA — Sub-Dword Addressing
+// ════════════════════════════════════════════
+group('SDWA Sub-Dword Addressing');
+
+// BYTE_0 extraction from src0
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:BYTE_0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xDDCCBBAA);
+  emu.run();
+  assert((emu.state.readVGPR_u32(1, 0) & 0xFF) === 0xAA, 'SDWA: src0_sel:BYTE_0 extracts [7:0]');
+}
+
+// BYTE_1 extraction from src0
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:BYTE_1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xDDCCBBAA);
+  emu.run();
+  assert((emu.state.readVGPR_u32(1, 0) & 0xFF) === 0xBB, 'SDWA: src0_sel:BYTE_1 extracts [15:8]');
+}
+
+// BYTE_2 extraction from src0
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:BYTE_2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xDDCCBBAA);
+  emu.run();
+  assert((emu.state.readVGPR_u32(1, 0) & 0xFF) === 0xCC, 'SDWA: src0_sel:BYTE_2 extracts [23:16]');
+}
+
+// BYTE_3 extraction from src0
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:BYTE_3\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xDDCCBBAA);
+  emu.run();
+  assert((emu.state.readVGPR_u32(1, 0) & 0xFF) === 0xDD, 'SDWA: src0_sel:BYTE_3 extracts [31:24]');
+}
+
+// WORD_0 extraction from src0
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:WORD_0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xDDCCBBAA);
+  emu.run();
+  assert((emu.state.readVGPR_u32(1, 0) & 0xFFFF) === 0xBBAA, 'SDWA: src0_sel:WORD_0 extracts [15:0]');
+}
+
+// WORD_1 extraction from src0
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:WORD_1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xDDCCBBAA);
+  emu.run();
+  assert((emu.state.readVGPR_u32(1, 0) & 0xFFFF) === 0xDDCC, 'SDWA: src0_sel:WORD_1 extracts [31:16]');
+}
+
+// Sign extension — BYTE with sign bit set
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:BYTE_0 src0_sext\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x000000FF); // 0xFF = -1 as signed byte
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0xFFFFFFFF, 'SDWA: src0_sext sign-extends 0xFF byte to 0xFFFFFFFF');
+}
+
+// Zero extension — BYTE without sext
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:BYTE_0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x000000FF);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0x000000FF, 'SDWA: no sext zero-extends 0xFF byte to 0x000000FF');
+}
+
+// Sign extension — WORD with sign bit set
+{
+  const emu = setup('v_mov_b32 v1, v0 src0_sel:WORD_0 src0_sext\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x0000FFFF); // 0xFFFF = -1 as signed 16-bit
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0xFFFFFFFF, 'SDWA: src0_sext sign-extends 0xFFFF word to 0xFFFFFFFF');
+}
+
+// DST_SEL: write to BYTE_0
+{
+  const emu = setup('v_mov_b32 v1, v0 dst_sel:BYTE_0 dst_unused:UNUSED_PAD src0_sel:DWORD\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x12345678);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0x00000078, 'SDWA: dst_sel:BYTE_0 writes only [7:0], pad rest');
+}
+
+// DST_SEL: write to BYTE_2
+{
+  const emu = setup('v_mov_b32 v1, v0 dst_sel:BYTE_2 dst_unused:UNUSED_PAD src0_sel:DWORD\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x12345678);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0x00780000, 'SDWA: dst_sel:BYTE_2 writes [23:16], pad rest');
+}
+
+// DST_SEL: write to WORD_1
+{
+  const emu = setup('v_mov_b32 v1, v0 dst_sel:WORD_1 dst_unused:UNUSED_PAD src0_sel:DWORD\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x12345678);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0x56780000, 'SDWA: dst_sel:WORD_1 writes [31:16], pad rest');
+}
+
+// DST_UNUSED: UNUSED_SEXT
+{
+  const emu = setup('v_mov_b32 v1, v0 dst_sel:BYTE_0 dst_unused:UNUSED_SEXT src0_sel:BYTE_0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x00000080); // 0x80 = negative byte
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0xFFFFFF80, 'SDWA: dst_unused:UNUSED_SEXT sign-extends 0x80');
+}
+
+// DST_UNUSED: UNUSED_PRESERVE
+{
+  const emu = setup('v_mov_b32 v1, v0 dst_sel:BYTE_0 dst_unused:UNUSED_PRESERVE src0_sel:DWORD\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x000000AB);
+  emu.state.writeVGPR_u32(1, 0, 0xFFFF0000);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0xFFFF00AB, 'SDWA: dst_unused:UNUSED_PRESERVE keeps upper bits');
+}
+
+// VOP2 with both src0_sel and src1_sel
+{
+  const emu = setup('v_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x00000010); // BYTE_0 = 0x10
+  emu.state.writeVGPR_u32(1, 0, 0x00000020); // BYTE_0 = 0x20
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 0x30, 'SDWA VOP2: src0_sel:BYTE_0 + src1_sel:BYTE_0 addition');
+}
+
+// VOP2 with src0_sel:WORD_1 and src1_sel:WORD_0
+{
+  const emu = setup('v_add_nc_u32 v2, v0, v1 src0_sel:WORD_1 src1_sel:WORD_0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x00030000); // WORD_1 = 3
+  emu.state.writeVGPR_u32(1, 0, 0x00000007); // WORD_0 = 7
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 10, 'SDWA VOP2: src0_sel:WORD_1 + src1_sel:WORD_0');
+}
+
+// Roundtrip: assemble → decode → verify SDWA fields
+{
+  const result = assemble('v_mov_b32 v1, v0 dst_sel:BYTE_0 dst_unused:UNUSED_SEXT src0_sel:WORD_1\ns_endpgm');
+  assert(result.errors.length === 0, 'SDWA roundtrip: no assembly errors');
+  const decoded = decodeBinary(result.binary);
+  assert(decoded.length >= 1, 'SDWA roundtrip: at least 1 decoded instruction');
+  const d = decoded[0];
+  assert(d.sdwaDstSel === 0, 'SDWA roundtrip: dst_sel=BYTE_0 (0)');
+  assert(d.sdwaDstUnused === 1, 'SDWA roundtrip: dst_unused=UNUSED_SEXT (1)');
+  assert(d.sdwaSrc0Sel === 5, 'SDWA roundtrip: src0_sel=WORD_1 (5)');
+}
+
+// Roundtrip: VOP2 with SDWA
+{
+  const result = assemble('v_add_nc_u32 v2, v0, v1 dst_sel:WORD_0 dst_unused:UNUSED_PAD src0_sel:BYTE_0 src1_sel:BYTE_1\ns_endpgm');
+  assert(result.errors.length === 0, 'SDWA VOP2 roundtrip: no assembly errors');
+  const decoded = decodeBinary(result.binary);
+  const d = decoded[0];
+  assert(d.sdwaDstSel === 4, 'SDWA VOP2 roundtrip: dst_sel=WORD_0 (4)');
+  assert(d.sdwaDstUnused === 0, 'SDWA VOP2 roundtrip: dst_unused=UNUSED_PAD (0)');
+  assert(d.sdwaSrc0Sel === 0, 'SDWA VOP2 roundtrip: src0_sel=BYTE_0 (0)');
+  assert(d.sdwaSrc1Sel === 1, 'SDWA VOP2 roundtrip: src1_sel=BYTE_1 (1)');
+}
+
+// Disassembly includes SDWA modifiers
+{
+  const result = assemble('v_mov_b32 v1, v0 dst_sel:BYTE_0 dst_unused:UNUSED_PAD src0_sel:WORD_0\ns_endpgm');
+  const decoded = decodeBinary(result.binary);
+  const dis = disassemble(decoded[0], lookupByOpcode);
+  assert(dis.includes('dst_sel:BYTE_0'), 'SDWA disassembly includes dst_sel:BYTE_0');
+  assert(dis.includes('src0_sel:WORD_0'), 'SDWA disassembly includes src0_sel:WORD_0');
+  assert(dis.includes('dst_unused:UNUSED_PAD'), 'SDWA disassembly includes dst_unused:UNUSED_PAD');
+}
+
+// SDWA with sign-extend roundtrip
+{
+  const result = assemble('v_mov_b32 v1, v0 src0_sel:BYTE_0 src0_sext\ns_endpgm');
+  assert(result.errors.length === 0, 'SDWA sext roundtrip: no assembly errors');
+  const decoded = decodeBinary(result.binary);
+  const d = decoded[0];
+  assert(d.sdwaSrc0Sel === 0, 'SDWA sext roundtrip: src0_sel=BYTE_0');
+  assert(d.sdwaSrc0Sext === true, 'SDWA sext roundtrip: src0_sext=true');
+}
+
+// SDWA src1_sext roundtrip
+{
+  const result = assemble('v_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_0 src1_sext\ns_endpgm');
+  assert(result.errors.length === 0, 'SDWA src1_sext roundtrip: no assembly errors');
+  const decoded = decodeBinary(result.binary);
+  const d = decoded[0];
+  assert(d.sdwaSrc1Sext === true, 'SDWA src1_sext roundtrip: src1_sext=true');
+}
+
+// SDWA BYTE_1 extraction with dst_sel BYTE_1
+{
+  const emu = setup('v_mov_b32 v1, v0 dst_sel:BYTE_1 dst_unused:UNUSED_PAD src0_sel:BYTE_1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xAABBCCDD);
+  emu.run();
+  // src0_sel:BYTE_1 extracts 0xCC, dst_sel:BYTE_1 writes it to [15:8], pad rest
+  assert(emu.state.readVGPR_u32(1, 0) === 0x0000CC00, 'SDWA: BYTE_1 extract + BYTE_1 write');
+}
+
+// SDWA WORD_0 with UNUSED_PRESERVE
+{
+  const emu = setup('v_mov_b32 v1, v0 dst_sel:WORD_0 dst_unused:UNUSED_PRESERVE src0_sel:WORD_0\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x0000AABB);
+  emu.state.writeVGPR_u32(1, 0, 0x12340000);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0x1234AABB, 'SDWA: WORD_0 preserve upper');
+}
+
+// ════════════════════════════════════════════
 //  Summary
 // ════════════════════════════════════════════
 

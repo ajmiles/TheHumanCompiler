@@ -51,6 +51,13 @@ export interface ParsedInstruction {
   dppCtrl?: number;    // DPP16 control (row_shr:N, quad_perm, etc.)
   dpp8?: number[];     // DPP8: 8 lane selectors
   boundCtrl?: boolean; // DPP16 bound control
+  // SDWA modifiers (Sub-Dword Addressing)
+  sdwaDstSel?: number;    // DST_SEL: 0=BYTE_0..3, 4=WORD_0, 5=WORD_1, 6=DWORD
+  sdwaDstUnused?: number; // DST_UNUSED: 0=PAD, 1=SEXT, 2=PRESERVE
+  sdwaSrc0Sel?: number;   // SRC0_SEL: same as DST_SEL
+  sdwaSrc0Sext?: boolean; // SRC0 sign-extend
+  sdwaSrc1Sel?: number;   // SRC1_SEL: same as DST_SEL (VOP2 only)
+  sdwaSrc1Sext?: boolean; // SRC1 sign-extend
   // Branch support
   labelRef?: string;   // Unresolved label reference (branch target)
   simm16?: number;     // Resolved SIMM16 (branch offset or waitcnt)
@@ -92,6 +99,13 @@ export interface DecodedInstruction {
   opSel?: number;      // OP_SEL bits: which 16-bit half to read from src0/src1
   opSelHi?: number;    // OP_SEL_HI bits: src0/src1/src2/dst half selection (4 bits)
   negHi?: number;      // NEG_HI bits: negate upper 16-bit half of src0/src1/src2
+  // SDWA modifiers (Sub-Dword Addressing)
+  sdwaDstSel?: number;    // DST_SEL: 0=BYTE_0..3, 4=WORD_0, 5=WORD_1, 6=DWORD
+  sdwaDstUnused?: number; // DST_UNUSED: 0=PAD, 1=SEXT, 2=PRESERVE
+  sdwaSrc0Sel?: number;   // SRC0_SEL: same as DST_SEL
+  sdwaSrc0Sext?: boolean; // SRC0 sign-extend (true) vs zero-extend (false)
+  sdwaSrc1Sel?: number;   // SRC1_SEL: same as DST_SEL (VOP2 only)
+  sdwaSrc1Sext?: boolean; // SRC1 sign-extend
 }
 
 export type SemanticFn = (a: number, b?: number, c?: number) => number;

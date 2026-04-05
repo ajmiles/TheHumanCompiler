@@ -239,6 +239,69 @@ function dpp8SourceLane(lane: number, selectors: number[]): number {
   return groupBase + selectors[laneInGroup];
 }
 
+/** Extract a sub-dword portion from a raw u32 value, with optional sign extension. */
+function extractSel(raw: number, sel: number, sext: boolean): number {
+  raw = raw >>> 0;
+  let extracted: number;
+  switch (sel) {
+    case 0: extracted = raw & 0xFF; break;          // BYTE_0: [7:0]
+    case 1: extracted = (raw >>> 8) & 0xFF; break;  // BYTE_1: [15:8]
+    case 2: extracted = (raw >>> 16) & 0xFF; break; // BYTE_2: [23:16]
+    case 3: extracted = (raw >>> 24) & 0xFF; break; // BYTE_3: [31:24]
+    case 4: extracted = raw & 0xFFFF; break;        // WORD_0: [15:0]
+    case 5: extracted = (raw >>> 16) & 0xFFFF; break; // WORD_1: [31:16]
+    case 6: default: return raw;                    // DWORD: [31:0]
+  }
+  if (sext) {
+    // Sign-extend to 32 bits
+    const bits = sel <= 3 ? 8 : 16;
+    const signBit = 1 << (bits - 1);
+    if (extracted & signBit) {
+      extracted |= (~0 << bits);
+    }
+    return extracted >>> 0; // return as unsigned
+  }
+  return extracted >>> 0; // zero-extended
+}
+
+/** Write a sub-dword portion into a destination, handling unused bits. */
+function writeSel(oldDst: number, result: number, dstSel: number, dstUnused: number): number {
+  oldDst = oldDst >>> 0;
+  result = result >>> 0;
+
+  let mask: number;
+  let shift: number;
+  let selBits: number;
+  switch (dstSel) {
+    case 0: mask = 0xFF; shift = 0; selBits = 8; break;
+    case 1: mask = 0xFF; shift = 8; selBits = 8; break;
+    case 2: mask = 0xFF; shift = 16; selBits = 8; break;
+    case 3: mask = 0xFF; shift = 24; selBits = 8; break;
+    case 4: mask = 0xFFFF; shift = 0; selBits = 16; break;
+    case 5: mask = 0xFFFF; shift = 16; selBits = 16; break;
+    case 6: default: return result; // DWORD: write all
+  }
+
+  const selectedBits = result & mask;
+
+  switch (dstUnused) {
+    case 0: // UNUSED_PAD: unused bits are zero
+      return (selectedBits << shift) >>> 0;
+    case 1: { // UNUSED_SEXT: sign-extend the selected portion to 32 bits
+      const signBit = 1 << (selBits - 1);
+      let val = selectedBits;
+      if (val & signBit) {
+        val |= (~0 << selBits);
+      }
+      return val >>> 0;
+    }
+    case 2: // UNUSED_PRESERVE: keep unused bits from old destination
+      return ((oldDst & ~(mask << shift)) | (selectedBits << shift)) >>> 0;
+    default:
+      return (selectedBits << shift) >>> 0;
+  }
+}
+
 /**
  * Execute a single resolved instruction on the GPU state.
  * Iterates over all 32 lanes; only lanes with their EXEC bit set are active.
@@ -530,6 +593,8 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
   const hasDpp16 = decoded.dppCtrl !== undefined;
   const hasDpp8 = decoded.dpp8 !== undefined;
   const hasDpp = hasDpp16 || hasDpp8;
+  const hasSdwa = decoded.sdwaSrc0Sel !== undefined || decoded.sdwaSrc1Sel !== undefined ||
+                  decoded.sdwaDstSel !== undefined;
 
   // When DPP is active, buffer results to avoid read-after-write hazards
   // (lane N may read lane M's VGPR via DPP, but lane M may already be written)
@@ -557,12 +622,21 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     } else {
       src0Raw = resolveRaw(state, decoded.src0Encoded, decoded.literal, lane);
     }
+
+    // SDWA: extract sub-dword portion from src0
+    if (hasSdwa && decoded.sdwaSrc0Sel !== undefined) {
+      src0Raw = extractSel(src0Raw, decoded.sdwaSrc0Sel, !!decoded.sdwaSrc0Sext);
+    }
+
     let result: number;
 
     if (isInt) {
       // Integer/bitwise ops: pass raw u32 values directly
       if (decoded.src1 !== undefined) {
-        const src1Raw = resolveRaw(state, decoded.src1, decoded.literal, lane);
+        let src1Raw = resolveRaw(state, decoded.src1, decoded.literal, lane);
+        if (hasSdwa && decoded.sdwaSrc1Sel !== undefined) {
+          src1Raw = extractSel(src1Raw, decoded.sdwaSrc1Sel, !!decoded.sdwaSrc1Sext);
+        }
         if (opcodeInfo.readsVCC) {
           const vccBit = (state.vcc >>> lane) & 1;
           result = vccBit ? src1Raw : src0Raw;
@@ -575,14 +649,22 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       } else {
         result = opcodeInfo.execute(src0Raw);
       }
-      const writeVal = result >>> 0;
+      let writeVal = result >>> 0;
+      if (hasSdwa && decoded.sdwaDstSel !== undefined) {
+        const oldDst = state.readVGPR_u32(decoded.dst, lane);
+        writeVal = writeSel(oldDst, writeVal, decoded.sdwaDstSel, decoded.sdwaDstUnused ?? 0);
+      }
       if (dppResults) { dppResults.push({ lane, value: writeVal }); }
       else { state.writeVGPR_u32(decoded.dst, lane, writeVal); }
     } else if (intIn) {
       // Integer input, float output (v_cvt_f32_i32, v_cvt_f32_u32, v_cvt_f32_ubyte*)
       // Pass raw u32 to execute, get float back, bitcast for storage
       const floatResult = opcodeInfo.execute(src0Raw);
-      const writeVal = floatBits(floatResult);
+      let writeVal = floatBits(floatResult);
+      if (hasSdwa && decoded.sdwaDstSel !== undefined) {
+        const oldDst = state.readVGPR_u32(decoded.dst, lane);
+        writeVal = writeSel(oldDst, writeVal, decoded.sdwaDstSel, decoded.sdwaDstUnused ?? 0);
+      }
       if (dppResults) { dppResults.push({ lane, value: writeVal }); }
       else { state.writeVGPR_u32(decoded.dst, lane, writeVal); }
     } else {
@@ -600,7 +682,11 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
         if (decoded.src2Neg) src2Val = -src2Val;
         result = opcodeInfo.execute(src0Val, src1Val, src2Val);
       } else if (decoded.src1 !== undefined) {
-        let src1Val = bitsToFloat(resolveRaw(state, decoded.src1, decoded.literal, lane));
+        let src1Raw = resolveRaw(state, decoded.src1, decoded.literal, lane);
+        if (hasSdwa && decoded.sdwaSrc1Sel !== undefined) {
+          src1Raw = extractSel(src1Raw, decoded.sdwaSrc1Sel, !!decoded.sdwaSrc1Sext);
+        }
+        let src1Val = bitsToFloat(src1Raw);
         if (decoded.src1Abs) src1Val = Math.abs(src1Val);
         if (decoded.src1Neg) src1Val = -src1Val;
         if (opcodeInfo.mnemonic === 'v_fmac_f32') {
@@ -626,7 +712,11 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
         result = Math.max(0.0, Math.min(1.0, result));
       }
 
-      const writeVal = opcodeInfo.integerOutput ? (result >>> 0) : floatBits(result);
+      let writeVal = opcodeInfo.integerOutput ? (result >>> 0) : floatBits(result);
+      if (hasSdwa && decoded.sdwaDstSel !== undefined) {
+        const oldDst = state.readVGPR_u32(decoded.dst, lane);
+        writeVal = writeSel(oldDst, writeVal, decoded.sdwaDstSel, decoded.sdwaDstUnused ?? 0);
+      }
       if (dppResults) { dppResults.push({ lane, value: writeVal }); }
       else { state.writeVGPR_u32(decoded.dst, lane, writeVal); }
     }

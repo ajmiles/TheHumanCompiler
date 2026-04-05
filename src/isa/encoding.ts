@@ -95,6 +95,41 @@ function needsVOP3(instr: ParsedInstruction): boolean {
   return hasMods || !!src1NeedsPromotion;
 }
 
+/** Check if an instruction has SDWA modifiers. */
+function hasSDWA(instr: ParsedInstruction): boolean {
+  return instr.sdwaDstSel !== undefined || instr.sdwaSrc0Sel !== undefined ||
+         instr.sdwaSrc1Sel !== undefined || instr.sdwaSrc0Sext !== undefined ||
+         instr.sdwaSrc1Sext !== undefined || instr.sdwaDstUnused !== undefined;
+}
+
+function buildSdwaWord(instr: ParsedInstruction): number {
+  const src0Vgpr = (instr.src0.type === OperandType.VGPR ? instr.src0.value : 0) & 0xFF;
+  const dstSel = (instr.sdwaDstSel ?? 6) & 0x7;
+  const dstUnused = (instr.sdwaDstUnused ?? 0) & 0x7;
+  const clampBit = instr.clamp ? 1 : 0;
+  const src0Sel = (instr.sdwaSrc0Sel ?? 6) & 0x7;
+  const src0Sext = instr.sdwaSrc0Sext ? 1 : 0;
+  const src0Neg = instr.src0.neg ? 1 : 0;
+  const src0Abs = instr.src0.abs ? 1 : 0;
+  const src1Sel = (instr.sdwaSrc1Sel ?? 6) & 0x7;
+  const src1Sext = instr.sdwaSrc1Sext ? 1 : 0;
+  const src1Neg = instr.src1?.neg ? 1 : 0;
+  const src1Abs = instr.src1?.abs ? 1 : 0;
+
+  return (dstSel)
+    | (dstUnused << 3)
+    | (clampBit << 6)
+    | (src0Sel << 8)
+    | (src0Sext << 11)
+    | (src0Neg << 12)
+    | (src0Abs << 13)
+    | (src1Sel << 16)
+    | (src1Sext << 19)
+    | (src1Neg << 20)
+    | (src1Abs << 21)
+    | (src0Vgpr << 24);
+}
+
 function vopcNeedsVOP3(instr: ParsedInstruction): boolean {
   // VOPC VSRC1 (stored as instr.src0 by parser) must be a VGPR in plain encoding
   const hasMods = !!(instr.dst.abs || instr.dst.neg || instr.src0.abs || instr.src0.neg);
@@ -119,8 +154,8 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
     return encodeVOP3P(info.opcode, instr);
   }
 
-  // Auto-promote to VOP3 if modifiers are present
-  if ((info.format === InstructionFormat.VOP1 || info.format === InstructionFormat.VOP2) && needsVOP3(instr)) {
+  // Auto-promote to VOP3 if modifiers are present (but not SDWA)
+  if ((info.format === InstructionFormat.VOP1 || info.format === InstructionFormat.VOP2) && !hasSDWA(instr) && needsVOP3(instr)) {
     return encodeVOP3(info.format, info.opcode, instr);
   }
 
@@ -147,6 +182,15 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
       return encodeVOP2DPP(info.opcode, instr);
     } else {
       return encodeVOP1DPP(info.opcode, instr);
+    }
+  }
+
+  // SDWA encoding for VOP1/VOP2
+  if ((info.format === InstructionFormat.VOP1 || info.format === InstructionFormat.VOP2) && hasSDWA(instr)) {
+    if (info.format === InstructionFormat.VOP2) {
+      return encodeVOP2SDWA(info.opcode, instr);
+    } else {
+      return encodeVOP1SDWA(info.opcode, instr);
     }
   }
 
@@ -230,6 +274,30 @@ function encodeVOP1DPP(opcode: number, instr: ParsedInstruction): number[] {
     | (marker & SRC0_MASK);
 
   return [(word >>> 0), buildDppWord(instr)];
+}
+
+function encodeVOP2SDWA(opcode: number, instr: ParsedInstruction): number[] {
+  const vdst = instr.dst.encoded & 0xFF;
+  const vsrc1 = instr.src1!.encoded & 0xFF;
+
+  const word = (0 << 31)
+    | ((opcode & VOP2_OP_MASK) << VOP2_OP_SHIFT)
+    | ((vdst & VDST_MASK) << VDST_SHIFT)
+    | ((vsrc1 & VSRC1_MASK) << VSRC1_SHIFT)
+    | (0xF9 & SRC0_MASK);
+
+  return [(word >>> 0), buildSdwaWord(instr)];
+}
+
+function encodeVOP1SDWA(opcode: number, instr: ParsedInstruction): number[] {
+  const vdst = instr.dst.encoded & 0xFF;
+
+  const word = (VOP1_ENCODING_PREFIX << VOP1_PREFIX_SHIFT)
+    | ((opcode & VOP1_OP_MASK) << VOP1_OP_SHIFT)
+    | ((vdst & VDST_MASK) << VDST_SHIFT)
+    | (0xF9 & SRC0_MASK);
+
+  return [(word >>> 0), buildSdwaWord(instr)];
 }
 
 function encodeVOPC(opcode: number, instr: ParsedInstruction): number[] {
@@ -559,6 +627,23 @@ export function detectFormat(word: number): InstructionFormat {
 /**
  * Decode a binary stream into instructions.
  */
+/** Parse SDWA extra dword and apply fields to a decoded instruction. */
+function parseSdwaWord(decoded: DecodedInstruction, dword: number): void {
+  decoded.sdwaDstSel = dword & 0x7;              // [2:0]
+  decoded.sdwaDstUnused = (dword >>> 3) & 0x7;   // [5:3]
+  decoded.clamp = !!((dword >>> 6) & 1);         // [6]
+  decoded.sdwaSrc0Sel = (dword >>> 8) & 0x7;     // [10:8]
+  decoded.sdwaSrc0Sext = !!((dword >>> 11) & 1); // [11]
+  decoded.src0Neg = !!((dword >>> 12) & 1);      // [12]
+  decoded.src0Abs = !!((dword >>> 13) & 1);      // [13]
+  decoded.sdwaSrc1Sel = (dword >>> 16) & 0x7;    // [18:16]
+  decoded.sdwaSrc1Sext = !!((dword >>> 19) & 1); // [19]
+  decoded.src1Neg = !!((dword >>> 20) & 1);      // [20]
+  decoded.src1Abs = !!((dword >>> 21) & 1);      // [21]
+  const src0Vgpr = (dword >>> 24) & 0xFF;        // [31:24]
+  decoded.src0Encoded = VGPR_SRC_MIN + src0Vgpr;
+}
+
 /** Parse DPP8/DPP16 extra dword and apply fields to a decoded instruction. */
 function parseDppWord(decoded: DecodedInstruction, src0: number, dword: number): void {
   if (src0 === 0xE9) {
@@ -746,6 +831,8 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
         const extraWord = binary[i];
         if (src0 === 0xE9 || src0 === 0xFA) {
           parseDppWord(decoded, src0, extraWord);
+        } else if (src0 === 0xF9) {
+          parseSdwaWord(decoded, extraWord);
         } else {
           decoded.literal = extraWord;
         }
@@ -808,6 +895,8 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
         const extraWord = binary[i];
         if (src0 === 0xE9 || src0 === 0xFA) {
           parseDppWord(decoded, src0, extraWord);
+        } else if (src0 === 0xF9) {
+          parseSdwaWord(decoded, extraWord);
         } else {
           decoded.literal = extraWord;
         }
@@ -1022,6 +1111,8 @@ export function decodeBinary(binary: Uint32Array): DecodedInstruction[] {
         const extraWord = binary[i];
         if (src0 === 0xE9 || src0 === 0xFA) {
           parseDppWord(decoded, src0, extraWord);
+        } else if (src0 === 0xF9) {
+          parseSdwaWord(decoded, extraWord);
         } else {
           decoded.literal = extraWord;
         }
@@ -1199,6 +1290,15 @@ export function disassemble(
   if (decoded.omod === 1) suffixes.push('mul:2');
   if (decoded.omod === 2) suffixes.push('mul:4');
   if (decoded.omod === 3) suffixes.push('div:2');
+
+  // SDWA suffixes
+  if (decoded.sdwaDstSel !== undefined) suffixes.push(`dst_sel:${SEL_NAMES[decoded.sdwaDstSel] ?? 'DWORD'}`);
+  if (decoded.sdwaDstUnused !== undefined) suffixes.push(`dst_unused:${UNUSED_NAMES[decoded.sdwaDstUnused] ?? 'UNUSED_PAD'}`);
+  if (decoded.sdwaSrc0Sel !== undefined) suffixes.push(`src0_sel:${SEL_NAMES[decoded.sdwaSrc0Sel] ?? 'DWORD'}`);
+  if (decoded.sdwaSrc0Sext) suffixes.push('src0_sext');
+  if (decoded.sdwaSrc1Sel !== undefined) suffixes.push(`src1_sel:${SEL_NAMES[decoded.sdwaSrc1Sel] ?? 'DWORD'}`);
+  if (decoded.sdwaSrc1Sext) suffixes.push('src1_sext');
+
   const suffix = suffixes.length > 0 ? ' ' + suffixes.join(' ') : '';
 
   // Determine how many source operands to show based on opcode info
@@ -1224,6 +1324,15 @@ export function disassemble(
     return `${mnemonic} ${dst}, ${src0}${suffix}`;
   }
 }
+
+const SEL_NAMES: Record<number, string> = {
+  0: 'BYTE_0', 1: 'BYTE_1', 2: 'BYTE_2', 3: 'BYTE_3',
+  4: 'WORD_0', 5: 'WORD_1', 6: 'DWORD',
+};
+
+const UNUSED_NAMES: Record<number, string> = {
+  0: 'UNUSED_PAD', 1: 'UNUSED_SEXT', 2: 'UNUSED_PRESERVE',
+};
 
 function formatSrc0(encoded: number, literal?: number, isInt = false): string {
   if (encoded >= VGPR_SRC_MIN) return `v${encoded - VGPR_SRC_MIN}`;

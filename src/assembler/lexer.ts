@@ -148,6 +148,16 @@ export function tokenize(source: string): Token[] {
           }
           const compound = lower + ':' + lineText.slice(dStart, col);
           tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
+        } else if ((lower === 'dst_sel' || lower === 'dst_unused' || lower === 'src0_sel' || lower === 'src1_sel') && col < lineText.length && lineText[col] === ':') {
+          // SDWA compound modifier: dst_sel:BYTE_0, src0_sel:WORD_1, dst_unused:UNUSED_PAD, etc.
+          col++; // skip ':'
+          const dStart = col;
+          while (col < lineText.length && isAlphaNum(lineText[col])) col++;
+          const compound = lower + ':' + lineText.slice(dStart, col);
+          tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
+        } else if ((lower === 'src0_sext' || lower === 'src1_sext') && (col >= lineText.length || lineText[col] !== ':')) {
+          // SDWA sext modifier (no value — just a flag)
+          tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
         } else if ((lower === 'quad_perm' || lower === 'dpp8') && col < lineText.length && lineText[col] === ':') {
           // DPP bracket modifier: quad_perm:[3,2,1,0] or dpp8:[7,6,5,4,3,2,1,0]
           col++; // skip ':'
