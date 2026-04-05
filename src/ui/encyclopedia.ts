@@ -144,6 +144,37 @@ const FORMATS: FormatSpec[] = [
       'VCC is a 32-bit mask: bit N = comparison result for lane N',
     ],
   },
+  {
+    name: 'VOP3P',
+    fullName: 'Vector ALU — Packed 16-bit (64-bit)',
+    totalBits: 64,
+    words: 2,
+    fields: [
+      [
+        { name: '0x33', bits: 6, color: '#f85149', description: 'Encoding prefix — 110011 identifies VOP3P' },
+        { name: 'OP', bits: 10, color: '#58a6ff', description: 'Opcode — selects the packed operation (e.g. 0x00F = v_pk_add_f16)' },
+        { name: 'CLAMP', bits: 1, color: '#db6d28', description: 'Clamp output' },
+        { name: 'OP_SEL_HI', bits: 4, color: '#39c5cf', description: 'Hi-half source selection: bit0=src0, bit1=src1, bit2=src2, bit3=dst' },
+        { name: 'NEG_HI', bits: 3, color: '#f0883e', description: 'Negate hi-half: bit0=src0, bit1=src1, bit2=src2' },
+        { name: 'VDST', bits: 8, color: '#39d353', description: 'Destination VGPR index' },
+      ],
+      [
+        { name: 'NEG', bits: 3, color: '#f0883e', description: 'Negate lo-half: bit0=src0, bit1=src1, bit2=src2' },
+        { name: 'OP_SEL', bits: 2, color: '#39c5cf', description: 'Lo-half source selection: bit0=src0, bit1=src1' },
+        { name: 'SRC2', bits: 9, color: '#8b949e', description: 'Third source operand (for FMA/MAD instructions)' },
+        { name: 'SRC1', bits: 9, color: '#d29922', description: 'Second source — full 9-bit encoding' },
+        { name: 'SRC0', bits: 9, color: '#bc8cff', description: 'First source — full 9-bit encoding' },
+      ],
+    ],
+    description: 'Packed 16-bit operations — processes two 16-bit values (lo and hi halves) of each 32-bit register in parallel. Used for f16 math (v_pk_add_f16, v_pk_mul_f16) and u16/i16 integer ops (v_pk_add_u16, v_pk_lshlrev_b16). OP_SEL/OP_SEL_HI control which half of each source to use for the lo/hi operations.',
+    operandRules: [
+      'Each 32-bit register holds two packed 16-bit values: lo=[15:0], hi=[31:16]',
+      'OP_SEL: selects which half each source reads for the lo operation',
+      'OP_SEL_HI: selects which half each source reads for the hi operation',
+      'NEG/NEG_HI: negate lo/hi halves independently',
+      'Default: lo reads from lo, hi reads from hi (OP_SEL=0, OP_SEL_HI=0x7)',
+    ],
+  },
 ];
 
 const SRC0_ENCODING_TABLE = [
