@@ -569,7 +569,12 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
         mn === 's_lshl_b64' || mn === 's_lshr_b64' || mn === 's_ashr_i64' ||
         mn === 's_bfm_b32' || mn === 's_bfe_u32' || mn === 's_bfe_i32' ||
         mn === 's_absdiff_i32' || mn === 's_min_i32' || mn === 's_min_u32' ||
-        mn === 's_max_i32' || mn === 's_max_u32') {
+        mn === 's_max_i32' || mn === 's_max_u32' ||
+        mn === 's_orn2_b32' || mn === 's_orn2_b64' ||
+        mn === 's_nand_b64' || mn === 's_nor_b64' ||
+        mn === 's_xnor_b32' || mn === 's_xnor_b64' ||
+        mn === 's_bfm_b64' || mn === 's_bfe_u64' || mn === 's_bfe_i64' ||
+        mn === 's_mul_hi_u32' || mn === 's_mul_hi_i32') {
       state.scc = result !== 0 ? 1 : 0;
       state.modifiedRegs.add('SCC');
     } else if (mn === 's_add_i32') {
@@ -580,6 +585,15 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
       state.scc = (signA === signB && signA !== signR) ? 1 : 0;
       state.modifiedRegs.add('SCC');
     } else if (mn === 's_sub_i32') {
+      // Borrow: unsigned borrow-out
+      state.scc = ((src0 >>> 0) < (src1 >>> 0)) ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+    } else if (mn === 's_add_u32') {
+      // Carry-out: unsigned overflow
+      const sum = (src0 >>> 0) + (src1 >>> 0);
+      state.scc = sum > 0xFFFFFFFF ? 1 : 0;
+      state.modifiedRegs.add('SCC');
+    } else if (mn === 's_sub_u32') {
       // Borrow: unsigned borrow-out
       state.scc = ((src0 >>> 0) < (src1 >>> 0)) ? 1 : 0;
       state.modifiedRegs.add('SCC');

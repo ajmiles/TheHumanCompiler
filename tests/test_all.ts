@@ -4149,6 +4149,476 @@ group('VOPC New Comparisons');
 }
 
 // ════════════════════════════════════════════
+//  New SOP2 & SOPC Instructions (RDNA2 additions)
+// ════════════════════════════════════════════
+group('SOP2/SOPC (RDNA2 additions)');
+
+// s_add_u32: basic unsigned add
+{
+  const emu = setup([
+    's_mov_b32 s0, 10',
+    's_mov_b32 s1, 20',
+    's_add_u32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 30, 's_add_u32: 10 + 20 = 30');
+  assert(emu.state.scc === 0, 's_add_u32: no carry → SCC=0');
+}
+
+// s_add_u32: overflow sets SCC carry
+{
+  const emu = setup([
+    's_add_u32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFFFFFFFF);
+  emu.state.writeSGPR(1, 1);
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0, 's_add_u32: 0xFFFFFFFF + 1 wraps to 0');
+  assert(emu.state.scc === 1, 's_add_u32: overflow → SCC=1');
+}
+
+// s_add_u32: large values no overflow
+{
+  const emu = setup([
+    's_add_u32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x80000000);
+  emu.state.writeSGPR(1, 0x7FFFFFFF);
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0xFFFFFFFF, 's_add_u32: 0x80000000 + 0x7FFFFFFF = 0xFFFFFFFF');
+  assert(emu.state.scc === 0, 's_add_u32: no carry → SCC=0');
+}
+
+// s_sub_u32: basic unsigned subtract
+{
+  const emu = setup([
+    's_mov_b32 s0, 30',
+    's_mov_b32 s1, 10',
+    's_sub_u32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 20, 's_sub_u32: 30 - 10 = 20');
+  assert(emu.state.scc === 0, 's_sub_u32: no borrow → SCC=0');
+}
+
+// s_sub_u32: borrow sets SCC
+{
+  const emu = setup([
+    's_mov_b32 s0, 5',
+    's_mov_b32 s1, 10',
+    's_sub_u32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === ((-5) >>> 0), 's_sub_u32: 5 - 10 wraps unsigned');
+  assert(emu.state.scc === 1, 's_sub_u32: borrow → SCC=1');
+}
+
+// s_orn2_b32: OR-NOT2
+{
+  const emu = setup([
+    's_orn2_b32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xF0F0F0F0);
+  emu.state.writeSGPR(1, 0xFF00FF00);
+  emu.run();
+  assert(emu.state.readSGPR(2) === (0xF0F0F0F0 | ~0xFF00FF00) >>> 0, 's_orn2_b32: ssrc0 | ~ssrc1');
+}
+
+// s_orn2_b32: src1=0 → all ones
+{
+  const emu = setup([
+    's_mov_b32 s1, 0',
+    's_orn2_b32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x12345678);
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0xFFFFFFFF, 's_orn2_b32: ssrc0 | ~0 = 0xFFFFFFFF');
+}
+
+// s_orn2_b64: OR-NOT2 64-bit
+{
+  const emu = setup([
+    's_orn2_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x0F0F0F0F);
+  emu.state.writeSGPR(1, 0xFFFF0000);
+  emu.run();
+  assert(emu.state.readSGPR(2) === (0x0F0F0F0F | ~0xFFFF0000) >>> 0, 's_orn2_b64: ssrc0 | ~ssrc1');
+}
+
+// s_orn2_b64: both zero
+{
+  const emu = setup([
+    's_mov_b32 s0, 0',
+    's_mov_b32 s1, 0',
+    's_orn2_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0xFFFFFFFF, 's_orn2_b64: 0 | ~0 = 0xFFFFFFFF');
+}
+
+// s_nand_b64: NAND 64-bit
+{
+  const emu = setup([
+    's_nand_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFF00FF00);
+  emu.state.writeSGPR(1, 0xFFFF0000);
+  emu.run();
+  assert(emu.state.readSGPR(2) === (~(0xFF00FF00 & 0xFFFF0000) >>> 0), 's_nand_b64: ~(ssrc0 & ssrc1)');
+}
+
+// s_nand_b64: all ones → 0
+{
+  const emu = setup([
+    's_nand_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFFFFFFFF);
+  emu.state.writeSGPR(1, 0xFFFFFFFF);
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0, 's_nand_b64: ~(0xFFFFFFFF & 0xFFFFFFFF) = 0');
+  assert(emu.state.scc === 0, 's_nand_b64: result 0 → SCC=0');
+}
+
+// s_nor_b64: NOR 64-bit
+{
+  const emu = setup([
+    's_nor_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x00FF0000);
+  emu.state.writeSGPR(1, 0x000000FF);
+  emu.run();
+  assert(emu.state.readSGPR(2) === (~(0x00FF0000 | 0x000000FF) >>> 0), 's_nor_b64: ~(ssrc0 | ssrc1)');
+}
+
+// s_nor_b64: both zero → all ones
+{
+  const emu = setup([
+    's_mov_b32 s0, 0',
+    's_mov_b32 s1, 0',
+    's_nor_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0xFFFFFFFF, 's_nor_b64: ~(0 | 0) = 0xFFFFFFFF');
+}
+
+// s_xnor_b32: XNOR 32-bit
+{
+  const emu = setup([
+    's_xnor_b32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFF00FF00);
+  emu.state.writeSGPR(1, 0xFF00FF00);
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0xFFFFFFFF, 's_xnor_b32: identical values → all ones');
+}
+
+// s_xnor_b32: different values
+{
+  const emu = setup([
+    's_xnor_b32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xF0F0F0F0);
+  emu.state.writeSGPR(1, 0x0F0F0F0F);
+  emu.run();
+  assert(emu.state.readSGPR(2) === (~(0xF0F0F0F0 ^ 0x0F0F0F0F) >>> 0), 's_xnor_b32: ~(ssrc0 ^ ssrc1)');
+}
+
+// s_xnor_b64: XNOR 64-bit
+{
+  const emu = setup([
+    's_xnor_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xAAAAAAAA);
+  emu.state.writeSGPR(1, 0xAAAAAAAA);
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0xFFFFFFFF, 's_xnor_b64: identical values → all ones');
+}
+
+// s_xnor_b64: all zero XOR all ones
+{
+  const emu = setup([
+    's_xnor_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x00000000);
+  emu.state.writeSGPR(1, 0xFFFFFFFF);
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0, 's_xnor_b64: ~(0 ^ 0xFFFFFFFF) = 0');
+  assert(emu.state.scc === 0, 's_xnor_b64: result 0 → SCC=0');
+}
+
+// s_bfm_b64: bit field mask 64-bit
+{
+  const emu = setup([
+    's_mov_b32 s0, 8',
+    's_mov_b32 s1, 4',
+    's_bfm_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0xFF0, 's_bfm_b64: width=8 offset=4 → 0xFF0');
+}
+
+// s_bfm_b64: width=16 offset=0
+{
+  const emu = setup([
+    's_mov_b32 s0, 16',
+    's_mov_b32 s1, 0',
+    's_bfm_b64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0xFFFF, 's_bfm_b64: width=16 offset=0 → 0xFFFF');
+}
+
+// s_bfe_u64: unsigned bit field extract 64-bit
+{
+  const emu = setup([
+    's_bfe_u64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xABCD1234);
+  emu.state.writeSGPR(1, (8 << 16) | 8); // width=8, offset=8
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0x12, 's_bfe_u64: extract byte 1 from 0xABCD1234 → 0x12');
+}
+
+// s_bfe_u64: width=0 returns 0
+{
+  const emu = setup([
+    's_bfe_u64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFFFFFFFF);
+  emu.state.writeSGPR(1, (0 << 16) | 0);
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0, 's_bfe_u64: width=0 → 0');
+}
+
+// s_bfe_i64: signed bit field extract 64-bit (negative)
+{
+  const emu = setup([
+    's_bfe_i64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x000000F0);
+  emu.state.writeSGPR(1, (4 << 16) | 4); // width=4, offset=4
+  emu.run();
+  assert((emu.state.readSGPR(2) | 0) === -1, 's_bfe_i64: extract 0xF (4 bits) sign-extended → -1');
+}
+
+// s_bfe_i64: positive extraction
+{
+  const emu = setup([
+    's_bfe_i64 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x00000050);
+  emu.state.writeSGPR(1, (4 << 16) | 4); // width=4, offset=4
+  emu.run();
+  assert(emu.state.readSGPR(2) === 5, 's_bfe_i64: extract 0x5 (4 bits) → 5');
+}
+
+// s_mul_hi_u32: unsigned multiply high
+{
+  const emu = setup([
+    's_mul_hi_u32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x10000);   // 65536
+  emu.state.writeSGPR(1, 0x10000);   // 65536
+  emu.run();
+  // 65536 * 65536 = 4294967296 = 0x1_00000000, hi = 1
+  assert(emu.state.readSGPR(2) === 1, 's_mul_hi_u32: 0x10000 * 0x10000 → hi32 = 1');
+}
+
+// s_mul_hi_u32: small values → 0
+{
+  const emu = setup([
+    's_mov_b32 s0, 100',
+    's_mov_b32 s1, 200',
+    's_mul_hi_u32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0, 's_mul_hi_u32: 100 * 200 fits in 32 bits → hi=0');
+}
+
+// s_mul_hi_u32: large values
+{
+  const emu = setup([
+    's_mul_hi_u32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFFFFFFFF);
+  emu.state.writeSGPR(1, 0xFFFFFFFF);
+  emu.run();
+  // (2^32-1)^2 = 2^64 - 2^33 + 1, hi32 = 0xFFFFFFFE
+  assert(emu.state.readSGPR(2) === (0xFFFFFFFE >>> 0), 's_mul_hi_u32: 0xFFFFFFFF * 0xFFFFFFFF → hi=0xFFFFFFFE');
+}
+
+// s_mul_hi_i32: signed multiply high
+{
+  const emu = setup([
+    's_mul_hi_i32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x10000);   // 65536
+  emu.state.writeSGPR(1, 0x10000);   // 65536
+  emu.run();
+  assert(emu.state.readSGPR(2) === 1, 's_mul_hi_i32: 65536 * 65536 → hi32 = 1');
+}
+
+// s_mul_hi_i32: small values → 0
+{
+  const emu = setup([
+    's_mov_b32 s0, 10',
+    's_mov_b32 s1, 20',
+    's_mul_hi_i32 s2, s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0, 's_mul_hi_i32: 10 * 20 fits in 32 bits → hi=0');
+}
+
+// s_bitcmp0_b32: bit is zero
+{
+  const emu = setup([
+    's_bitcmp0_b32 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFFFFFFFE); // bit 0 = 0
+  emu.state.writeSGPR(1, 0);          // test bit 0
+  emu.run();
+  assert(emu.state.scc === 1, 's_bitcmp0_b32: bit 0 is 0 → SCC=1');
+}
+
+// s_bitcmp0_b32: bit is one
+{
+  const emu = setup([
+    's_bitcmp0_b32 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFFFFFFFF); // all bits set
+  emu.state.writeSGPR(1, 15);         // test bit 15
+  emu.run();
+  assert(emu.state.scc === 0, 's_bitcmp0_b32: bit 15 is 1 → SCC=0');
+}
+
+// s_bitcmp1_b32: bit is one
+{
+  const emu = setup([
+    's_bitcmp1_b32 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x00000008); // bit 3 = 1
+  emu.state.writeSGPR(1, 3);          // test bit 3
+  emu.run();
+  assert(emu.state.scc === 1, 's_bitcmp1_b32: bit 3 is 1 → SCC=1');
+}
+
+// s_bitcmp1_b32: bit is zero
+{
+  const emu = setup([
+    's_bitcmp1_b32 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x00000000); // all zeros
+  emu.state.writeSGPR(1, 7);          // test bit 7
+  emu.run();
+  assert(emu.state.scc === 0, 's_bitcmp1_b32: bit 7 is 0 → SCC=0');
+}
+
+// s_bitcmp0_b64: bit is zero (64-bit)
+{
+  const emu = setup([
+    's_bitcmp0_b64 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xFFFFFFF7); // bit 3 = 0
+  emu.state.writeSGPR(1, 3);
+  emu.run();
+  assert(emu.state.scc === 1, 's_bitcmp0_b64: bit 3 is 0 → SCC=1');
+}
+
+// s_bitcmp0_b64: bit is one (64-bit)
+{
+  const emu = setup([
+    's_bitcmp0_b64 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x80000000);
+  emu.state.writeSGPR(1, 31);
+  emu.run();
+  assert(emu.state.scc === 0, 's_bitcmp0_b64: bit 31 is 1 → SCC=0');
+}
+
+// s_bitcmp1_b64: bit is one (64-bit)
+{
+  const emu = setup([
+    's_bitcmp1_b64 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x80000000);
+  emu.state.writeSGPR(1, 31);
+  emu.run();
+  assert(emu.state.scc === 1, 's_bitcmp1_b64: bit 31 is 1 → SCC=1');
+}
+
+// s_bitcmp1_b64: bit is zero (64-bit)
+{
+  const emu = setup([
+    's_bitcmp1_b64 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0x00000000);
+  emu.state.writeSGPR(1, 16);
+  emu.run();
+  assert(emu.state.scc === 0, 's_bitcmp1_b64: bit 16 is 0 → SCC=0');
+}
+
+// s_cmp_eq_u64: equal 64-bit
+{
+  const emu = setup([
+    's_cmp_eq_u64 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xDEADBEEF);
+  emu.state.writeSGPR(1, 0xDEADBEEF);
+  emu.run();
+  assert(emu.state.scc === 1, 's_cmp_eq_u64: equal values → SCC=1');
+}
+
+// s_cmp_eq_u64: not equal
+{
+  const emu = setup([
+    's_cmp_eq_u64 s0, s1',
+    's_endpgm',
+  ].join('\n'));
+  emu.state.writeSGPR(0, 0xDEADBEEF);
+  emu.state.writeSGPR(1, 0xCAFEBABE);
+  emu.run();
+  assert(emu.state.scc === 0, 's_cmp_eq_u64: different values → SCC=0');
+}
+
+// ════════════════════════════════════════════
 //  Edge Cases
 // ════════════════════════════════════════════
 group('Edge Cases');
