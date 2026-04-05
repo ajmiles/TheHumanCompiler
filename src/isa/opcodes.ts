@@ -2843,7 +2843,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_ff1_i32_b64',
     format: InstructionFormat.SOP1,
-    opcode: 0x14,
+    opcode: 0x12,
     operandCount: 2,
     execute: (a) => {
       const v = a >>> 0;
@@ -2857,7 +2857,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_flbit_i32_b32',
     format: InstructionFormat.SOP1,
-    opcode: 0x15,
+    opcode: 0x13,
     operandCount: 2,
     execute: (a) => {
       const v = a >>> 0;
@@ -2902,7 +2902,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_ff1_i32_b32',
     format: InstructionFormat.SOP1,
-    opcode: 0x13,
+    opcode: 0x11,
     operandCount: 2,
     execute: (a) => {
       const v = a >>> 0;
@@ -2916,7 +2916,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_and_saveexec_b32',
     format: InstructionFormat.SOP1,
-    opcode: 0x3C,
+    opcode: 0x22,
     operandCount: 2,
     execute: (a) => a,
     description: 'Save EXEC to sdst, then AND ssrc0 into EXEC (32-bit).\nsdst = EXEC_LO; EXEC_LO &= ssrc0',
@@ -2952,7 +2952,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_not_b32',
     format: InstructionFormat.SOP1,
-    opcode: 0x26,
+    opcode: 0x07,
     operandCount: 2,
     execute: (a) => (~a) >>> 0,
     description: 'Scalar bitwise NOT (32-bit).\nsdst = ~ssrc0',
@@ -2961,7 +2961,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_not_b64',
     format: InstructionFormat.SOP1,
-    opcode: 0x27,
+    opcode: 0x08,
     operandCount: 2,
     execute: (a) => (~a) >>> 0,
     description: 'Scalar bitwise NOT (64-bit, low 32 bits).\nsdst = ~ssrc0',
@@ -2970,7 +2970,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_wqm_b32',
     format: InstructionFormat.SOP1,
-    opcode: 0x20,
+    opcode: 0x09,
     operandCount: 2,
     execute: (a) => {
       let result = 0;
@@ -2986,7 +2986,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_wqm_b64',
     format: InstructionFormat.SOP1,
-    opcode: 0x21,
+    opcode: 0x0A,
     operandCount: 2,
     execute: (a) => {
       let result = 0;
@@ -3002,7 +3002,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_brev_b32',
     format: InstructionFormat.SOP1,
-    opcode: 0x22,
+    opcode: 0x0B,
     operandCount: 2,
     execute: (a) => {
       let result = 0;
@@ -3017,7 +3017,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_brev_b64',
     format: InstructionFormat.SOP1,
-    opcode: 0x23,
+    opcode: 0x0C,
     operandCount: 2,
     execute: (a) => {
       let result = 0;
@@ -3032,7 +3032,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_abs_i32',
     format: InstructionFormat.SOP1,
-    opcode: 0x2C,
+    opcode: 0x34,
     operandCount: 2,
     execute: (a) => Math.abs(a | 0) | 0,
     description: 'Scalar absolute value (signed 32-bit).\nsdst = abs(ssrc0)',
@@ -3041,7 +3041,7 @@ const SOP1_OPCODES: OpcodeInfo[] = [
   {
     mnemonic: 's_bitreplicate_b64_b32',
     format: InstructionFormat.SOP1,
-    opcode: 0x36,
+    opcode: 0x47,
     operandCount: 2,
     execute: (a) => {
       let result = 0;
@@ -3248,33 +3248,33 @@ const SOP2_OPCODES: OpcodeInfo[] = [
   { mnemonic: 's_max_i32', format: InstructionFormat.SOP2, opcode: 0x08, operandCount: 3, execute: (a, b) => { const sa = a | 0; const sb = (b ?? 0) | 0; return sa > sb ? sa : sb; }, description: 'Scalar signed maximum.\nsdst = max(ssrc0, ssrc1)', syntax: 's_max_i32 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_max_u32', format: InstructionFormat.SOP2, opcode: 0x09, operandCount: 3, execute: (a, b) => { const ua = a >>> 0; const ub = (b ?? 0) >>> 0; return ua > ub ? ua : ub; }, description: 'Scalar unsigned maximum.\nsdst = max(ssrc0, ssrc1)', syntax: 's_max_u32 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_cselect_b64', format: InstructionFormat.SOP2, opcode: 0x03, operandCount: 3, execute: (a, _b) => a, description: 'Scalar conditional select 64-bit based on SCC.\nsdst = SCC ? ssrc0 : ssrc1', syntax: 's_cselect_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_nand_b32', format: InstructionFormat.SOP2, opcode: 0x0F, operandCount: 3, execute: (a, b) => (~(a & (b ?? 0))) >>> 0, description: 'Scalar bitwise NAND (32-bit).\nsdst = ~(ssrc0 & ssrc1)', syntax: 's_nand_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_nor_b32', format: InstructionFormat.SOP2, opcode: 0x11, operandCount: 3, execute: (a, b) => (~(a | (b ?? 0))) >>> 0, description: 'Scalar bitwise NOR (32-bit).\nsdst = ~(ssrc0 | ssrc1)', syntax: 's_nor_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_lshr_b32', format: InstructionFormat.SOP2, opcode: 0x14, operandCount: 3, execute: (a, b) => (a >>> ((b ?? 0) & 31)) >>> 0, description: 'Scalar logical right shift (32-bit).\nsdst = ssrc0 >> ssrc1', syntax: 's_lshr_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_ashr_i32', format: InstructionFormat.SOP2, opcode: 0x16, operandCount: 3, execute: (a, b) => (a >> ((b ?? 0) & 31)) | 0, description: 'Scalar arithmetic right shift (32-bit).\nsdst = ssrc0 >>> ssrc1 (sign-extending)', syntax: 's_ashr_i32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_bfm_b32', format: InstructionFormat.SOP2, opcode: 0x18, operandCount: 3, execute: (a, b) => { const count = (a & 31); const offset = ((b ?? 0) & 31); return (((1 << count) - 1) << offset) >>> 0; }, description: 'Scalar bit field mask (32-bit).\nsdst = ((1 << ssrc0[4:0]) - 1) << ssrc1[4:0]', syntax: 's_bfm_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_bfe_u32', format: InstructionFormat.SOP2, opcode: 0x1A, operandCount: 3, execute: (a, b) => { const offset = (b ?? 0) & 31; const width = ((b ?? 0) >>> 16) & 0x7F; if (width === 0) return 0; return ((a >>> offset) & ((1 << width) - 1)) >>> 0; }, description: 'Scalar unsigned bit field extract (32-bit).\nsdst = (ssrc0 >> ssrc1[4:0]) & ((1 << ssrc1[22:16]) - 1)', syntax: 's_bfe_u32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_bfe_i32', format: InstructionFormat.SOP2, opcode: 0x1B, operandCount: 3, execute: (a, b) => { const offset = (b ?? 0) & 31; const width = ((b ?? 0) >>> 16) & 0x7F; if (width === 0) return 0; const extracted = (a >>> offset) & ((1 << width) - 1); const signBit = (extracted >>> (width - 1)) & 1; return signBit ? (extracted | (~0 << width)) | 0 : extracted; }, description: 'Scalar signed bit field extract (32-bit).\nsdst = signext((ssrc0 >> ssrc1[4:0]) & ((1 << ssrc1[22:16]) - 1))', syntax: 's_bfe_i32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_absdiff_i32', format: InstructionFormat.SOP2, opcode: 0x1C, operandCount: 3, execute: (a, b) => Math.abs((a | 0) - ((b ?? 0) | 0)) | 0, description: 'Scalar absolute difference signed 32-bit.\nsdst = abs(ssrc0 - ssrc1)', syntax: 's_absdiff_i32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_lshl_b64', format: InstructionFormat.SOP2, opcode: 0x22, operandCount: 3, execute: (a, b) => (a << ((b ?? 0) & 63)) >>> 0, description: 'Scalar left shift (64-bit, low 32 bits).\nsdst = ssrc0 << ssrc1', syntax: 's_lshl_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_lshr_b64', format: InstructionFormat.SOP2, opcode: 0x23, operandCount: 3, execute: (a, b) => (a >>> ((b ?? 0) & 63)) >>> 0, description: 'Scalar logical right shift (64-bit, low 32 bits).\nsdst = ssrc0 >> ssrc1', syntax: 's_lshr_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_ashr_i64', format: InstructionFormat.SOP2, opcode: 0x24, operandCount: 3, execute: (a, b) => (a >> ((b ?? 0) & 63)) | 0, description: 'Scalar arithmetic right shift (64-bit, low 32 bits).\nsdst = ssrc0 >>> ssrc1 (sign-extending)', syntax: 's_ashr_i64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_nand_b32', format: InstructionFormat.SOP2, opcode: 0x18, operandCount: 3, execute: (a, b) => (~(a & (b ?? 0))) >>> 0, description: 'Scalar bitwise NAND (32-bit).\nsdst = ~(ssrc0 & ssrc1)', syntax: 's_nand_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_nor_b32', format: InstructionFormat.SOP2, opcode: 0x1A, operandCount: 3, execute: (a, b) => (~(a | (b ?? 0))) >>> 0, description: 'Scalar bitwise NOR (32-bit).\nsdst = ~(ssrc0 | ssrc1)', syntax: 's_nor_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_lshr_b32', format: InstructionFormat.SOP2, opcode: 0x20, operandCount: 3, execute: (a, b) => (a >>> ((b ?? 0) & 31)) >>> 0, description: 'Scalar logical right shift (32-bit).\nsdst = ssrc0 >> ssrc1', syntax: 's_lshr_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_ashr_i32', format: InstructionFormat.SOP2, opcode: 0x22, operandCount: 3, execute: (a, b) => (a >> ((b ?? 0) & 31)) | 0, description: 'Scalar arithmetic right shift (32-bit).\nsdst = ssrc0 >>> ssrc1 (sign-extending)', syntax: 's_ashr_i32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_bfm_b32', format: InstructionFormat.SOP2, opcode: 0x24, operandCount: 3, execute: (a, b) => { const count = (a & 31); const offset = ((b ?? 0) & 31); return (((1 << count) - 1) << offset) >>> 0; }, description: 'Scalar bit field mask (32-bit).\nsdst = ((1 << ssrc0[4:0]) - 1) << ssrc1[4:0]', syntax: 's_bfm_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_bfe_u32', format: InstructionFormat.SOP2, opcode: 0x27, operandCount: 3, execute: (a, b) => { const offset = (b ?? 0) & 31; const width = ((b ?? 0) >>> 16) & 0x7F; if (width === 0) return 0; return ((a >>> offset) & ((1 << width) - 1)) >>> 0; }, description: 'Scalar unsigned bit field extract (32-bit).\nsdst = (ssrc0 >> ssrc1[4:0]) & ((1 << ssrc1[22:16]) - 1)', syntax: 's_bfe_u32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_bfe_i32', format: InstructionFormat.SOP2, opcode: 0x28, operandCount: 3, execute: (a, b) => { const offset = (b ?? 0) & 31; const width = ((b ?? 0) >>> 16) & 0x7F; if (width === 0) return 0; const extracted = (a >>> offset) & ((1 << width) - 1); const signBit = (extracted >>> (width - 1)) & 1; return signBit ? (extracted | (~0 << width)) | 0 : extracted; }, description: 'Scalar signed bit field extract (32-bit).\nsdst = signext((ssrc0 >> ssrc1[4:0]) & ((1 << ssrc1[22:16]) - 1))', syntax: 's_bfe_i32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_absdiff_i32', format: InstructionFormat.SOP2, opcode: 0x2C, operandCount: 3, execute: (a, b) => Math.abs((a | 0) - ((b ?? 0) | 0)) | 0, description: 'Scalar absolute difference signed 32-bit.\nsdst = abs(ssrc0 - ssrc1)', syntax: 's_absdiff_i32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_lshl_b64', format: InstructionFormat.SOP2, opcode: 0x1F, operandCount: 3, execute: (a, b) => (a << ((b ?? 0) & 63)) >>> 0, description: 'Scalar left shift (64-bit, low 32 bits).\nsdst = ssrc0 << ssrc1', syntax: 's_lshl_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_lshr_b64', format: InstructionFormat.SOP2, opcode: 0x21, operandCount: 3, execute: (a, b) => (a >>> ((b ?? 0) & 63)) >>> 0, description: 'Scalar logical right shift (64-bit, low 32 bits).\nsdst = ssrc0 >> ssrc1', syntax: 's_lshr_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_ashr_i64', format: InstructionFormat.SOP2, opcode: 0x23, operandCount: 3, execute: (a, b) => (a >> ((b ?? 0) & 63)) | 0, description: 'Scalar arithmetic right shift (64-bit, low 32 bits).\nsdst = ssrc0 >>> ssrc1 (sign-extending)', syntax: 's_ashr_i64 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_pack_ll_b32_b16', format: InstructionFormat.SOP2, opcode: 0x32, operandCount: 3, execute: (a, b) => (((b ?? 0) & 0xFFFF) << 16 | (a & 0xFFFF)) >>> 0, description: 'Pack two low 16-bit values into a 32-bit value.\nsdst = {ssrc1[15:0], ssrc0[15:0]}', syntax: 's_pack_ll_b32_b16 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_pack_lh_b32_b16', format: InstructionFormat.SOP2, opcode: 0x33, operandCount: 3, execute: (a, b) => (((b ?? 0) >>> 16 & 0xFFFF) << 16 | (a & 0xFFFF)) >>> 0, description: 'Pack ssrc0 low 16 and ssrc1 high 16 into a 32-bit value.\nsdst = {ssrc1[31:16], ssrc0[15:0]}', syntax: 's_pack_lh_b32_b16 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_pack_hh_b32_b16', format: InstructionFormat.SOP2, opcode: 0x34, operandCount: 3, execute: (a, b) => (((b ?? 0) >>> 16 & 0xFFFF) << 16 | ((a >>> 16) & 0xFFFF)) >>> 0, description: 'Pack two high 16-bit values into a 32-bit value.\nsdst = {ssrc1[31:16], ssrc0[31:16]}', syntax: 's_pack_hh_b32_b16 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_add_u32', format: InstructionFormat.SOP2, opcode: 0x00, operandCount: 3, execute: (a, b) => ((a >>> 0) + ((b ?? 0) >>> 0)) >>> 0, description: 'Scalar add unsigned 32-bit. SCC = carry-out.\nsdst = ssrc0 + ssrc1; SCC = unsigned overflow', syntax: 's_add_u32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_sub_u32', format: InstructionFormat.SOP2, opcode: 0x0B, operandCount: 3, execute: (a, b) => ((a >>> 0) - ((b ?? 0) >>> 0)) >>> 0, description: 'Scalar subtract unsigned 32-bit. SCC = borrow.\nsdst = ssrc0 - ssrc1; SCC = unsigned borrow', syntax: 's_sub_u32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_orn2_b32', format: InstructionFormat.SOP2, opcode: 0x17, operandCount: 3, execute: (a, b) => (a | ~(b ?? 0)) >>> 0, description: 'Scalar bitwise OR-NOT2 (32-bit).\nsdst = ssrc0 | ~ssrc1; SCC = (result != 0)', syntax: 's_orn2_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_orn2_b64', format: InstructionFormat.SOP2, opcode: 0x19, operandCount: 3, execute: (a, b) => (a | ~(b ?? 0)) >>> 0, description: 'Scalar bitwise OR-NOT2 (64-bit, low 32 bits).\nsdst = ssrc0 | ~ssrc1; SCC = (result != 0)', syntax: 's_orn2_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_nand_b64', format: InstructionFormat.SOP2, opcode: 0x1D, operandCount: 3, execute: (a, b) => (~(a & (b ?? 0))) >>> 0, description: 'Scalar bitwise NAND (64-bit, low 32 bits).\nsdst = ~(ssrc0 & ssrc1); SCC = (result != 0)', syntax: 's_nand_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_nor_b64', format: InstructionFormat.SOP2, opcode: 0x1F, operandCount: 3, execute: (a, b) => (~(a | (b ?? 0))) >>> 0, description: 'Scalar bitwise NOR (64-bit, low 32 bits).\nsdst = ~(ssrc0 | ssrc1); SCC = (result != 0)', syntax: 's_nor_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_xnor_b32', format: InstructionFormat.SOP2, opcode: 0x20, operandCount: 3, execute: (a, b) => (~(a ^ (b ?? 0))) >>> 0, description: 'Scalar bitwise XNOR (32-bit).\nsdst = ~(ssrc0 ^ ssrc1); SCC = (result != 0)', syntax: 's_xnor_b32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_xnor_b64', format: InstructionFormat.SOP2, opcode: 0x21, operandCount: 3, execute: (a, b) => (~(a ^ (b ?? 0))) >>> 0, description: 'Scalar bitwise XNOR (64-bit, low 32 bits).\nsdst = ~(ssrc0 ^ ssrc1); SCC = (result != 0)', syntax: 's_xnor_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_sub_u32', format: InstructionFormat.SOP2, opcode: 0x01, operandCount: 3, execute: (a, b) => ((a >>> 0) - ((b ?? 0) >>> 0)) >>> 0, description: 'Scalar subtract unsigned 32-bit. SCC = borrow.\nsdst = ssrc0 - ssrc1; SCC = unsigned borrow', syntax: 's_sub_u32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_orn2_b32', format: InstructionFormat.SOP2, opcode: 0x16, operandCount: 3, execute: (a, b) => (a | ~(b ?? 0)) >>> 0, description: 'Scalar bitwise OR-NOT2 (32-bit).\nsdst = ssrc0 | ~ssrc1; SCC = (result != 0)', syntax: 's_orn2_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_orn2_b64', format: InstructionFormat.SOP2, opcode: 0x17, operandCount: 3, execute: (a, b) => (a | ~(b ?? 0)) >>> 0, description: 'Scalar bitwise OR-NOT2 (64-bit, low 32 bits).\nsdst = ssrc0 | ~ssrc1; SCC = (result != 0)', syntax: 's_orn2_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_nand_b64', format: InstructionFormat.SOP2, opcode: 0x19, operandCount: 3, execute: (a, b) => (~(a & (b ?? 0))) >>> 0, description: 'Scalar bitwise NAND (64-bit, low 32 bits).\nsdst = ~(ssrc0 & ssrc1); SCC = (result != 0)', syntax: 's_nand_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_nor_b64', format: InstructionFormat.SOP2, opcode: 0x1B, operandCount: 3, execute: (a, b) => (~(a | (b ?? 0))) >>> 0, description: 'Scalar bitwise NOR (64-bit, low 32 bits).\nsdst = ~(ssrc0 | ssrc1); SCC = (result != 0)', syntax: 's_nor_b64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_xnor_b32', format: InstructionFormat.SOP2, opcode: 0x1C, operandCount: 3, execute: (a, b) => (~(a ^ (b ?? 0))) >>> 0, description: 'Scalar bitwise XNOR (32-bit).\nsdst = ~(ssrc0 ^ ssrc1); SCC = (result != 0)', syntax: 's_xnor_b32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_xnor_b64', format: InstructionFormat.SOP2, opcode: 0x1D, operandCount: 3, execute: (a, b) => (~(a ^ (b ?? 0))) >>> 0, description: 'Scalar bitwise XNOR (64-bit, low 32 bits).\nsdst = ~(ssrc0 ^ ssrc1); SCC = (result != 0)', syntax: 's_xnor_b64 sdst, ssrc0, ssrc1' },
   { mnemonic: 's_bfm_b64', format: InstructionFormat.SOP2, opcode: 0x25, operandCount: 3, execute: (a, b) => { const count = (a & 31); const offset = ((b ?? 0) & 31); return (((1 << count) - 1) << offset) >>> 0; }, description: 'Scalar bit field mask (64-bit, low 32 bits).\nsdst = ((1 << ssrc0[4:0]) - 1) << ssrc1[4:0]', syntax: 's_bfm_b64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_bfe_u64', format: InstructionFormat.SOP2, opcode: 0x27, operandCount: 3, execute: (a, b) => { const offset = (b ?? 0) & 31; const width = ((b ?? 0) >>> 16) & 0x7F; if (width === 0) return 0; return ((a >>> offset) & ((1 << width) - 1)) >>> 0; }, description: 'Scalar unsigned bit field extract (64-bit, low 32 bits).\nsdst = (ssrc0 >> ssrc1[4:0]) & ((1 << ssrc1[22:16]) - 1)', syntax: 's_bfe_u64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_bfe_i64', format: InstructionFormat.SOP2, opcode: 0x28, operandCount: 3, execute: (a, b) => { const offset = (b ?? 0) & 31; const width = ((b ?? 0) >>> 16) & 0x7F; if (width === 0) return 0; const extracted = (a >>> offset) & ((1 << width) - 1); const signBit = (extracted >>> (width - 1)) & 1; return signBit ? (extracted | (~0 << width)) | 0 : extracted; }, description: 'Scalar signed bit field extract (64-bit, low 32 bits).\nsdst = signext((ssrc0 >> ssrc1[4:0]) & ((1 << ssrc1[22:16]) - 1))', syntax: 's_bfe_i64 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_mul_hi_u32', format: InstructionFormat.SOP2, opcode: 0x2C, operandCount: 3, execute: (a, b) => { const ua = a >>> 0; const ub = (b ?? 0) >>> 0; return (Math.trunc((ua * ub) / 0x100000000)) >>> 0; }, description: 'Scalar multiply high unsigned 32-bit. Returns upper 32 bits of 64-bit product.\nsdst = (ssrc0 * ssrc1) >> 32', syntax: 's_mul_hi_u32 sdst, ssrc0, ssrc1' },
-  { mnemonic: 's_mul_hi_i32', format: InstructionFormat.SOP2, opcode: 0x2D, operandCount: 3, execute: (a, b) => { const sa = a | 0; const sb = (b ?? 0) | 0; return (Math.trunc((sa * sb) / 0x100000000)) | 0; }, description: 'Scalar multiply high signed 32-bit. Returns upper 32 bits of signed 64-bit product.\nsdst = (ssrc0 * ssrc1) >> 32 (signed)', syntax: 's_mul_hi_i32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_bfe_u64', format: InstructionFormat.SOP2, opcode: 0x29, operandCount: 3, execute: (a, b) => { const offset = (b ?? 0) & 31; const width = ((b ?? 0) >>> 16) & 0x7F; if (width === 0) return 0; return ((a >>> offset) & ((1 << width) - 1)) >>> 0; }, description: 'Scalar unsigned bit field extract (64-bit, low 32 bits).\nsdst = (ssrc0 >> ssrc1[4:0]) & ((1 << ssrc1[22:16]) - 1)', syntax: 's_bfe_u64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_bfe_i64', format: InstructionFormat.SOP2, opcode: 0x2A, operandCount: 3, execute: (a, b) => { const offset = (b ?? 0) & 31; const width = ((b ?? 0) >>> 16) & 0x7F; if (width === 0) return 0; const extracted = (a >>> offset) & ((1 << width) - 1); const signBit = (extracted >>> (width - 1)) & 1; return signBit ? (extracted | (~0 << width)) | 0 : extracted; }, description: 'Scalar signed bit field extract (64-bit, low 32 bits).\nsdst = signext((ssrc0 >> ssrc1[4:0]) & ((1 << ssrc1[22:16]) - 1))', syntax: 's_bfe_i64 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_mul_hi_u32', format: InstructionFormat.SOP2, opcode: 0x2D, operandCount: 3, execute: (a, b) => { const ua = a >>> 0; const ub = (b ?? 0) >>> 0; return (Math.trunc((ua * ub) / 0x100000000)) >>> 0; }, description: 'Scalar multiply high unsigned 32-bit. Returns upper 32 bits of 64-bit product.\nsdst = (ssrc0 * ssrc1) >> 32', syntax: 's_mul_hi_u32 sdst, ssrc0, ssrc1' },
+  { mnemonic: 's_mul_hi_i32', format: InstructionFormat.SOP2, opcode: 0x2E, operandCount: 3, execute: (a, b) => { const sa = a | 0; const sb = (b ?? 0) | 0; return (Math.trunc((sa * sb) / 0x100000000)) | 0; }, description: 'Scalar multiply high signed 32-bit. Returns upper 32 bits of signed 64-bit product.\nsdst = (ssrc0 * ssrc1) >> 32 (signed)', syntax: 's_mul_hi_i32 sdst, ssrc0, ssrc1' },
 ];
 
 // ── SOPC Instructions (scalar compare) ──
@@ -3286,8 +3286,8 @@ const SOPC_OPCODES: OpcodeInfo[] = [
   { mnemonic: 's_cmp_ge_i32', format: InstructionFormat.SOPC, opcode: 0x03, operandCount: 2, execute: (a, b) => ((a | 0) >= ((b ?? 0) | 0)) ? 1 : 0, description: 'Scalar compare greater-or-equal signed 32-bit. Sets SCC.\nSCC = (ssrc0 >= ssrc1)', syntax: 's_cmp_ge_i32 ssrc0, ssrc1' },
   { mnemonic: 's_cmp_lt_i32', format: InstructionFormat.SOPC, opcode: 0x04, operandCount: 2, execute: (a, b) => ((a | 0) < ((b ?? 0) | 0)) ? 1 : 0, description: 'Scalar compare less-than signed 32-bit. Sets SCC.\nSCC = (ssrc0 < ssrc1)', syntax: 's_cmp_lt_i32 ssrc0, ssrc1' },
   { mnemonic: 's_cmp_le_i32', format: InstructionFormat.SOPC, opcode: 0x05, operandCount: 2, execute: (a, b) => ((a | 0) <= ((b ?? 0) | 0)) ? 1 : 0, description: 'Scalar compare less-or-equal signed 32-bit. Sets SCC.\nSCC = (ssrc0 <= ssrc1)', syntax: 's_cmp_le_i32 ssrc0, ssrc1' },
-  { mnemonic: 's_cmp_eq_i32', format: InstructionFormat.SOPC, opcode: 0x06, operandCount: 2, execute: (a, b) => ((a | 0) === ((b ?? 0) | 0)) ? 1 : 0, description: 'Scalar compare equal signed 32-bit. Sets SCC.\nSCC = (ssrc0 == ssrc1)', syntax: 's_cmp_eq_i32 ssrc0, ssrc1' },
-  { mnemonic: 's_cmp_lg_i32', format: InstructionFormat.SOPC, opcode: 0x07, operandCount: 2, execute: (a, b) => ((a | 0) !== ((b ?? 0) | 0)) ? 1 : 0, description: 'Scalar compare not-equal signed 32-bit. Sets SCC.\nSCC = (ssrc0 != ssrc1)', syntax: 's_cmp_lg_i32 ssrc0, ssrc1' },
+  { mnemonic: 's_cmp_eq_i32', format: InstructionFormat.SOPC, opcode: 0x00, operandCount: 2, execute: (a, b) => ((a | 0) === ((b ?? 0) | 0)) ? 1 : 0, description: 'Scalar compare equal signed 32-bit. Sets SCC.\nSCC = (ssrc0 == ssrc1)', syntax: 's_cmp_eq_i32 ssrc0, ssrc1' },
+  { mnemonic: 's_cmp_lg_i32', format: InstructionFormat.SOPC, opcode: 0x01, operandCount: 2, execute: (a, b) => ((a | 0) !== ((b ?? 0) | 0)) ? 1 : 0, description: 'Scalar compare not-equal signed 32-bit. Sets SCC.\nSCC = (ssrc0 != ssrc1)', syntax: 's_cmp_lg_i32 ssrc0, ssrc1' },
   { mnemonic: 's_cmp_gt_u32', format: InstructionFormat.SOPC, opcode: 0x08, operandCount: 2, execute: (a, b) => ((a >>> 0) > ((b ?? 0) >>> 0)) ? 1 : 0, description: 'Scalar compare greater-than unsigned 32-bit. Sets SCC.\nSCC = (ssrc0 > ssrc1)', syntax: 's_cmp_gt_u32 ssrc0, ssrc1' },
   { mnemonic: 's_cmp_ge_u32', format: InstructionFormat.SOPC, opcode: 0x09, operandCount: 2, execute: (a, b) => ((a >>> 0) >= ((b ?? 0) >>> 0)) ? 1 : 0, description: 'Scalar compare greater-or-equal unsigned 32-bit. Sets SCC.\nSCC = (ssrc0 >= ssrc1)', syntax: 's_cmp_ge_u32 ssrc0, ssrc1' },
   { mnemonic: 's_cmp_lt_u32', format: InstructionFormat.SOPC, opcode: 0x0A, operandCount: 2, execute: (a, b) => ((a >>> 0) < ((b ?? 0) >>> 0)) ? 1 : 0, description: 'Scalar compare less-than unsigned 32-bit. Sets SCC.\nSCC = (ssrc0 < ssrc1)', syntax: 's_cmp_lt_u32 ssrc0, ssrc1' },
