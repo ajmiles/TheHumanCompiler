@@ -451,6 +451,8 @@ export class RegisterDisplay {
       ['EXEC', '0x' + (state.exec >>> 0).toString(16).padStart(8, '0')],
       ['VCC', '0x' + (state.vcc >>> 0).toString(16).padStart(8, '0')],
       ['SCC', state.scc.toString()],
+      ['EXECZ', state.exec === 0 ? '1' : '0'],
+      ['VCCZ', state.vcc === 0 ? '1' : '0'],
       ['PC', '0x' + this.pcBytes.toString(16).padStart(3, '0')],
     ];
 
