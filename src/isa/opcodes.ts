@@ -311,6 +311,58 @@ const VOP2_OPCODES: OpcodeInfo[] = [
     isIntegerOp: true,
   },
   {
+    mnemonic: 'v_sub_co_ci_u32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x29,
+    operandCount: 3,
+    execute: (a, b) => ((a - (b ?? 0)) >>> 0),
+    description: 'Subtract with carry-in from VCC and carry-out to VCC.\nvdst = src0 - vsrc1 - VCC[lane]',
+    syntax: 'v_sub_co_ci_u32 vdst, src0, vsrc1',
+    readsVCC: true,
+    writesVCC: true,
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_subrev_co_ci_u32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x2A,
+    operandCount: 3,
+    execute: (a, b) => (((b ?? 0) - a) >>> 0),
+    description: 'Reverse subtract with carry-in/out.\nvdst = vsrc1 - src0 - VCC[lane]',
+    syntax: 'v_subrev_co_ci_u32 vdst, src0, vsrc1',
+    readsVCC: true,
+    writesVCC: true,
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_fmamk_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x2C,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'FMA with inline constant K: vdst = src0 × K + vsrc1.\nThe literal constant K is encoded inline.',
+    syntax: 'v_fmamk_f32 vdst, src0, simm32, vsrc1',
+  },
+  {
+    mnemonic: 'v_fmaak_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x2D,
+    operandCount: 3,
+    execute: (a, b) => asFloat(a * (b ?? 0)),
+    description: 'FMA with inline constant K: vdst = src0 × vsrc1 + K.\nThe literal constant K is encoded inline.',
+    syntax: 'v_fmaak_f32 vdst, src0, vsrc1, simm32',
+  },
+  {
+    mnemonic: 'v_cvt_pkrtz_f16_f32',
+    format: InstructionFormat.VOP2,
+    opcode: 0x2F,
+    operandCount: 3,
+    execute: (a, b) => ((a & 0xFFFF) | (((b ?? 0) & 0xFFFF) << 16)) >>> 0,
+    description: 'Pack two f32 values into a pair of f16 values (round toward zero).\nvdst = {f16(vsrc1), f16(src0)}',
+    syntax: 'v_cvt_pkrtz_f16_f32 vdst, src0, vsrc1',
+    isIntegerOp: true,
+  },
+  {
     mnemonic: 'v_dot8c_i32_i4',
     format: InstructionFormat.VOP2,
     opcode: 0x02,
@@ -771,6 +823,130 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     execute: (a) => asFloat(Math.floor(a)),
     description: 'Floor of a 16-bit float.\nvdst = floor(src0)',
     syntax: 'v_floor_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_frexp_exp_i32_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x3F,
+    operandCount: 2,
+    execute: (a) => {
+      if (a === 0 || !isFinite(a) || isNaN(a)) return 0;
+      const abs = Math.abs(a);
+      return (Math.floor(Math.log2(abs)) + 1) | 0;
+    },
+    description: 'Extract the exponent from a 32-bit float (as integer).\nvdst = frexp_exp(src0)',
+    syntax: 'v_frexp_exp_i32_f32 vdst, src0',
+    integerOutput: true,
+  },
+  {
+    mnemonic: 'v_frexp_mant_f32',
+    format: InstructionFormat.VOP1,
+    opcode: 0x40,
+    operandCount: 2,
+    execute: (a) => {
+      if (a === 0 || !isFinite(a) || isNaN(a)) return a;
+      const abs = Math.abs(a);
+      const exp = Math.floor(Math.log2(abs)) + 1;
+      return asFloat(a / Math.pow(2, exp));
+    },
+    description: 'Extract the mantissa from a 32-bit float (result in [0.5, 1.0)).\nvdst = frexp_mant(src0)',
+    syntax: 'v_frexp_mant_f32 vdst, src0',
+  },
+  {
+    mnemonic: 'v_cvt_u16_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x52,
+    operandCount: 2,
+    execute: (a) => Math.max(0, Math.min(0xFFFF, Math.trunc(a))) & 0xFFFF,
+    description: 'Convert 16-bit float to unsigned 16-bit integer.\nvdst = (uint16)src0',
+    syntax: 'v_cvt_u16_f16 vdst, src0',
+    integerOutput: true,
+  },
+  {
+    mnemonic: 'v_cvt_i16_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x53,
+    operandCount: 2,
+    execute: (a) => (Math.trunc(a) & 0xFFFF),
+    description: 'Convert 16-bit float to signed 16-bit integer.\nvdst = (int16)src0',
+    syntax: 'v_cvt_i16_f16 vdst, src0',
+    integerOutput: true,
+  },
+  {
+    mnemonic: 'v_rsq_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x56,
+    operandCount: 2,
+    execute: (a) => asFloat(1.0 / Math.sqrt(a)),
+    description: 'Reciprocal square root of a 16-bit float.\nvdst = 1.0 / √src0',
+    syntax: 'v_rsq_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_log_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x57,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.log2(a)),
+    description: 'Base-2 logarithm of a 16-bit float.\nvdst = log₂(src0)',
+    syntax: 'v_log_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_ceil_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x5C,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.ceil(a)),
+    description: 'Ceiling of a 16-bit float.\nvdst = ceil(src0)',
+    syntax: 'v_ceil_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_trunc_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x5D,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.trunc(a)),
+    description: 'Truncate a 16-bit float toward zero.\nvdst = trunc(src0)',
+    syntax: 'v_trunc_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_rndne_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x5E,
+    operandCount: 2,
+    execute: (a) => {
+      const r = Math.round(a);
+      if (Math.abs(a - r) === 0.5 && r % 2 !== 0) return asFloat(r - Math.sign(a));
+      return asFloat(r);
+    },
+    description: 'Round a 16-bit float to nearest even.\nvdst = roundEven(src0)',
+    syntax: 'v_rndne_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_fract_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x5F,
+    operandCount: 2,
+    execute: (a) => asFloat(a - Math.floor(a)),
+    description: 'Fractional part of a 16-bit float.\nvdst = src0 - floor(src0)',
+    syntax: 'v_fract_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_sin_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x60,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.sin(a * 2 * Math.PI)),
+    description: 'Sine of a 16-bit float (input in turns).\nvdst = sin(2π × src0)',
+    syntax: 'v_sin_f16 vdst, src0',
+  },
+  {
+    mnemonic: 'v_cos_f16',
+    format: InstructionFormat.VOP1,
+    opcode: 0x61,
+    operandCount: 2,
+    execute: (a) => asFloat(Math.cos(a * 2 * Math.PI)),
+    description: 'Cosine of a 16-bit float (input in turns).\nvdst = cos(2π × src0)',
+    syntax: 'v_cos_f16 vdst, src0',
   },
 ];
 
@@ -1309,6 +1485,450 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     syntax: 'v_perm_b32 vdst, src0, src1, src2',
     isIntegerOp: true,
   },
+  {
+    mnemonic: 'v_mad_u32_u24',
+    format: InstructionFormat.VOP3,
+    opcode: 0x143,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const ua = (a >>> 0) & 0xFFFFFF;
+      const ub = ((b ?? 0) >>> 0) & 0xFFFFFF;
+      return ((ua * ub) + (c ?? 0)) >>> 0;
+    },
+    description: 'Multiply-add unsigned 24-bit: (uint24)src0 × (uint24)src1 + src2.\nvdst = (uint24)src0 × (uint24)src1 + src2',
+    syntax: 'v_mad_u32_u24 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_cubeid_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x144,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const x = a, y = b ?? 0, z = c ?? 0;
+      const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+      if (ax >= ay && ax >= az) return asFloat(x >= 0 ? 0.0 : 1.0);
+      if (ay >= ax && ay >= az) return asFloat(y >= 0 ? 2.0 : 3.0);
+      return asFloat(z >= 0 ? 4.0 : 5.0);
+    },
+    description: 'Cubemap face ID. Returns 0-5 based on major axis direction.\nvdst = cubeid(src0, src1, src2)',
+    syntax: 'v_cubeid_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_cubesc_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x145,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const x = a, y = b ?? 0, z = c ?? 0;
+      const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+      if (ax >= ay && ax >= az) return asFloat(x >= 0 ? -z : z);
+      if (ay >= ax && ay >= az) return asFloat(x);
+      return asFloat(z >= 0 ? x : -x);
+    },
+    description: 'Cubemap S coordinate.\nvdst = cubesc(src0, src1, src2)',
+    syntax: 'v_cubesc_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_cubetc_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x146,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const x = a, y = b ?? 0, z = c ?? 0;
+      const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+      if (ax >= ay && ax >= az) return asFloat(y);
+      if (ay >= ax && ay >= az) return asFloat(y >= 0 ? -z : z);
+      return asFloat(y);
+    },
+    description: 'Cubemap T coordinate.\nvdst = cubetc(src0, src1, src2)',
+    syntax: 'v_cubetc_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_cubema_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x147,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const x = a, y = b ?? 0, z = c ?? 0;
+      const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+      return asFloat(2.0 * Math.max(ax, ay, az));
+    },
+    description: 'Cubemap major axis: 2.0 × max(|src0|, |src1|, |src2|).\nvdst = 2.0 × max(|src0|, |src1|, |src2|)',
+    syntax: 'v_cubema_f32 vdst, src0, src1, src2',
+  },
+  {
+    mnemonic: 'v_lerp_u8',
+    format: InstructionFormat.VOP3,
+    opcode: 0x14D,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0, s2 = (c ?? 0) >>> 0;
+      let result = 0;
+      for (let i = 0; i < 4; i++) {
+        const a8 = (s0 >>> (i * 8)) & 0xFF;
+        const b8 = (s1 >>> (i * 8)) & 0xFF;
+        const c8 = (s2 >>> (i * 8)) & 0xFF;
+        const lerped = ((a8 + b8 + (c8 >= 128 ? 1 : 0)) >> 1) & 0xFF;
+        result |= lerped << (i * 8);
+      }
+      return result >>> 0;
+    },
+    description: 'Linear interpolation of packed unsigned bytes.\nvdst = lerp(src0, src1, src2) per byte',
+    syntax: 'v_lerp_u8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_alignbit_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x14E,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const shift = (c ?? 0) & 31;
+      if (shift === 0) return (b ?? 0) >>> 0;
+      return ((((a >>> 0) << (32 - shift)) | (((b ?? 0) >>> 0) >>> shift)) >>> 0);
+    },
+    description: 'Bit alignment: extract 32 bits from a 64-bit value {src0, src1} >> src2.\nvdst = ({src0, src1} >> src2)[31:0]',
+    syntax: 'v_alignbit_b32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_alignbyte_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x14F,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const shift = ((c ?? 0) & 3) * 8;
+      if (shift === 0) return (b ?? 0) >>> 0;
+      return ((((a >>> 0) << (32 - shift)) | (((b ?? 0) >>> 0) >>> shift)) >>> 0);
+    },
+    description: 'Byte alignment: extract 32 bits from {src0, src1} >> (src2[1:0] × 8).\nvdst = ({src0, src1} >> (src2[1:0] × 8))[31:0]',
+    syntax: 'v_alignbyte_b32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_min3_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x152,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const sa = a | 0, sb = (b ?? 0) | 0, sc = (c ?? 0) | 0;
+      return Math.min(sa, sb, sc) | 0;
+    },
+    description: 'Minimum of three signed 32-bit integers.\nvdst = min(src0, src1, src2)',
+    syntax: 'v_min3_i32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_min3_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x153,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const ua = a >>> 0, ub = (b ?? 0) >>> 0, uc = (c ?? 0) >>> 0;
+      return Math.min(ua, ub, uc) >>> 0;
+    },
+    description: 'Minimum of three unsigned 32-bit integers.\nvdst = min(src0, src1, src2)',
+    syntax: 'v_min3_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_max3_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x155,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const sa = a | 0, sb = (b ?? 0) | 0, sc = (c ?? 0) | 0;
+      return Math.max(sa, sb, sc) | 0;
+    },
+    description: 'Maximum of three signed 32-bit integers.\nvdst = max(src0, src1, src2)',
+    syntax: 'v_max3_i32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_max3_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x156,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const ua = a >>> 0, ub = (b ?? 0) >>> 0, uc = (c ?? 0) >>> 0;
+      return Math.max(ua, ub, uc) >>> 0;
+    },
+    description: 'Maximum of three unsigned 32-bit integers.\nvdst = max(src0, src1, src2)',
+    syntax: 'v_max3_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_med3_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x158,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const vals = [a | 0, (b ?? 0) | 0, (c ?? 0) | 0].sort((x, y) => x - y);
+      return vals[1] | 0;
+    },
+    description: 'Median of three signed 32-bit integers.\nvdst = median(src0, src1, src2)',
+    syntax: 'v_med3_i32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_med3_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x159,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const vals = [a >>> 0, (b ?? 0) >>> 0, (c ?? 0) >>> 0].sort((x, y) => x - y);
+      return vals[1] >>> 0;
+    },
+    description: 'Median of three unsigned 32-bit integers.\nvdst = median(src0, src1, src2)',
+    syntax: 'v_med3_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_sad_u8',
+    format: InstructionFormat.VOP3,
+    opcode: 0x15A,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0;
+      let sum = (c ?? 0) >>> 0;
+      for (let i = 0; i < 4; i++) {
+        const a8 = (s0 >>> (i * 8)) & 0xFF;
+        const b8 = (s1 >>> (i * 8)) & 0xFF;
+        sum += Math.abs(a8 - b8);
+      }
+      return sum >>> 0;
+    },
+    description: 'Sum of absolute differences of packed bytes, accumulated.\nvdst = Σ|src0[i] - src1[i]| + src2 (4 bytes)',
+    syntax: 'v_sad_u8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_sad_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x15C,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const s0 = a >>> 0, s1 = (b ?? 0) >>> 0;
+      let sum = (c ?? 0) >>> 0;
+      for (let i = 0; i < 2; i++) {
+        const a16 = (s0 >>> (i * 16)) & 0xFFFF;
+        const b16 = (s1 >>> (i * 16)) & 0xFFFF;
+        sum += Math.abs(a16 - b16);
+      }
+      return sum >>> 0;
+    },
+    description: 'Sum of absolute differences of packed 16-bit values, accumulated.\nvdst = Σ|src0[i] - src1[i]| + src2 (2 halfwords)',
+    syntax: 'v_sad_u16 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_sad_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x15D,
+    operandCount: 4,
+    execute: (a, b, c) => {
+      const diff = Math.abs((a >>> 0) - ((b ?? 0) >>> 0));
+      return (diff + ((c ?? 0) >>> 0)) >>> 0;
+    },
+    description: 'Absolute difference of two 32-bit unsigned values, accumulated.\nvdst = |src0 - src1| + src2',
+    syntax: 'v_sad_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_mul_hi_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x16C,
+    operandCount: 3,
+    execute: (a, b) => {
+      const sa = a | 0;
+      const sb = (b ?? 0) | 0;
+      return (Number(BigInt(sa) * BigInt(sb) >> 32n)) | 0;
+    },
+    description: 'Multiply two signed 32-bit integers, return high 32 bits.\nvdst = hi32((int)src0 × (int)src1)',
+    syntax: 'v_mul_hi_i32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_xor3_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x178,
+    operandCount: 4,
+    execute: (a, b, c) => ((a ^ (b ?? 0) ^ (c ?? 0)) >>> 0),
+    description: 'XOR three 32-bit values.\nvdst = src0 ^ src1 ^ src2',
+    syntax: 'v_xor3_b32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_lshlrev_b64',
+    format: InstructionFormat.VOP3,
+    opcode: 0x2FF,
+    operandCount: 3,
+    execute: (a, b) => {
+      const shift = a & 63;
+      const val = BigInt((b ?? 0) >>> 0);
+      return Number((val << BigInt(shift)) & 0xFFFFFFFFn) >>> 0;
+    },
+    description: '64-bit left shift (returns low 32 bits).\nvdst = (vsrc1 << src0)[31:0]',
+    syntax: 'v_lshlrev_b64 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_lshrrev_b64',
+    format: InstructionFormat.VOP3,
+    opcode: 0x300,
+    operandCount: 3,
+    execute: (a, b) => {
+      const shift = a & 63;
+      return (((b ?? 0) >>> 0) >>> Math.min(shift, 31)) >>> 0;
+    },
+    description: '64-bit logical right shift (returns low 32 bits).\nvdst = (vsrc1 >> src0)[31:0]',
+    syntax: 'v_lshrrev_b64 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_ashrrev_i64',
+    format: InstructionFormat.VOP3,
+    opcode: 0x301,
+    operandCount: 3,
+    execute: (a, b) => {
+      const shift = a & 63;
+      return (((b ?? 0) | 0) >> Math.min(shift, 31)) | 0;
+    },
+    description: '64-bit arithmetic right shift (returns low 32 bits).\nvdst = ((int64)vsrc1 >> src0)[31:0]',
+    syntax: 'v_ashrrev_i64 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_add_co_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x30F,
+    operandCount: 3,
+    execute: (a, b) => ((a + (b ?? 0)) >>> 0),
+    description: 'Add two unsigned 32-bit integers with carry-out to VCC.\nvdst = src0 + src1; VCC = carry',
+    syntax: 'v_add_co_u32 vdst, src0, src1',
+    writesVCC: true,
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_sub_co_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x310,
+    operandCount: 3,
+    execute: (a, b) => ((a - (b ?? 0)) >>> 0),
+    description: 'Subtract two unsigned 32-bit integers with carry-out to VCC.\nvdst = src0 - src1; VCC = borrow',
+    syntax: 'v_sub_co_u32 vdst, src0, src1',
+    writesVCC: true,
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_subrev_co_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x319,
+    operandCount: 3,
+    execute: (a, b) => (((b ?? 0) - a) >>> 0),
+    description: 'Reverse subtract with carry-out.\nvdst = src1 - src0; VCC = borrow',
+    syntax: 'v_subrev_co_u32 vdst, src0, src1',
+    writesVCC: true,
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_xad_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x345,
+    operandCount: 4,
+    execute: (a, b, c) => (((a ^ (b ?? 0)) + (c ?? 0)) >>> 0),
+    description: 'XOR then add: (src0 ^ src1) + src2.\nvdst = (src0 ^ src1) + src2',
+    syntax: 'v_xad_u32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_and_or_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x371,
+    operandCount: 4,
+    execute: (a, b, c) => (((a & (b ?? 0)) | (c ?? 0)) >>> 0),
+    description: 'AND then OR: (src0 & src1) | src2.\nvdst = (src0 & src1) | src2',
+    syntax: 'v_and_or_b32 vdst, src0, src1, src2',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_sub_nc_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x376,
+    operandCount: 3,
+    execute: (a, b) => ((a - (b ?? 0)) | 0),
+    description: 'Subtract signed 32-bit integers (no carry).\nvdst = src0 - src1',
+    syntax: 'v_sub_nc_i32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_add_nc_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x37F,
+    operandCount: 3,
+    execute: (a, b) => ((a + (b ?? 0)) | 0),
+    description: 'Add signed 32-bit integers (no carry).\nvdst = src0 + src1',
+    syntax: 'v_add_nc_i32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_writelane_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x361,
+    operandCount: 3,
+    execute: (a) => a,
+    description: 'Write a scalar value into a specific lane of a VGPR.\nvdst[src1] = src0',
+    syntax: 'v_writelane_b32 vdst, ssrc0, ssrc1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_ldexp_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x362,
+    operandCount: 3,
+    execute: (a, b) => {
+      const _f = new Float32Array(1);
+      const _u = new Uint32Array(_f.buffer);
+      _u[0] = a >>> 0;
+      const fval = _f[0];
+      const exp = (b ?? 0) | 0;
+      _f[0] = fval * Math.pow(2, exp);
+      return _u[0];
+    },
+    description: 'Load exponent: vdst = src0 × 2^src1.\nvdst = src0 × 2^(int)src1',
+    syntax: 'v_ldexp_f32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_bfm_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x363,
+    operandCount: 3,
+    execute: (a, b) => {
+      const count = a & 31;
+      const offset = (b ?? 0) & 31;
+      return (((1 << count) - 1) << offset) >>> 0;
+    },
+    description: 'Bit field mask: generate a mask of count bits starting at offset.\nvdst = ((1 << src0[4:0]) - 1) << src1[4:0]',
+    syntax: 'v_bfm_b32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_bcnt_u32_b32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x364,
+    operandCount: 3,
+    execute: (a, b) => {
+      let v = a >>> 0;
+      let count = 0;
+      while (v) { count += v & 1; v >>>= 1; }
+      return (count + ((b ?? 0) >>> 0)) >>> 0;
+    },
+    description: 'Bit count (popcount) + accumulate: count set bits in src0, add src1.\nvdst = popcount(src0) + src1',
+    syntax: 'v_bcnt_u32_b32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
 ];
 
 const VOPC_OPCODES: OpcodeInfo[] = [
@@ -1400,6 +2020,56 @@ const VOPC_OPCODES: OpcodeInfo[] = [
     execute: (a, b) => ((a | 0) < ((b ?? 0) | 0)) ? 1 : 0,
     description: 'Compare two signed 32-bit integers: set VCC if src0 < vsrc1.\nVCC[lane] = (src0 < vsrc1)',
     syntax: 'v_cmp_lt_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_eq_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x82,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) === ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare two signed 32-bit integers: set VCC if src0 == vsrc1.\nVCC[lane] = (src0 == vsrc1)',
+    syntax: 'v_cmp_eq_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_le_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x83,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) <= ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare two signed 32-bit integers: set VCC if src0 ≤ vsrc1.\nVCC[lane] = (src0 <= vsrc1)',
+    syntax: 'v_cmp_le_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_gt_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x84,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) > ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare two signed 32-bit integers: set VCC if src0 > vsrc1.\nVCC[lane] = (src0 > vsrc1)',
+    syntax: 'v_cmp_gt_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_ne_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x85,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) !== ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare two signed 32-bit integers: set VCC if src0 ≠ vsrc1.\nVCC[lane] = (src0 != vsrc1)',
+    syntax: 'v_cmp_ne_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_ge_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x86,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) >= ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare two signed 32-bit integers: set VCC if src0 ≥ vsrc1.\nVCC[lane] = (src0 >= vsrc1)',
+    syntax: 'v_cmp_ge_i32 src0, vsrc1',
     writesVCC: true,
   },
   {
@@ -1526,6 +2196,86 @@ const VOPC_OPCODES: OpcodeInfo[] = [
     writesVCC: true,
   },
   {
+    mnemonic: 'v_cmpx_lt_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x91,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) < ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare signed ints (less than) and write to EXEC mask.\nEXEC[lane] = (src0 < vsrc1)',
+    syntax: 'v_cmpx_lt_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_le_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x93,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) <= ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare signed ints (less or equal) and write to EXEC mask.\nEXEC[lane] = (src0 <= vsrc1)',
+    syntax: 'v_cmpx_le_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_gt_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x94,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) > ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare signed ints (greater than) and write to EXEC mask.\nEXEC[lane] = (src0 > vsrc1)',
+    syntax: 'v_cmpx_gt_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_ne_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x95,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) !== ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare signed ints (not equal) and write to EXEC mask.\nEXEC[lane] = (src0 != vsrc1)',
+    syntax: 'v_cmpx_ne_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_ge_i32',
+    format: InstructionFormat.VOPC,
+    opcode: 0x96,
+    operandCount: 2,
+    execute: (a, b) => ((a | 0) >= ((b ?? 0) | 0)) ? 1 : 0,
+    description: 'Compare signed ints (greater or equal) and write to EXEC mask.\nEXEC[lane] = (src0 >= vsrc1)',
+    syntax: 'v_cmpx_ge_i32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_lt_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xD1,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) < ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare unsigned ints (less than) and write to EXEC mask.\nEXEC[lane] = (src0 < vsrc1)',
+    syntax: 'v_cmpx_lt_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_le_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xD3,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) <= ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare unsigned ints (less or equal) and write to EXEC mask.\nEXEC[lane] = (src0 <= vsrc1)',
+    syntax: 'v_cmpx_le_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmpx_ge_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xD6,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) >= ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare unsigned ints (greater or equal) and write to EXEC mask.\nEXEC[lane] = (src0 >= vsrc1)',
+    syntax: 'v_cmpx_ge_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
     mnemonic: 'v_cmp_lt_u32',
     format: InstructionFormat.VOPC,
     opcode: 0xC1,
@@ -1533,6 +2283,36 @@ const VOPC_OPCODES: OpcodeInfo[] = [
     execute: (a, b) => ((a >>> 0) < ((b ?? 0) >>> 0)) ? 1 : 0,
     description: 'Compare two unsigned 32-bit integers: set VCC if src0 < vsrc1.\nVCC[lane] = (src0 < vsrc1)',
     syntax: 'v_cmp_lt_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_le_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xC3,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) <= ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare two unsigned 32-bit integers: set VCC if src0 ≤ vsrc1.\nVCC[lane] = (src0 <= vsrc1)',
+    syntax: 'v_cmp_le_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_gt_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xC4,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) > ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare two unsigned 32-bit integers: set VCC if src0 > vsrc1.\nVCC[lane] = (src0 > vsrc1)',
+    syntax: 'v_cmp_gt_u32 src0, vsrc1',
+    writesVCC: true,
+  },
+  {
+    mnemonic: 'v_cmp_ge_u32',
+    format: InstructionFormat.VOPC,
+    opcode: 0xC6,
+    operandCount: 2,
+    execute: (a, b) => ((a >>> 0) >= ((b ?? 0) >>> 0)) ? 1 : 0,
+    description: 'Compare two unsigned 32-bit integers: set VCC if src0 ≥ vsrc1.\nVCC[lane] = (src0 >= vsrc1)',
+    syntax: 'v_cmp_ge_u32 src0, vsrc1',
     writesVCC: true,
   },
   {

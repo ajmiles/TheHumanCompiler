@@ -661,7 +661,8 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
   // VOPC: float comparison instructions — write result to VCC or EXEC (v_cmpx_*)
   if (decoded.format === InstructionFormat.VOPC) {
     const isCmpx = opcodeInfo.mnemonic.startsWith('v_cmpx_');
-    const isIntCmp = opcodeInfo.mnemonic.includes('_i32') || opcodeInfo.mnemonic.includes('_u32');
+    const isIntCmp = opcodeInfo.mnemonic.includes('_i32') || opcodeInfo.mnemonic.includes('_u32') ||
+                     opcodeInfo.mnemonic.includes('_i16') || opcodeInfo.mnemonic.includes('_u16');
     let mask = 0;
     const exec = state.exec;
     for (let lane = 0; lane < WAVE_WIDTH; lane++) {
@@ -728,6 +729,15 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
     } else {
       state.writeSGPR(dst, val);
     }
+    return;
+  }
+
+  // v_writelane_b32: write a scalar value into a specific VGPR lane
+  if (opcodeInfo.mnemonic === 'v_writelane_b32') {
+    // VOP3: vdst, ssrc0 (value), ssrc1 (lane index)
+    const val = resolveSsrc0(state, decoded.src0Encoded, decoded.literal);
+    const laneIdx = resolveSsrc0(state, decoded.src1!, decoded.literal) & 31;
+    state.writeVGPR_u32(decoded.dst, laneIdx, val);
     return;
   }
 

@@ -2943,6 +2943,1212 @@ group('SOPK (new instructions)');
 }
 
 // ════════════════════════════════════════════
+//  New VOP1 Instructions
+// ════════════════════════════════════════════
+group('VOP1 New Instructions');
+
+// v_frexp_exp_i32_f32: extract exponent
+{
+  const emu = setup('v_frexp_exp_i32_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 8.0); // 8.0 = 1.0 * 2^3 → exponent = 4
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 4, 'v_frexp_exp_i32_f32: exponent of 8.0 = 4');
+}
+
+{
+  const emu = setup('v_frexp_exp_i32_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'v_frexp_exp_i32_f32: exponent of 0.0 = 0');
+}
+
+// v_frexp_mant_f32: extract mantissa
+{
+  const emu = setup('v_frexp_mant_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 8.0); // 8.0 = 0.5 * 2^4 → mantissa = 0.5
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 0.5), 'v_frexp_mant_f32: mantissa of 8.0 = 0.5');
+}
+
+{
+  const emu = setup('v_frexp_mant_f32 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -6.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), -0.75), 'v_frexp_mant_f32: mantissa of -6.0 = -0.75');
+}
+
+// v_cvt_u16_f16: float to unsigned 16
+{
+  const emu = setup('v_cvt_u16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 42.7);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 42, 'v_cvt_u16_f16: 42.7 → 42');
+}
+
+{
+  const emu = setup('v_cvt_u16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -1.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'v_cvt_u16_f16: -1.0 clamped to 0');
+}
+
+// v_cvt_i16_f16: float to signed 16
+{
+  const emu = setup('v_cvt_i16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -5.9);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  const result = emu.state.readVGPR_u32(1, 0);
+  // -5 as uint16 = 0xFFFB
+  assert(result === ((-5) & 0xFFFF), 'v_cvt_i16_f16: -5.9 → -5 (truncated)');
+}
+
+{
+  const emu = setup('v_cvt_i16_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 100.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 100, 'v_cvt_i16_f16: 100.0 → 100');
+}
+
+// v_rsq_f16: reciprocal sqrt
+{
+  const emu = setup('v_rsq_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 4.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 0.5), 'v_rsq_f16: 1/√4 = 0.5');
+}
+
+{
+  const emu = setup('v_rsq_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 1.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 1.0), 'v_rsq_f16: 1/√1 = 1.0');
+}
+
+// v_log_f16: log2
+{
+  const emu = setup('v_log_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 8.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 3.0), 'v_log_f16: log2(8) = 3.0');
+}
+
+{
+  const emu = setup('v_log_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 1.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 0.0), 'v_log_f16: log2(1) = 0.0');
+}
+
+// v_ceil_f16
+{
+  const emu = setup('v_ceil_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 2.3);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 3.0), 'v_ceil_f16: ceil(2.3) = 3.0');
+}
+
+{
+  const emu = setup('v_ceil_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -1.5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), -1.0), 'v_ceil_f16: ceil(-1.5) = -1.0');
+}
+
+// v_trunc_f16
+{
+  const emu = setup('v_trunc_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.7);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 3.0), 'v_trunc_f16: trunc(3.7) = 3.0');
+}
+
+{
+  const emu = setup('v_trunc_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -2.9);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), -2.0), 'v_trunc_f16: trunc(-2.9) = -2.0');
+}
+
+// v_rndne_f16: round to nearest even
+{
+  const emu = setup('v_rndne_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 2.5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 2.0), 'v_rndne_f16: roundEven(2.5) = 2.0');
+}
+
+{
+  const emu = setup('v_rndne_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 4.0), 'v_rndne_f16: roundEven(3.5) = 4.0');
+}
+
+// v_fract_f16
+{
+  const emu = setup('v_fract_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.75);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 0.75), 'v_fract_f16: fract(3.75) = 0.75');
+}
+
+{
+  const emu = setup('v_fract_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -0.25);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 0.75), 'v_fract_f16: fract(-0.25) = 0.75');
+}
+
+// v_sin_f16
+{
+  const emu = setup('v_sin_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.25); // sin(2π × 0.25) = sin(π/2) = 1.0
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 1.0), 'v_sin_f16: sin(2π × 0.25) = 1.0');
+}
+
+{
+  const emu = setup('v_sin_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 0.0), 'v_sin_f16: sin(0) = 0.0');
+}
+
+// v_cos_f16
+{
+  const emu = setup('v_cos_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.0); // cos(0) = 1.0
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), 1.0), 'v_cos_f16: cos(0) = 1.0');
+}
+
+{
+  const emu = setup('v_cos_f16 v1, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.5); // cos(2π × 0.5) = cos(π) = -1.0
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(1, 0), -1.0), 'v_cos_f16: cos(2π × 0.5) = -1.0');
+}
+
+// ════════════════════════════════════════════
+//  New VOP2 Instructions
+// ════════════════════════════════════════════
+group('VOP2 New Instructions');
+
+// v_sub_co_ci_u32 (carry-in from VCC, executor treats as cndmask)
+{
+  const emu = setup('v_sub_co_ci_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 10);
+  emu.state.writeVGPR_u32(1, 0, 3);
+  emu.state.vcc = 0; // VCC[0]=0 → selects src0
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 10, 'v_sub_co_ci_u32: VCC=0 → selects src0=10');
+}
+
+{
+  const emu = setup('v_sub_co_ci_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 10);
+  emu.state.writeVGPR_u32(1, 0, 3);
+  emu.state.vcc = 1; // VCC[0]=1 → selects src1
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 3, 'v_sub_co_ci_u32: VCC=1 → selects src1=3');
+}
+
+// v_subrev_co_ci_u32 (carry-in from VCC, executor treats as cndmask)
+{
+  const emu = setup('v_subrev_co_ci_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 3);
+  emu.state.writeVGPR_u32(1, 0, 10);
+  emu.state.vcc = 0; // VCC[0]=0 → selects src0
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 3, 'v_subrev_co_ci_u32: VCC=0 → selects src0=3');
+}
+
+{
+  const emu = setup('v_subrev_co_ci_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, 10);
+  emu.state.vcc = 1; // VCC[0]=1 → selects src1
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 10, 'v_subrev_co_ci_u32: VCC=1 → selects src1=10');
+}
+
+// v_fmamk_f32
+{
+  const emu = setup('v_fmamk_f32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.0);
+  emu.state.writeVGPR(1, 0, 2.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 6.0), 'v_fmamk_f32: 3.0 * 2.0 = 6.0');
+}
+
+{
+  const emu = setup('v_fmamk_f32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 0.0);
+  emu.state.writeVGPR(1, 0, 5.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 0.0), 'v_fmamk_f32: 0 * 5 = 0');
+}
+
+// v_fmaak_f32
+{
+  const emu = setup('v_fmaak_f32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.0);
+  emu.state.writeVGPR(1, 0, 2.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 6.0), 'v_fmaak_f32: 3.0 * 2.0 = 6.0');
+}
+
+{
+  const emu = setup('v_fmaak_f32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 1.0);
+  emu.state.writeVGPR(1, 0, 1.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 1.0), 'v_fmaak_f32: 1.0 * 1.0 = 1.0');
+}
+
+// v_cvt_pkrtz_f16_f32: pack two values
+{
+  const emu = setup('v_cvt_pkrtz_f16_f32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x0000ABCD);
+  emu.state.writeVGPR_u32(1, 0, 0x00001234);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  const r = emu.state.readVGPR_u32(2, 0);
+  assert((r & 0xFFFF) === 0xABCD, 'v_cvt_pkrtz_f16_f32: low 16 bits = src0[15:0]');
+  assert(((r >>> 16) & 0xFFFF) === 0x1234, 'v_cvt_pkrtz_f16_f32: high 16 bits = src1[15:0]');
+}
+
+// ════════════════════════════════════════════
+//  New VOP3 Instructions
+// ════════════════════════════════════════════
+group('VOP3 New Instructions');
+
+// v_mad_u32_u24
+{
+  const emu = setup('v_mad_u32_u24 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 200);
+  emu.state.writeVGPR_u32(2, 0, 50);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 20050, 'v_mad_u32_u24: 100 * 200 + 50 = 20050');
+}
+
+{
+  const emu = setup('v_mad_u32_u24 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0);
+  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.writeVGPR_u32(2, 0, 7);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 7, 'v_mad_u32_u24: 0 * 100 + 7 = 7');
+}
+
+// v_cubeid_f32
+{
+  const emu = setup('v_cubeid_f32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 5.0);  // x = largest positive
+  emu.state.writeVGPR(1, 0, 1.0);
+  emu.state.writeVGPR(2, 0, 1.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(3, 0), 0.0), 'v_cubeid_f32: +X face = 0');
+}
+
+{
+  const emu = setup('v_cubeid_f32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR(0, 0, -5.0);  // x = largest negative
+  emu.state.writeVGPR(1, 0, 1.0);
+  emu.state.writeVGPR(2, 0, 1.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(3, 0), 1.0), 'v_cubeid_f32: -X face = 1');
+}
+
+// v_cubema_f32
+{
+  const emu = setup('v_cubema_f32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.0);
+  emu.state.writeVGPR(1, 0, -4.0);
+  emu.state.writeVGPR(2, 0, 2.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(3, 0), 8.0), 'v_cubema_f32: 2*max(3,4,2) = 8.0');
+}
+
+{
+  const emu = setup('v_cubema_f32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 1.0);
+  emu.state.writeVGPR(1, 0, 1.0);
+  emu.state.writeVGPR(2, 0, 1.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(3, 0), 2.0), 'v_cubema_f32: 2*max(1,1,1) = 2.0');
+}
+
+// v_lerp_u8
+{
+  const emu = setup('v_lerp_u8 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x00000000);
+  emu.state.writeVGPR_u32(1, 0, 0x00000064); // byte0 = 100
+  emu.state.writeVGPR_u32(2, 0, 0x00000000);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.readVGPR_u32(3, 0) & 0xFF) === 50, 'v_lerp_u8: (0 + 100) / 2 = 50');
+}
+
+{
+  const emu = setup('v_lerp_u8 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x0A0A0A0A);
+  emu.state.writeVGPR_u32(1, 0, 0x0A0A0A0A);
+  emu.state.writeVGPR_u32(2, 0, 0x00000000);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.readVGPR_u32(3, 0) & 0xFF) === 10, 'v_lerp_u8: (10 + 10) / 2 = 10');
+}
+
+// v_alignbit_b32
+{
+  const emu = setup('v_alignbit_b32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x12345678);
+  emu.state.writeVGPR_u32(1, 0, 0xABCDEF00);
+  emu.state.writeVGPR_u32(2, 0, 8); // shift by 8 bits
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // {0x12345678, 0xABCDEF00} >> 8 = 0x7812345678ABCDEF00 >> 8 low 32
+  // = (0x12345678 << 24) | (0xABCDEF00 >>> 8) = 0x78ABCDEF
+  assert(emu.state.readVGPR_u32(3, 0) === 0x78ABCDEF, 'v_alignbit_b32: shift by 8 bits');
+}
+
+{
+  const emu = setup('v_alignbit_b32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFF);
+  emu.state.writeVGPR_u32(1, 0, 0xFF000000);
+  emu.state.writeVGPR_u32(2, 0, 0); // no shift
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0xFF000000, 'v_alignbit_b32: shift 0 = src1');
+}
+
+// v_alignbyte_b32
+{
+  const emu = setup('v_alignbyte_b32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x12345678);
+  emu.state.writeVGPR_u32(1, 0, 0xAABBCCDD);
+  emu.state.writeVGPR_u32(2, 0, 1); // shift by 1 byte = 8 bits
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0x78AABBCC, 'v_alignbyte_b32: shift 1 byte');
+}
+
+{
+  const emu = setup('v_alignbyte_b32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xDEADBEEF);
+  emu.state.writeVGPR_u32(1, 0, 0x12345678);
+  emu.state.writeVGPR_u32(2, 0, 0); // shift 0 bytes = src1
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0x12345678, 'v_alignbyte_b32: shift 0 = src1');
+}
+
+// v_min3_i32
+{
+  const emu = setup('v_min3_i32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, (-3) >>> 0);
+  emu.state.writeVGPR_u32(2, 0, 10);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.readVGPR_u32(3, 0) | 0) === -3, 'v_min3_i32: min(5, -3, 10) = -3');
+}
+
+{
+  const emu = setup('v_min3_i32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 1);
+  emu.state.writeVGPR_u32(1, 0, 1);
+  emu.state.writeVGPR_u32(2, 0, 1);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 1, 'v_min3_i32: min(1, 1, 1) = 1');
+}
+
+// v_min3_u32
+{
+  const emu = setup('v_min3_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 50);
+  emu.state.writeVGPR_u32(2, 0, 200);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 50, 'v_min3_u32: min(100, 50, 200) = 50');
+}
+
+{
+  const emu = setup('v_min3_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0);
+  emu.state.writeVGPR_u32(1, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(2, 0, 1);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0, 'v_min3_u32: min(0, MAX, 1) = 0');
+}
+
+// v_max3_i32
+{
+  const emu = setup('v_max3_i32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-10) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, 5);
+  emu.state.writeVGPR_u32(2, 0, (-1) >>> 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.readVGPR_u32(3, 0) | 0) === 5, 'v_max3_i32: max(-10, 5, -1) = 5');
+}
+
+{
+  const emu = setup('v_max3_i32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-100) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, (-200) >>> 0);
+  emu.state.writeVGPR_u32(2, 0, (-50) >>> 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.readVGPR_u32(3, 0) | 0) === -50, 'v_max3_i32: max(-100, -200, -50) = -50');
+}
+
+// v_max3_u32
+{
+  const emu = setup('v_max3_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 200);
+  emu.state.writeVGPR_u32(2, 0, 150);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 200, 'v_max3_u32: max(100, 200, 150) = 200');
+}
+
+{
+  const emu = setup('v_max3_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(1, 0, 0);
+  emu.state.writeVGPR_u32(2, 0, 1);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0xFFFFFFFF, 'v_max3_u32: max(MAX, 0, 1) = MAX');
+}
+
+// v_med3_i32
+{
+  const emu = setup('v_med3_i32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-5) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, 10);
+  emu.state.writeVGPR_u32(2, 0, 3);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.readVGPR_u32(3, 0) | 0) === 3, 'v_med3_i32: median(-5, 10, 3) = 3');
+}
+
+{
+  const emu = setup('v_med3_i32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 7);
+  emu.state.writeVGPR_u32(1, 0, 7);
+  emu.state.writeVGPR_u32(2, 0, 7);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 7, 'v_med3_i32: median(7, 7, 7) = 7');
+}
+
+// v_med3_u32
+{
+  const emu = setup('v_med3_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 1);
+  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.writeVGPR_u32(2, 0, 50);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 50, 'v_med3_u32: median(1, 100, 50) = 50');
+}
+
+{
+  const emu = setup('v_med3_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(1, 0, 0);
+  emu.state.writeVGPR_u32(2, 0, 0x80000000);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0x80000000, 'v_med3_u32: median(MAX, 0, MID) = MID');
+}
+
+// v_sad_u8
+{
+  const emu = setup('v_sad_u8 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x0A141E28); // bytes: 10, 20, 30, 40
+  emu.state.writeVGPR_u32(1, 0, 0x050A0F14); // bytes: 5, 10, 15, 20
+  emu.state.writeVGPR_u32(2, 0, 0);           // accumulator
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // |10-5| + |20-10| + |30-15| + |40-20| = 5+10+15+20 = 50
+  assert(emu.state.readVGPR_u32(3, 0) === 50, 'v_sad_u8: SAD of 4 bytes = 50');
+}
+
+{
+  const emu = setup('v_sad_u8 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x01010101);
+  emu.state.writeVGPR_u32(1, 0, 0x01010101);
+  emu.state.writeVGPR_u32(2, 0, 100);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 100, 'v_sad_u8: identical bytes + 100 = 100');
+}
+
+// v_sad_u16
+{
+  const emu = setup('v_sad_u16 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x00640032); // 100, 50
+  emu.state.writeVGPR_u32(1, 0, 0x001E000A); // 30, 10
+  emu.state.writeVGPR_u32(2, 0, 5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // |50-10| + |100-30| + 5 = 40 + 70 + 5 = 115
+  assert(emu.state.readVGPR_u32(3, 0) === 115, 'v_sad_u16: SAD of 2 halfwords + acc');
+}
+
+{
+  const emu = setup('v_sad_u16 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x00000000);
+  emu.state.writeVGPR_u32(1, 0, 0x00000000);
+  emu.state.writeVGPR_u32(2, 0, 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0, 'v_sad_u16: zero inputs = 0');
+}
+
+// v_sad_u32
+{
+  const emu = setup('v_sad_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 30);
+  emu.state.writeVGPR_u32(2, 0, 10);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 80, 'v_sad_u32: |100-30| + 10 = 80');
+}
+
+{
+  const emu = setup('v_sad_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, 5);
+  emu.state.writeVGPR_u32(2, 0, 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0, 'v_sad_u32: |5-5| + 0 = 0');
+}
+
+// v_mul_hi_i32
+{
+  const emu = setup('v_mul_hi_i32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x10000);  // 65536
+  emu.state.writeVGPR_u32(1, 0, 0x10000);  // 65536
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // 65536 * 65536 = 4294967296 = 0x1_00000000, high 32 = 1
+  assert(emu.state.readVGPR_u32(2, 0) === 1, 'v_mul_hi_i32: 0x10000 * 0x10000 high = 1');
+}
+
+{
+  const emu = setup('v_mul_hi_i32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-1) >>> 0); // -1
+  emu.state.writeVGPR_u32(1, 0, 2);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // -1 * 2 = -2, high 32 = -1 = 0xFFFFFFFF
+  assert(emu.state.readVGPR_u32(2, 0) === 0xFFFFFFFF, 'v_mul_hi_i32: -1 * 2 high = -1');
+}
+
+// v_xor3_b32
+{
+  const emu = setup('v_xor3_b32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFF00FF00);
+  emu.state.writeVGPR_u32(1, 0, 0x00FF00FF);
+  emu.state.writeVGPR_u32(2, 0, 0xFFFFFFFF);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // 0xFF00FF00 ^ 0x00FF00FF ^ 0xFFFFFFFF = 0xFFFFFFFF ^ 0xFFFFFFFF = 0
+  assert(emu.state.readVGPR_u32(3, 0) === 0x00000000, 'v_xor3_b32: triple XOR = 0');
+}
+
+{
+  const emu = setup('v_xor3_b32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xAAAAAAAA);
+  emu.state.writeVGPR_u32(1, 0, 0x55555555);
+  emu.state.writeVGPR_u32(2, 0, 0x00000000);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0xFFFFFFFF, 'v_xor3_b32: 0xAA..^0x55..^0 = 0xFF..');
+}
+
+// v_lshlrev_b64
+{
+  const emu = setup('v_lshlrev_b64 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 4);
+  emu.state.writeVGPR_u32(1, 0, 0x0F);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 0xF0, 'v_lshlrev_b64: 0x0F << 4 = 0xF0');
+}
+
+{
+  const emu = setup('v_lshlrev_b64 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0);
+  emu.state.writeVGPR_u32(1, 0, 42);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 42, 'v_lshlrev_b64: shift 0 = identity');
+}
+
+// v_lshrrev_b64
+{
+  const emu = setup('v_lshrrev_b64 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 4);
+  emu.state.writeVGPR_u32(1, 0, 0xF0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 0x0F, 'v_lshrrev_b64: 0xF0 >> 4 = 0x0F');
+}
+
+{
+  const emu = setup('v_lshrrev_b64 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0);
+  emu.state.writeVGPR_u32(1, 0, 0xFF);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 0xFF, 'v_lshrrev_b64: shift 0 = identity');
+}
+
+// v_ashrrev_i64
+{
+  const emu = setup('v_ashrrev_i64 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 4);
+  emu.state.writeVGPR_u32(1, 0, 0x80000000); // negative value
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 0xF8000000, 'v_ashrrev_i64: sign-extending right shift');
+}
+
+{
+  const emu = setup('v_ashrrev_i64 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 1);
+  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 50, 'v_ashrrev_i64: 100 >> 1 = 50');
+}
+
+// v_add_co_u32
+{
+  const emu = setup('v_add_co_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 200);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 300, 'v_add_co_u32: 100 + 200 = 300');
+}
+
+{
+  const emu = setup('v_add_co_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(1, 0, 1);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 0, 'v_add_co_u32: overflow wraps');
+}
+
+// v_sub_co_u32
+{
+  const emu = setup('v_sub_co_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 300);
+  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 200, 'v_sub_co_u32: 300 - 100 = 200');
+}
+
+{
+  const emu = setup('v_sub_co_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0);
+  emu.state.writeVGPR_u32(1, 0, 1);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 0xFFFFFFFF, 'v_sub_co_u32: 0 - 1 wraps');
+}
+
+// v_subrev_co_u32
+{
+  const emu = setup('v_subrev_co_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 10);
+  emu.state.writeVGPR_u32(1, 0, 50);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 40, 'v_subrev_co_u32: 50 - 10 = 40');
+}
+
+{
+  const emu = setup('v_subrev_co_u32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 0, 'v_subrev_co_u32: 100 - 100 = 0');
+}
+
+// v_xad_u32
+{
+  const emu = setup('v_xad_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFF00);
+  emu.state.writeVGPR_u32(1, 0, 0x00FF);
+  emu.state.writeVGPR_u32(2, 0, 10);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // (0xFF00 ^ 0x00FF) + 10 = 0xFFFF + 10 = 65545
+  assert(emu.state.readVGPR_u32(3, 0) === 65545, 'v_xad_u32: (0xFF00 ^ 0x00FF) + 10');
+}
+
+{
+  const emu = setup('v_xad_u32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(1, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(2, 0, 42);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 42, 'v_xad_u32: (X ^ X) + 42 = 42');
+}
+
+// v_and_or_b32
+{
+  const emu = setup('v_and_or_b32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFF00FF00);
+  emu.state.writeVGPR_u32(1, 0, 0xFFFF0000);
+  emu.state.writeVGPR_u32(2, 0, 0x000000FF);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // (0xFF00FF00 & 0xFFFF0000) | 0x000000FF = 0xFF000000 | 0xFF = 0xFF0000FF
+  assert(emu.state.readVGPR_u32(3, 0) === 0xFF0000FF, 'v_and_or_b32: (A & B) | C');
+}
+
+{
+  const emu = setup('v_and_or_b32 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0);
+  emu.state.writeVGPR_u32(1, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(2, 0, 0xABCD);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(3, 0) === 0xABCD, 'v_and_or_b32: (0 & X) | Y = Y');
+}
+
+// v_sub_nc_i32
+{
+  const emu = setup('v_sub_nc_i32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 10);
+  emu.state.writeVGPR_u32(1, 0, 3);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 7, 'v_sub_nc_i32: 10 - 3 = 7');
+}
+
+{
+  const emu = setup('v_sub_nc_i32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, 10);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.readVGPR_u32(2, 0) | 0) === -5, 'v_sub_nc_i32: 5 - 10 = -5');
+}
+
+// v_add_nc_i32
+{
+  const emu = setup('v_add_nc_i32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-5) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, 3);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.readVGPR_u32(2, 0) | 0) === -2, 'v_add_nc_i32: -5 + 3 = -2');
+}
+
+{
+  const emu = setup('v_add_nc_i32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 200);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 300, 'v_add_nc_i32: 100 + 200 = 300');
+}
+
+// v_writelane_b32
+{
+  const emu = setup('v_writelane_b32 v2, s0, s1\ns_endpgm');
+  emu.state.writeSGPR(0, 0xDEADBEEF);
+  emu.state.writeSGPR(1, 3); // write to lane 3
+  emu.state.writeVGPR_u32(2, 0, 0); // clear lane 0
+  emu.state.writeVGPR_u32(2, 3, 0); // clear lane 3
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 3) === 0xDEADBEEF, 'v_writelane_b32: writes to lane 3');
+  assert(emu.state.readVGPR_u32(2, 0) === 0, 'v_writelane_b32: lane 0 unchanged');
+}
+
+{
+  const emu = setup('v_writelane_b32 v0, s0, s1\ns_endpgm');
+  emu.state.writeSGPR(0, 42);
+  emu.state.writeSGPR(1, 0); // write to lane 0
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(0, 0) === 42, 'v_writelane_b32: writes to lane 0');
+}
+
+// v_ldexp_f32
+{
+  const emu = setup('v_ldexp_f32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 1.5);
+  emu.state.writeVGPR_u32(1, 0, 3); // exponent = 3
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 12.0), 'v_ldexp_f32: 1.5 * 2^3 = 12.0');
+}
+
+{
+  const emu = setup('v_ldexp_f32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 8.0);
+  emu.state.writeVGPR_u32(1, 0, (-2) >>> 0); // exponent = -2
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 2.0), 'v_ldexp_f32: 8.0 * 2^(-2) = 2.0');
+}
+
+// v_bfm_b32
+{
+  const emu = setup('v_bfm_b32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 8);  // count = 8 bits
+  emu.state.writeVGPR_u32(1, 0, 4);  // offset = 4
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // ((1 << 8) - 1) << 4 = 0xFF << 4 = 0xFF0
+  assert(emu.state.readVGPR_u32(2, 0) === 0xFF0, 'v_bfm_b32: 8 bits at offset 4 = 0xFF0');
+}
+
+{
+  const emu = setup('v_bfm_b32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 1);
+  emu.state.writeVGPR_u32(1, 0, 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 1, 'v_bfm_b32: 1 bit at offset 0 = 1');
+}
+
+// v_bcnt_u32_b32
+{
+  const emu = setup('v_bcnt_u32_b32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFF);  // 8 bits set
+  emu.state.writeVGPR_u32(1, 0, 0);     // accumulator
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 8, 'v_bcnt_u32_b32: popcount(0xFF) + 0 = 8');
+}
+
+{
+  const emu = setup('v_bcnt_u32_b32 v2, v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFFFFFFFF); // 32 bits set
+  emu.state.writeVGPR_u32(1, 0, 10);          // accumulator
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === 42, 'v_bcnt_u32_b32: popcount(0xFFFF) + 10 = 42');
+}
+
+// ════════════════════════════════════════════
+//  New VOPC Comparisons
+// ════════════════════════════════════════════
+group('VOPC New Comparisons');
+
+// v_cmp_eq_i32
+{
+  const emu = setup('v_cmp_eq_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-5) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, (-5) >>> 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_eq_i32: -5 == -5 → VCC[0]=1');
+}
+
+{
+  const emu = setup('v_cmp_eq_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, (-5) >>> 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 0, 'v_cmp_eq_i32: 5 != -5 → VCC[0]=0');
+}
+
+// v_cmp_le_i32
+{
+  const emu = setup('v_cmp_le_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-3) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, 5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_le_i32: -3 <= 5 → VCC[0]=1');
+}
+
+{
+  const emu = setup('v_cmp_le_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 10);
+  emu.state.writeVGPR_u32(1, 0, 10);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_le_i32: 10 <= 10 → VCC[0]=1');
+}
+
+// v_cmp_gt_i32
+{
+  const emu = setup('v_cmp_gt_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, (-10) >>> 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_gt_i32: 5 > -10 → VCC[0]=1');
+}
+
+{
+  const emu = setup('v_cmp_gt_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-10) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, 5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 0, 'v_cmp_gt_i32: -10 > 5 → VCC[0]=0');
+}
+
+// v_cmp_ne_i32
+{
+  const emu = setup('v_cmp_ne_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 1);
+  emu.state.writeVGPR_u32(1, 0, 2);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_ne_i32: 1 != 2 → VCC[0]=1');
+}
+
+{
+  const emu = setup('v_cmp_ne_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 7);
+  emu.state.writeVGPR_u32(1, 0, 7);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 0, 'v_cmp_ne_i32: 7 == 7 → VCC[0]=0');
+}
+
+// v_cmp_ge_i32
+{
+  const emu = setup('v_cmp_ge_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 10);
+  emu.state.writeVGPR_u32(1, 0, (-5) >>> 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_ge_i32: 10 >= -5 → VCC[0]=1');
+}
+
+{
+  const emu = setup('v_cmp_ge_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-20) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 0, 'v_cmp_ge_i32: -20 >= 0 → VCC[0]=0');
+}
+
+// v_cmp_le_u32
+{
+  const emu = setup('v_cmp_le_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, 10);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_le_u32: 5 <= 10 → VCC[0]=1');
+}
+
+{
+  const emu = setup('v_cmp_le_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 50);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 0, 'v_cmp_le_u32: 100 <= 50 → VCC[0]=0');
+}
+
+// v_cmp_gt_u32
+{
+  const emu = setup('v_cmp_gt_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(1, 0, 0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_gt_u32: MAX > 0 → VCC[0]=1');
+}
+
+{
+  const emu = setup('v_cmp_gt_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0);
+  emu.state.writeVGPR_u32(1, 0, 1);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 0, 'v_cmp_gt_u32: 0 > 1 → VCC[0]=0');
+}
+
+// v_cmp_ge_u32
+{
+  const emu = setup('v_cmp_ge_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 42);
+  emu.state.writeVGPR_u32(1, 0, 42);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 1, 'v_cmp_ge_u32: 42 >= 42 → VCC[0]=1');
+}
+
+{
+  const emu = setup('v_cmp_ge_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 1);
+  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.vcc & 1) === 0, 'v_cmp_ge_u32: 1 >= 100 → VCC[0]=0');
+}
+
+// v_cmpx_lt_i32
+{
+  const emu = setup('v_cmpx_lt_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (-10) >>> 0);
+  emu.state.writeVGPR_u32(1, 0, 5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 1, 'v_cmpx_lt_i32: -10 < 5 → EXEC[0]=1');
+}
+
+{
+  const emu = setup('v_cmpx_lt_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, 5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 0, 'v_cmpx_lt_i32: 5 < 5 → EXEC[0]=0');
+}
+
+// v_cmpx_le_i32
+{
+  const emu = setup('v_cmpx_le_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, 5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 1, 'v_cmpx_le_i32: 5 <= 5 → EXEC[0]=1');
+}
+
+// v_cmpx_gt_i32
+{
+  const emu = setup('v_cmpx_gt_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 10);
+  emu.state.writeVGPR_u32(1, 0, 3);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 1, 'v_cmpx_gt_i32: 10 > 3 → EXEC[0]=1');
+}
+
+// v_cmpx_ne_i32
+{
+  const emu = setup('v_cmpx_ne_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 1);
+  emu.state.writeVGPR_u32(1, 0, 2);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 1, 'v_cmpx_ne_i32: 1 != 2 → EXEC[0]=1');
+}
+
+// v_cmpx_ge_i32
+{
+  const emu = setup('v_cmpx_ge_i32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, 5);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 1, 'v_cmpx_ge_i32: 5 >= 5 → EXEC[0]=1');
+}
+
+// v_cmpx_lt_u32
+{
+  const emu = setup('v_cmpx_lt_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 5);
+  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 1, 'v_cmpx_lt_u32: 5 < 100 → EXEC[0]=1');
+}
+
+// v_cmpx_le_u32
+{
+  const emu = setup('v_cmpx_le_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 42);
+  emu.state.writeVGPR_u32(1, 0, 42);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 1, 'v_cmpx_le_u32: 42 <= 42 → EXEC[0]=1');
+}
+
+// v_cmpx_ge_u32
+{
+  const emu = setup('v_cmpx_ge_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 100);
+  emu.state.writeVGPR_u32(1, 0, 50);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 1, 'v_cmpx_ge_u32: 100 >= 50 → EXEC[0]=1');
+}
+
+{
+  const emu = setup('v_cmpx_ge_u32 v0, v1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 1);
+  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert((emu.state.exec & 1) === 0, 'v_cmpx_ge_u32: 1 >= 100 → EXEC[0]=0');
+}
+
+// ════════════════════════════════════════════
 //  Edge Cases
 // ════════════════════════════════════════════
 group('Edge Cases');
