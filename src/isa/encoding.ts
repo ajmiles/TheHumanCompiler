@@ -114,6 +114,11 @@ export function encodeInstruction(instr: ParsedInstruction): number[] {
     return encodeVOP3(InstructionFormat.VOP3, info.opcode, instr);
   }
 
+  // VOP3P packed instructions
+  if (info.format === InstructionFormat.VOP3P) {
+    return encodeVOP3P(info.opcode, instr);
+  }
+
   // Auto-promote to VOP3 if modifiers are present
   if ((info.format === InstructionFormat.VOP1 || info.format === InstructionFormat.VOP2) && needsVOP3(instr)) {
     return encodeVOP3(info.format, info.opcode, instr);
@@ -262,6 +267,41 @@ function encodeVOP1(opcode: number, instr: ParsedInstruction): number[] {
   if (src0Result.literal !== undefined) {
     words.push(src0Result.literal >>> 0);
   }
+  return words;
+}
+
+function encodeVOP3P(opcode: number, instr: ParsedInstruction): number[] {
+  // VOP3P: 2 dwords
+  // Dword 0: [31:26]=0x33, [25:16]=OP(10), [15]=CLAMP, [14:11]=OP_SEL_HI(4), [10:8]=NEG_HI(3), [7:0]=VDST(8)
+  // Dword 1: [31:29]=NEG_LO(3), [28:27]=OP_SEL(2), [26:18]=SRC2(9), [17:9]=SRC1(9), [8:0]=SRC0(9)
+  const vdst = instr.dst.encoded & 0xFF;
+  const src0 = instr.src0.encoded & 0x1FF;
+  const src1 = (instr.src1?.encoded ?? 0) & 0x1FF;
+  const src2 = (instr.src2?.encoded ?? 0) & 0x1FF;
+  const clampBit = instr.clamp ? 1 : 0;
+  const opSelHi = 0x7; // default: all sources read hi from hi half (bits 0-2 = src0/1/2)
+
+  const dword0 = (0x33 << 26)
+    | ((opcode & 0x3FF) << 16)
+    | (clampBit << 15)
+    | ((opSelHi & 0xF) << 11)
+    | (vdst & 0xFF);
+
+  const dword1 = ((src2 & 0x1FF) << 18)
+    | ((src1 & 0x1FF) << 9)
+    | (src0 & 0x1FF);
+
+  const words = [(dword0 >>> 0), (dword1 >>> 0)];
+
+  // Literal constant if any source uses 0xFF
+  if (src0 === LITERAL_CONST && instr.src0.type === OperandType.LITERAL) {
+    words.push(literalToU32(instr.src0.value));
+  } else if (src1 === LITERAL_CONST && instr.src1?.type === OperandType.LITERAL) {
+    words.push(literalToU32(instr.src1.value));
+  } else if (src2 === LITERAL_CONST && instr.src2?.type === OperandType.LITERAL) {
+    words.push(literalToU32(instr.src2.value));
+  }
+
   return words;
 }
 

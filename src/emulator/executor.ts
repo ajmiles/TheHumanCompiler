@@ -211,7 +211,7 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction):
   if (decoded.format === InstructionFormat.VOP3P) {
     const exec = state.exec;
     const opSel = decoded.opSel ?? 0;
-    const opSelHi = decoded.opSelHi ?? 0xC; // default: hi reads from hi half
+    const opSelHi = decoded.opSelHi ?? 0x7; // default: all sources read hi from hi half
     const isFloat = !opcodeInfo.isIntegerOp;
 
     for (let lane = 0; lane < WAVE_WIDTH; lane++) {

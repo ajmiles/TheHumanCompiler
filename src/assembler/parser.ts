@@ -88,8 +88,8 @@ export function parse(tokens: Token[]): ParseResult {
     // Skip formats we can't assemble (memory ops, etc.) — just consume the line
     const assembleableFormats = new Set([
       InstructionFormat.VOP1, InstructionFormat.VOP2, InstructionFormat.VOP3,
-      InstructionFormat.VOPC, InstructionFormat.SOP1, InstructionFormat.SOPP,
-      InstructionFormat.SOP2, InstructionFormat.SOPC,
+      InstructionFormat.VOP3P, InstructionFormat.VOPC, InstructionFormat.SOP1,
+      InstructionFormat.SOPP, InstructionFormat.SOP2, InstructionFormat.SOPC,
       InstructionFormat.SMEM, InstructionFormat.MUBUF,
       InstructionFormat.DS, InstructionFormat.MIMG,
     ]);
@@ -367,7 +367,7 @@ function parseOperands(
   errors: AssemblyError[],
   mnemonic?: string,
 ): OperandSet | null {
-  if (format === InstructionFormat.VOP3) {
+  if (format === InstructionFormat.VOP3 || format === InstructionFormat.VOP3P) {
     // v_readlane_b32 writes to an SGPR, not a VGPR
     const isReadLane = mnemonic === 'v_readlane_b32';
     const dst = isReadLane
