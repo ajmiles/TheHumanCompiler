@@ -39,7 +39,7 @@ function buildLevelOrder(): LevelItem[] {
   if (t2) { levels.push({ kind: 'tutorial', data: t2 }); usedTutorialIds.add(t2.id); }
 
   // Remaining puzzles except deferred ones (placed after their tutorials)
-  const deferredPuzzles = new Set(['quad-average', 'wave-average', 'rng-iterate', 'fibonacci', 'channel-max']);
+  const deferredPuzzles = new Set(['quad-average', 'wave-average', 'rng-iterate', 'fibonacci', 'channel-max', 'byte-sort']);
   for (const p of ALL_PUZZLES) {
     if (!usedPuzzleIds.has(p.id) && !deferredPuzzles.has(p.id)) {
       levels.push({ kind: 'puzzle', data: p });
@@ -72,12 +72,14 @@ function buildLevelOrder(): LevelItem[] {
           }
         }
       }
-      // Place channel-max after SDWA tutorial
+      // Place SDWA puzzles after SDWA tutorial
       if (t.id === 'tut-sdwa') {
-        const p = getPuzzleById('channel-max');
-        if (p && !usedPuzzleIds.has(p.id)) {
-          levels.push({ kind: 'puzzle', data: p });
-          usedPuzzleIds.add(p.id);
+        for (const pid of ['channel-max', 'byte-sort']) {
+          const p = getPuzzleById(pid);
+          if (p && !usedPuzzleIds.has(p.id)) {
+            levels.push({ kind: 'puzzle', data: p });
+            usedPuzzleIds.add(p.id);
+          }
         }
       }
     }

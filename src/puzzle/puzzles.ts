@@ -632,6 +632,51 @@ const CHANNEL_MAX: Puzzle = {
   optimalInstructions: 5,
 };
 
+// ── Puzzle 14: Byte Sort ──
+// Sort 4 packed bytes from highest (MSB) to lowest (LSB).
+
+const byteSortInput: number[] = [];
+{
+  let s = 0xDEADCAFE;
+  for (let i = 0; i < 64; i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    const b0 = s & 0xFF;
+    const b1 = (s >>> 8) & 0xFF;
+    const b2 = (s >>> 16) & 0xFF;
+    const b3 = (s >>> 23) & 0xFF;
+    byteSortInput.push(((b3 << 24) | (b2 << 16) | (b1 << 8) | b0) >>> 0);
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+  }
+}
+const byteSortExpected = byteSortInput.map(v => {
+  const bytes = [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
+  bytes.sort((a, b) => b - a); // descending
+  return ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0;
+});
+
+const BYTE_SORT: Puzzle = {
+  id: 'byte-sort',
+  title: 'Byte Sort',
+  description:
+    'Each lane has 4 packed bytes in v0 (R=[7:0], G=[15:8], B=[23:16], A=[31:24]). ' +
+    'Sort the 4 bytes from highest to lowest. Output the sorted dword in v1 with the largest byte ' +
+    'in bits [31:24] and the smallest in bits [7:0].',
+  inputs: [
+    { name: 'RGBA', register: 0, values: byteSortInput, isInteger: true },
+  ],
+  outputs: [
+    { name: 'Sorted', register: 1, values: byteSortExpected, isInteger: true },
+  ],
+  hints: [
+    'A sorting network for 4 elements needs 5 compare-and-swap steps.',
+    'Use SDWA to extract bytes and v_max_u32/v_min_u32 to compare them.',
+    'Compare-and-swap: extract two bytes, compute max and min, write both back.',
+    'A 4-element sorting network: (0,1)(2,3) → (0,2)(1,3) → (1,2). That\'s 3 stages, 5 swaps.',
+    'Use dst_sel with UNUSED_PRESERVE to write individual bytes back.',
+  ],
+  optimalInstructions: 18,
+};
+
 // ── All Puzzles ──
 
 export const ALL_PUZZLES: Puzzle[] = [
@@ -648,6 +693,7 @@ export const ALL_PUZZLES: Puzzle[] = [
   RNG_ITERATE,
   FIBONACCI,
   CHANNEL_MAX,
+  BYTE_SORT,
 ];
 
 export function getPuzzleById(id: string): Puzzle | undefined {
