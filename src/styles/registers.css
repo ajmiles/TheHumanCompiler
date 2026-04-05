@@ -91,7 +91,7 @@
 
 .vgpr-table td {
   padding: 2px 4px;
-  text-align: right;
+  text-align: center;
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-muted);
   font-variant-numeric: tabular-nums;
