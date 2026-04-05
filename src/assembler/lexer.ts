@@ -158,7 +158,7 @@ export function tokenize(source: string): Token[] {
         } else if ((lower === 'src0_sext' || lower === 'src1_sext') && (col >= lineText.length || lineText[col] !== ':')) {
           // SDWA sext modifier (no value — just a flag)
           tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
-        } else if ((lower === 'quad_perm' || lower === 'dpp8') && col < lineText.length && lineText[col] === ':') {
+        } else if ((lower === 'quad_perm' || lower === 'dpp8' || lower === 'op_sel' || lower === 'op_sel_hi') && col < lineText.length && lineText[col] === ':') {
           // DPP bracket modifier: quad_perm:[3,2,1,0] or dpp8:[7,6,5,4,3,2,1,0]
           col++; // skip ':'
           const dStart = col;

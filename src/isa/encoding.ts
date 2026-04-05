@@ -352,7 +352,8 @@ function encodeVOP3P(opcode: number, instr: ParsedInstruction): number[] {
   const src1 = (instr.src1?.encoded ?? 0) & 0x1FF;
   const src2 = (instr.src2?.encoded ?? 0) & 0x1FF;
   const clampBit = instr.clamp ? 1 : 0;
-  const opSelHi = 0x7; // default: all sources read hi from hi half (bits 0-2 = src0/1/2)
+  const opSelHi = instr.opSelHi ?? 0x7; // default: all sources read hi from hi half
+  const opSel = instr.opSel ?? 0; // default: lo reads from lo
 
   const dword0 = (0x33 << 26)
     | ((opcode & 0x3FF) << 16)
@@ -360,7 +361,8 @@ function encodeVOP3P(opcode: number, instr: ParsedInstruction): number[] {
     | ((opSelHi & 0xF) << 11)
     | (vdst & 0xFF);
 
-  const dword1 = ((src2 & 0x1FF) << 18)
+  const dword1 = ((opSel & 0x3) << 27)
+    | ((src2 & 0x1FF) << 18)
     | ((src1 & 0x1FF) << 9)
     | (src0 & 0x1FF);
 

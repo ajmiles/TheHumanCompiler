@@ -369,10 +369,10 @@ const PACKED_FP16: Tutorial = {
       title: 'The Full Packed Toolkit',
       text:
         'VOP3P includes a complete set of packed f16 operations:\n\n' +
-        '🔢 <strong>Arithmetic:</strong> <code>v_pk_add_f16</code>, <code>v_pk_mul_f16</code>, <code>v_pk_fma_f16</code>\n\n' +
-        '📉 <strong>Comparison:</strong> <code>v_pk_min_f16</code>, <code>v_pk_max_f16</code>\n\n' +
-        '🔧 <strong>Integer packed:</strong> <code>v_pk_add_u16</code>, <code>v_pk_mul_lo_u16</code>, <code>v_pk_lshlrev_b16</code>, <code>v_pk_max/min_i16/u16</code>, and more\n\n' +
-        '🔄 <strong>Mixed precision:</strong> <code>v_fma_mix_f32</code> — takes f16 inputs and produces f32 output, bridging between precision levels\n\n' +
+        '🔢 <strong>Floating point:</strong> <code>v_pk_add_f16</code>, <code>v_pk_mul_f16</code>, <code>v_pk_fma_f16</code>\n\n' +
+        '📊 <strong>Min/Max:</strong> <code>v_pk_min_f16</code>, <code>v_pk_max_f16</code>\n\n' +
+        '🔧 <strong>Integer:</strong> <code>v_pk_add_u16</code>, <code>v_pk_mul_lo_u16</code>, <code>v_pk_lshlrev_b16</code>, <code>v_pk_max/min_i16/u16</code>, and more\n\n' +
+        '🔄 <strong>Mixed precision:</strong> <code>v_fma_mix_f32</code> — takes a mixture of f16 and f32 inputs and produces an f32 output, bridging between precision levels\n\n' +
         'All VOP3P instructions use the <code>0x33</code> encoding prefix and have OP_SEL/OP_SEL_HI modifiers to control which half of each source to read.',
     },
     {
@@ -382,8 +382,7 @@ const PACKED_FP16: Tutorial = {
         '• <code>op_sel:[0,0]</code> — both lo and hi operations read from <em>lo</em> halves (broadcast lo)\n' +
         '• <code>op_sel:[1,1]</code> — both operations read from <em>hi</em> halves (broadcast hi)\n' +
         '• <code>op_sel:[1,0]</code> — swap: lo operation reads hi, hi operation reads lo\n\n' +
-        'This is powerful for matrix operations where you need to broadcast one element across both halves, or reorder packed data without extra instructions.\n\n' +
-        '<em>Note: OP_SEL assembly syntax is not yet supported in the editor — the default (lo reads lo, hi reads hi) is used automatically.</em>',
+        'This is powerful for matrix operations where you need to broadcast one element across both halves, or reorder packed data without extra instructions.',
     },
     {
       title: 'Performance: 2× Throughput',

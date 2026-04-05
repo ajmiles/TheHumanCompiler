@@ -61,6 +61,9 @@ export interface ParsedInstruction {
   // Branch support
   labelRef?: string;   // Unresolved label reference (branch target)
   simm16?: number;     // Resolved SIMM16 (branch offset or waitcnt)
+  // VOP3P modifiers
+  opSel?: number;      // OP_SEL: 2-bit, controls lo-half source selection
+  opSelHi?: number;    // OP_SEL_HI: 4-bit, controls hi-half source selection
 }
 
 export interface DecodedInstruction {

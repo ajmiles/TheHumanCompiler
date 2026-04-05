@@ -150,6 +150,8 @@ export function parse(tokens: Token[]): ParseResult {
     let sdwaSrc0Sext: boolean | undefined;
     let sdwaSrc1Sel: number | undefined;
     let sdwaSrc1Sext: boolean | undefined;
+    let opSel: number | undefined;
+    let opSelHi: number | undefined;
 
     const SEL_MAP: Record<string, number> = {
       'BYTE_0': 0, 'BYTE_1': 1, 'BYTE_2': 2, 'BYTE_3': 3,
@@ -190,6 +192,16 @@ export function parse(tokens: Token[]): ParseResult {
           } else if (val.startsWith('dpp8:')) {
             const nums = val.slice(5).replace(/[[\]]/g, '').split(',').map(Number);
             if (nums.length === 8) dpp8 = nums.map(n => n & 7);
+          } else if (val.startsWith('op_sel_hi:')) {
+            const nums = val.slice(10).replace(/[[\]]/g, '').split(',').map(Number);
+            if (nums.length >= 2) {
+              opSelHi = (nums[0] & 1) | ((nums[1] & 1) << 1) | ((nums[2] ?? 1) & 1) << 2 | ((nums[3] ?? 1) & 1) << 3;
+            }
+          } else if (val.startsWith('op_sel:')) {
+            const nums = val.slice(7).replace(/[[\]]/g, '').split(',').map(Number);
+            if (nums.length >= 2) {
+              opSel = (nums[0] & 1) | ((nums[1] & 1) << 1);
+            }
           } else if (val.startsWith('dst_sel:')) {
             const selName = val.slice(8);
             sdwaDstSel = SEL_MAP[selName] ?? 6;
@@ -430,6 +442,8 @@ export function parse(tokens: Token[]): ParseResult {
       sdwaSrc0Sext,
       sdwaSrc1Sel,
       sdwaSrc1Sext,
+      opSel,
+      opSelHi,
     });
   }
 
