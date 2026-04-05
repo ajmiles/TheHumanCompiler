@@ -339,7 +339,7 @@ function buildFormula(info: OpcodeInfo, instr: ParsedInstruction): string {
   // Find a formula line (typically the second line, starts with "vdst = ..." or "VCC[lane]" etc.)
   const formulaLine = lines.find(l => {
     const t = l.trim().toLowerCase();
-    return t.startsWith('vdst') || t.startsWith('vcc') || t.startsWith('sdst');
+    return t.startsWith('vdst') || t.startsWith('vcc') || t.startsWith('sdst') || t.startsWith('exec');
   });
   if (!formulaLine) return '';
 
