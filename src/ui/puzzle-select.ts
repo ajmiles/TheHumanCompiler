@@ -94,7 +94,7 @@ export class PuzzleSelect {
         tag.textContent = 'TUTORIAL';
       } else {
         tag.classList.add('level-row__tag--puzzle');
-        tag.textContent = `${(level.data as Puzzle).optimalInstructions} instr`;
+        tag.textContent = 'PUZZLE';
       }
 
       // Description (truncated)
