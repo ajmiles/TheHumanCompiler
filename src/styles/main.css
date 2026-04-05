@@ -423,6 +423,23 @@ html, body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
+.puzzle-select-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.puzzle-select-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.puzzle-select-content::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 4px;
+}
+
+.puzzle-select-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
 .level-select__heading {
   text-align: center;
   font-size: 20px;
