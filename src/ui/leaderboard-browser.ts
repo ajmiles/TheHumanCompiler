@@ -1,8 +1,8 @@
 // ── Leaderboard Browser ──
 // Shows leaderboards for all completed puzzles in a single overlay.
 
-import { LeaderboardEntry, LeaderboardCategory, getRankedEntries } from '../puzzle/leaderboard';
-import { fetchOnlineLeaderboard, isOnlineEnabled } from '../firebase/online-leaderboard';
+import { LeaderboardEntry, LeaderboardCategory, getRankedEntries, clearLeaderboard } from '../puzzle/leaderboard';
+import { fetchOnlineLeaderboard, isOnlineEnabled, deleteMyOnlineScores } from '../firebase/online-leaderboard';
 import { Puzzle } from '../puzzle/types';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
@@ -137,7 +137,21 @@ export class LeaderboardBrowser {
     }
 
     html += `</div>`;
+    html += `<div style="text-align:right;margin-top:12px">`;
+    html += `<button class="controls-bar__btn controls-bar__btn--danger" id="lb-browse-delete-btn">Delete My Scores</button>`;
+    html += `</div>`;
     container.innerHTML = html;
+
+    const deleteBtn = container.querySelector('#lb-browse-delete-btn') as HTMLButtonElement;
+    deleteBtn?.addEventListener('click', async () => {
+      clearLeaderboard(puzzleId);
+      if (isOnlineEnabled()) {
+        deleteBtn.textContent = 'Deleting...';
+        deleteBtn.disabled = true;
+        await deleteMyOnlineScores(puzzleId);
+      }
+      this.showPuzzleLeaderboard(puzzleId, title);
+    });
   }
 
   private esc(s: string): string {
