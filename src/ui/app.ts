@@ -9,6 +9,7 @@ import { Controls } from './controls';
 import { PuzzleSelect, LevelItem, BestScore } from './puzzle-select';
 import { StatusBar } from './status-bar';
 import { LeaderboardOverlay, SolutionStats } from './leaderboard';
+import { LeaderboardBrowser } from './leaderboard-browser';
 import { Encyclopedia } from './encyclopedia';
 
 import { assemble } from '../assembler/assembler';
@@ -112,6 +113,7 @@ export class App {
   private puzzleSelect!: PuzzleSelect;
   private statusBar!: StatusBar;
   private leaderboard!: LeaderboardOverlay;
+  private leaderboardBrowser!: LeaderboardBrowser;
   private encyclopedia!: Encyclopedia;
   private tutorialPanel!: TutorialPanel;
   private errorListEl!: HTMLElement;
@@ -175,6 +177,13 @@ export class App {
     const spacer = document.createElement('div');
     spacer.className = 'header__spacer';
 
+    const lbBrowseBtn = document.createElement('button');
+    lbBrowseBtn.className = 'header__puzzle-select';
+    lbBrowseBtn.textContent = '🏆 Leaderboards';
+    lbBrowseBtn.onclick = () => {
+      this.leaderboardBrowser.show(ALL_PUZZLES, this.completedIds);
+    };
+
     const encyBtn = document.createElement('button');
     encyBtn.className = 'header__puzzle-select';
     encyBtn.textContent = '📖 ISA Reference';
@@ -199,7 +208,7 @@ export class App {
     info.className = 'header__info';
     info.innerHTML = '<span class="header__badge">RDNA2</span>';
 
-    header.append(title, puzzleBtn, spacer, encyBtn, importBtn, feedbackBtn, info);
+    header.append(title, puzzleBtn, lbBrowseBtn, spacer, encyBtn, importBtn, feedbackBtn, info);
 
     // Main 3-column layout
     const main = document.createElement('div');
@@ -284,6 +293,11 @@ export class App {
     const lbHost = document.createElement('div');
     root.appendChild(lbHost);
     this.leaderboard = new LeaderboardOverlay(lbHost);
+
+    // Leaderboard browser overlay
+    const lbBrowseHost = document.createElement('div');
+    root.appendChild(lbBrowseHost);
+    this.leaderboardBrowser = new LeaderboardBrowser(lbBrowseHost);
 
     // Encyclopedia overlay
     const encyHost = document.createElement('div');

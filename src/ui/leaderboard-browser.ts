@@ -1,0 +1,148 @@
+// ── Leaderboard Browser ──
+// Shows leaderboards for all completed puzzles in a single overlay.
+
+import { LeaderboardEntry, LeaderboardCategory, getRankedEntries } from '../puzzle/leaderboard';
+import { fetchOnlineLeaderboard, isOnlineEnabled } from '../firebase/online-leaderboard';
+import { Puzzle } from '../puzzle/types';
+
+const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
+  { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
+  { key: 'vgprsUsed', label: 'VGPRs Used', unit: 'regs', icon: '🔲' },
+  { key: 'cycles', label: 'Speed', unit: 'cycles', icon: '⚡' },
+];
+
+export class LeaderboardBrowser {
+  private overlay: HTMLElement;
+  private content: HTMLElement;
+
+  constructor(container: HTMLElement) {
+    this.overlay = document.createElement('div');
+    this.overlay.className = 'puzzle-overlay puzzle-overlay--hidden';
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.hide();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.overlay.classList.contains('puzzle-overlay--hidden')) {
+        this.hide();
+      }
+    });
+
+    this.content = document.createElement('div');
+    this.content.className = 'puzzle-select-content';
+    this.overlay.appendChild(this.content);
+    container.appendChild(this.overlay);
+  }
+
+  show(allPuzzles: Puzzle[], completedIds: Set<string>): void {
+    this.overlay.classList.remove('puzzle-overlay--hidden');
+    const completed = allPuzzles.filter(p => completedIds.has(p.id));
+
+    let html = `<h2 class="level-select__heading">🏆 LEADERBOARDS</h2>`;
+    html += `<div class="level-select__subtitle">Showing puzzles you've completed</div>`;
+
+    if (completed.length === 0) {
+      html += `<div style="text-align:center;color:var(--text-muted);padding:40px 0">Complete a puzzle to see its leaderboard here.</div>`;
+    } else {
+      html += `<div class="level-list">`;
+      for (const puzzle of completed) {
+        html += `<div class="level-row lb-browse-row" data-puzzle-id="${puzzle.id}">`;
+        html += `<span class="level-row__title" style="font-weight:600">${this.esc(puzzle.title)}</span>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+    }
+
+    html += `<div id="lb-browse-detail"></div>`;
+
+    this.content.innerHTML = html;
+
+    // Wire up puzzle row clicks
+    this.content.querySelectorAll('.lb-browse-row').forEach(row => {
+      (row as HTMLElement).addEventListener('click', () => {
+        const puzzleId = (row as HTMLElement).dataset.puzzleId!;
+        const puzzle = completed.find(p => p.id === puzzleId);
+        if (puzzle) this.showPuzzleLeaderboard(puzzleId, puzzle.title);
+
+        // Highlight selected
+        this.content.querySelectorAll('.lb-browse-row').forEach(r =>
+          (r as HTMLElement).classList.remove('level-row--completed'));
+        (row as HTMLElement).classList.add('level-row--completed');
+      });
+    });
+
+    // Auto-select first puzzle
+    if (completed.length > 0) {
+      this.showPuzzleLeaderboard(completed[0].id, completed[0].title);
+      const firstRow = this.content.querySelector('.lb-browse-row') as HTMLElement;
+      firstRow?.classList.add('level-row--completed');
+    }
+  }
+
+  hide(): void {
+    this.overlay.classList.add('puzzle-overlay--hidden');
+  }
+
+  private showPuzzleLeaderboard(puzzleId: string, title: string): void {
+    const detail = this.content.querySelector('#lb-browse-detail') as HTMLElement;
+    if (!detail) return;
+
+    // Render local immediately
+    this.renderTables(detail, puzzleId, title, []);
+
+    // Fetch online and re-render
+    if (isOnlineEnabled()) {
+      Promise.all(CATEGORIES.map(cat =>
+        fetchOnlineLeaderboard(puzzleId, cat.key, 20)
+      )).then(results => {
+        this.renderTables(detail, puzzleId, title, results);
+      }).catch(() => {});
+    }
+  }
+
+  private renderTables(container: HTMLElement, puzzleId: string, title: string, onlineResults: LeaderboardEntry[][]): void {
+    let html = `<h3 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:14px">${this.esc(title)}</h3>`;
+    html += `<div class="leaderboard-tables">`;
+
+    for (let ci = 0; ci < CATEGORIES.length; ci++) {
+      const cat = CATEGORIES[ci];
+      const localEntries = getRankedEntries(puzzleId, cat.key);
+      const onlineEntries = onlineResults[ci] ?? [];
+
+      // Merge and deduplicate
+      const merged = new Map<string, LeaderboardEntry>();
+      for (const e of [...localEntries, ...onlineEntries]) {
+        const key = `${e.name}:${e[cat.key]}`;
+        if (!merged.has(key) || e[cat.key] < merged.get(key)![cat.key]) {
+          merged.set(key, e);
+        }
+      }
+      const entries = [...merged.values()]
+        .sort((a, b) => a[cat.key] - b[cat.key])
+        .slice(0, 10);
+
+      html += `<div class="leaderboard-table-section">`;
+      html += `<div class="leaderboard-table-title">${cat.icon} ${cat.label} (${cat.unit})</div>`;
+      html += `<table class="leaderboard-table"><thead><tr><th>#</th><th>Name</th><th>${cat.unit}</th></tr></thead><tbody>`;
+
+      if (entries.length === 0) {
+        html += `<tr><td colspan="3" class="leaderboard-empty">No entries</td></tr>`;
+      } else {
+        entries.forEach((entry, i) => {
+          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+          html += `<tr><td>${medal}</td><td>${this.esc(entry.name)}</td><td>${entry[cat.key]}</td></tr>`;
+        });
+      }
+
+      html += `</tbody></table></div>`;
+    }
+
+    html += `</div>`;
+    container.innerHTML = html;
+  }
+
+  private esc(s: string): string {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+}
