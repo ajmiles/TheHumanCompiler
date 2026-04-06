@@ -11,6 +11,7 @@ import {
   submitOnlineScore,
   fetchOnlineLeaderboard,
   isOnlineEnabled,
+  deleteMyOnlineScores,
 } from '../firebase/online-leaderboard';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
@@ -183,7 +184,7 @@ export class LeaderboardOverlay {
 
     html += `</div>`;
     html += `<div class="leaderboard-footer">`;
-    html += `<button class="controls-bar__btn controls-bar__btn--danger" id="lb-clear-btn">Clear Scores</button>`;
+    html += `<button class="controls-bar__btn controls-bar__btn--danger" id="lb-delete-mine-btn">Delete My Scores</button>`;
     html += `<button class="controls-bar__btn leaderboard-close-btn" id="lb-close-btn">Close</button>`;
     html += `</div>`;
     html += `<div class="leaderboard-local-notice">${
@@ -198,9 +199,17 @@ export class LeaderboardOverlay {
     const closeBtn = this.content.querySelector('#lb-close-btn') as HTMLButtonElement;
     closeBtn?.addEventListener('click', () => this.hide());
 
-    const clearBtn = this.content.querySelector('#lb-clear-btn') as HTMLButtonElement;
-    clearBtn?.addEventListener('click', () => {
+    const deleteBtn = this.content.querySelector('#lb-delete-mine-btn') as HTMLButtonElement;
+    deleteBtn?.addEventListener('click', async () => {
+      // Clear local scores
       clearLeaderboard(this.puzzleId);
+      // Delete online scores matching this user's UID
+      if (isOnlineEnabled()) {
+        deleteBtn.textContent = 'Deleting...';
+        deleteBtn.disabled = true;
+        await deleteMyOnlineScores(this.puzzleId);
+      }
+      this._cachedOnlineResults = [];
       this.render(puzzleTitle, justSubmitted);
     });
 

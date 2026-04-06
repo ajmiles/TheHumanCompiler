@@ -11,7 +11,9 @@ import {
   query,
   orderBy,
   limit,
+  where,
   getDocs,
+  deleteDoc,
   Firestore,
 } from 'firebase/firestore';
 import { firebaseConfig, FIREBASE_ENABLED } from './config';
@@ -40,9 +42,14 @@ async function ensureInit(): Promise<boolean> {
   }
 }
 
+/** Get the current anonymous user's UID. */
+function getUid(): string | null {
+  return auth?.currentUser?.uid ?? null;
+}
+
 /**
  * Submit a score to the online leaderboard.
- * Stores in Firestore collection: leaderboards/{puzzleId}/entries
+ * Stores UID alongside the entry for ownership tracking.
  */
 export async function submitOnlineScore(
   puzzleId: string,
@@ -51,9 +58,13 @@ export async function submitOnlineScore(
   const ok = await ensureInit();
   if (!ok || !db) return false;
 
+  const uid = getUid();
+  if (!uid) return false;
+
   try {
     const entriesRef = collection(db, 'leaderboards', puzzleId, 'entries');
     await addDoc(entriesRef, {
+      uid,
       name: entry.name,
       codeSize: entry.codeSize,
       vgprsUsed: entry.vgprsUsed,
@@ -104,4 +115,46 @@ export async function fetchOnlineLeaderboard(
 /** Check if online leaderboards are available. */
 export function isOnlineEnabled(): boolean {
   return FIREBASE_ENABLED;
+}
+
+/**
+ * Delete all of the current user's scores for a specific puzzle.
+ * Only deletes entries matching the current anonymous UID.
+ */
+export async function deleteMyOnlineScores(puzzleId: string): Promise<number> {
+  const ok = await ensureInit();
+  if (!ok || !db) return 0;
+
+  const uid = getUid();
+  if (!uid) return 0;
+
+  try {
+    const entriesRef = collection(db, 'leaderboards', puzzleId, 'entries');
+    const q = query(entriesRef, where('uid', '==', uid));
+    const snapshot = await getDocs(q);
+
+    let deleted = 0;
+    const promises: Promise<void>[] = [];
+    snapshot.forEach((doc) => {
+      promises.push(deleteDoc(doc.ref));
+      deleted++;
+    });
+    await Promise.all(promises);
+    return deleted;
+  } catch (e) {
+    console.warn('Failed to delete online scores:', e);
+    return 0;
+  }
+}
+
+/**
+ * Delete all of the current user's scores across ALL puzzles.
+ * Requires knowing which puzzle IDs to check.
+ */
+export async function deleteAllMyOnlineScores(puzzleIds: string[]): Promise<number> {
+  let total = 0;
+  for (const pid of puzzleIds) {
+    total += await deleteMyOnlineScores(pid);
+  }
+  return total;
 }
