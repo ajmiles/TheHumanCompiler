@@ -35,46 +35,53 @@ export class LeaderboardBrowser {
 
   show(allPuzzles: Puzzle[], completedIds: Set<string>): void {
     this.overlay.classList.remove('puzzle-overlay--hidden');
-    const completed = allPuzzles.filter(p => completedIds.has(p.id));
 
     let html = `<h2 class="level-select__heading">🏆 LEADERBOARDS</h2>`;
-    html += `<div class="level-select__subtitle">Showing puzzles you've completed</div>`;
+    html += `<div class="level-select__subtitle">Select a completed puzzle to view its leaderboard</div>`;
 
-    if (completed.length === 0) {
-      html += `<div style="text-align:center;color:var(--text-muted);padding:40px 0">Complete a puzzle to see its leaderboard here.</div>`;
-    } else {
-      html += `<div class="level-list">`;
-      for (const puzzle of completed) {
-        html += `<div class="level-row lb-browse-row" data-puzzle-id="${puzzle.id}">`;
-        html += `<span class="level-row__title" style="font-weight:600">${this.esc(puzzle.title)}</span>`;
-        html += `</div>`;
+    html += `<div class="lb-browse-grid">`;
+    for (let i = 0; i < allPuzzles.length; i++) {
+      const puzzle = allPuzzles[i];
+      const isCompleted = completedIds.has(puzzle.id);
+      const num = i + 1;
+      if (isCompleted) {
+        html += `<button class="lb-browse-pill lb-browse-row" data-puzzle-id="${puzzle.id}" title="${this.esc(puzzle.title)}">`;
+        html += `<span class="lb-browse-pill__num">${num}</span>`;
+        html += `<span class="lb-browse-pill__name">${this.esc(puzzle.title)}</span>`;
+        html += `</button>`;
+      } else {
+        html += `<button class="lb-browse-pill lb-browse-pill--locked" disabled title="${this.esc(puzzle.title)} (not completed)">`;
+        html += `<span class="lb-browse-pill__num">${num}</span>`;
+        html += `<span class="lb-browse-pill__name">${this.esc(puzzle.title)}</span>`;
+        html += `</button>`;
       }
-      html += `</div>`;
     }
+    html += `</div>`;
 
     html += `<div id="lb-browse-detail"></div>`;
 
     this.content.innerHTML = html;
 
-    // Wire up puzzle row clicks
+    // Wire up completed puzzle clicks
+    const completedPuzzles = allPuzzles.filter(p => completedIds.has(p.id));
     this.content.querySelectorAll('.lb-browse-row').forEach(row => {
       (row as HTMLElement).addEventListener('click', () => {
         const puzzleId = (row as HTMLElement).dataset.puzzleId!;
-        const puzzle = completed.find(p => p.id === puzzleId);
+        const puzzle = allPuzzles.find(p => p.id === puzzleId);
         if (puzzle) this.showPuzzleLeaderboard(puzzleId, puzzle.title);
 
         // Highlight selected
         this.content.querySelectorAll('.lb-browse-row').forEach(r =>
-          (r as HTMLElement).classList.remove('level-row--completed'));
-        (row as HTMLElement).classList.add('level-row--completed');
+          (r as HTMLElement).classList.remove('lb-browse-pill--selected'));
+        (row as HTMLElement).classList.add('lb-browse-pill--selected');
       });
     });
 
-    // Auto-select first puzzle
-    if (completed.length > 0) {
-      this.showPuzzleLeaderboard(completed[0].id, completed[0].title);
-      const firstRow = this.content.querySelector('.lb-browse-row') as HTMLElement;
-      firstRow?.classList.add('level-row--completed');
+    // Auto-select first completed puzzle
+    if (completedPuzzles.length > 0) {
+      this.showPuzzleLeaderboard(completedPuzzles[0].id, completedPuzzles[0].title);
+      const firstRow = this.content.querySelector(`.lb-browse-row[data-puzzle-id="${completedPuzzles[0].id}"]`) as HTMLElement;
+      firstRow?.classList.add('lb-browse-pill--selected');
     }
   }
 
