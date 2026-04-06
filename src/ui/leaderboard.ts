@@ -54,7 +54,7 @@ export class LeaderboardOverlay {
   show(puzzleId: string, puzzleTitle: string, stats: SolutionStats): void {
     this.puzzleId = puzzleId;
     this.stats = stats;
-    this._onlineFetched = false;
+    this._cachedOnlineResults = [];
     this.overlay.classList.remove('puzzle-overlay--hidden');
     this.render(puzzleTitle, false);
   }
@@ -69,22 +69,21 @@ export class LeaderboardOverlay {
   }
 
   private render(puzzleTitle: string, justSubmitted: boolean): void {
-    // If online is enabled, fetch scores asynchronously and re-render
-    if (isOnlineEnabled() && !this._onlineFetched) {
-      this._onlineFetched = true;
-      this._renderInner(puzzleTitle, justSubmitted, []);
-      // Fetch online scores for each category and re-render
+    // Always render local immediately
+    this._renderInner(puzzleTitle, justSubmitted, this._cachedOnlineResults);
+
+    // Fetch online scores (always refresh on show and after submit)
+    if (isOnlineEnabled()) {
       Promise.all(CATEGORIES.map(cat =>
         fetchOnlineLeaderboard(this.puzzleId, cat.key, 20)
       )).then(results => {
+        this._cachedOnlineResults = results;
         this._renderInner(puzzleTitle, justSubmitted, results);
       }).catch(() => {});
-    } else {
-      this._renderInner(puzzleTitle, justSubmitted, []);
     }
   }
 
-  private _onlineFetched = false;
+  private _cachedOnlineResults: LeaderboardEntry[][] = [];
 
   private _renderInner(puzzleTitle: string, justSubmitted: boolean, onlineResults: LeaderboardEntry[][]): void {
     const stats = this.stats!;
