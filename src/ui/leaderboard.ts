@@ -13,6 +13,7 @@ import {
   isOnlineEnabled,
   deleteMyOnlineScores,
 } from '../firebase/online-leaderboard';
+import { getLeaderboardPref } from './settings';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
   { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
@@ -88,6 +89,7 @@ export class LeaderboardOverlay {
 
   private _renderInner(puzzleTitle: string, justSubmitted: boolean, onlineResults: LeaderboardEntry[][]): void {
     const stats = this.stats!;
+    const pref = getLeaderboardPref();
 
     let html = `
       <div class="leaderboard-header">
@@ -114,7 +116,17 @@ export class LeaderboardOverlay {
       </div>
     `;
 
-    if (!justSubmitted) {
+    if (pref === 'disabled') {
+      html += `<div class="leaderboard-local-notice">Leaderboards are disabled. Change this in ⚙️ Settings.</div>`;
+      html += `<div class="leaderboard-footer">`;
+      html += `<button class="controls-bar__btn leaderboard-close-btn" id="lb-close-btn">Close</button>`;
+      html += `</div>`;
+      this.content.innerHTML = html;
+      this.content.querySelector('#lb-close-btn')?.addEventListener('click', () => this.hide());
+      return;
+    }
+
+    if (pref === 'enabled' && !justSubmitted) {
       html += `
         <div class="leaderboard-submit">
           <input type="text" class="leaderboard-name-input" placeholder="Enter your name"
@@ -124,7 +136,9 @@ export class LeaderboardOverlay {
           </button>
         </div>
       `;
-    } else {
+    } else if (pref === 'view-only' && !justSubmitted) {
+      html += `<div class="leaderboard-local-notice">Score submission is disabled. Change this in ⚙️ Settings.</div>`;
+    } else if (justSubmitted) {
       html += `<div class="leaderboard-submitted">Score submitted! ✓</div>`;
     }
 

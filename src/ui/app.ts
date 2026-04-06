@@ -11,6 +11,7 @@ import { StatusBar } from './status-bar';
 import { LeaderboardOverlay, SolutionStats } from './leaderboard';
 import { LeaderboardBrowser } from './leaderboard-browser';
 import { Encyclopedia } from './encyclopedia';
+import { SettingsOverlay, getLeaderboardPref } from './settings';
 
 import { assemble } from '../assembler/assembler';
 import { Emulator } from '../emulator/emulator';
@@ -115,6 +116,7 @@ export class App {
   private leaderboard!: LeaderboardOverlay;
   private leaderboardBrowser!: LeaderboardBrowser;
   private encyclopedia!: Encyclopedia;
+  private settings!: SettingsOverlay;
   private tutorialPanel!: TutorialPanel;
   private errorListEl!: HTMLElement;
 
@@ -181,6 +183,7 @@ export class App {
     lbBrowseBtn.className = 'header__puzzle-select';
     lbBrowseBtn.textContent = '🏆 Leaderboards';
     lbBrowseBtn.onclick = () => {
+      if (getLeaderboardPref() === 'disabled') return;
       this.leaderboardBrowser.show(ALL_PUZZLES, this.completedIds);
     };
 
@@ -204,11 +207,16 @@ export class App {
     importBtn.title = 'Load a binary RDNA2 shader and disassemble it';
     importBtn.onclick = () => this.importBinary();
 
+    const settingsBtn = document.createElement('button');
+    settingsBtn.className = 'header__puzzle-select';
+    settingsBtn.textContent = '⚙️ Settings';
+    settingsBtn.onclick = () => this.settings.show();
+
     const info = document.createElement('div');
     info.className = 'header__info';
     info.innerHTML = '<span class="header__badge">RDNA2</span>';
 
-    header.append(title, puzzleBtn, lbBrowseBtn, spacer, encyBtn, importBtn, feedbackBtn, info);
+    header.append(title, puzzleBtn, lbBrowseBtn, spacer, encyBtn, importBtn, feedbackBtn, settingsBtn, info);
 
     // Main 3-column layout
     const main = document.createElement('div');
@@ -303,6 +311,11 @@ export class App {
     const encyHost = document.createElement('div');
     root.appendChild(encyHost);
     this.encyclopedia = new Encyclopedia(encyHost);
+
+    // Settings overlay
+    const settingsHost = document.createElement('div');
+    root.appendChild(settingsHost);
+    this.settings = new SettingsOverlay(settingsHost);
 
     // Initial register display
     this.registers.update(this.emulator.state, 0);
