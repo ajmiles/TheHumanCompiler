@@ -208,16 +208,21 @@
   display: flex;
   justify-content: center;
   gap: 12px;
+  margin-top: 16px;
 }
 
 .leaderboard-close-btn {
   min-width: 80px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .leaderboard-local-notice {
   text-align: center;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
-  margin-top: 12px;
+  margin: 16px 0;
   font-style: italic;
 }
