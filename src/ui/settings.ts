@@ -1,5 +1,9 @@
 // ── Settings Overlay ──
 
+import { clearLeaderboard } from '../puzzle/leaderboard';
+import { deleteAllMyOnlineScores, isOnlineEnabled } from '../firebase/online-leaderboard';
+import { ALL_PUZZLES } from '../puzzle/puzzles';
+
 export type LeaderboardPref = 'disabled' | 'view-only' | 'enabled';
 
 const SETTINGS_KEY = 'humancompiler_settings';
@@ -92,6 +96,17 @@ export class SettingsOverlay {
     // Danger zone
     html += `<div style="margin:24px 0 0;padding-top:16px;border-top:1px solid var(--border-default)">`;
     html += `<div style="color:#f85149;font-weight:600;margin-bottom:12px">Danger Zone</div>`;
+
+    // Delete leaderboard scores
+    html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid #f8514930;border-radius:6px;background:rgba(248,81,73,0.03);margin-bottom:8px">`;
+    html += `<div>`;
+    html += `<div style="font-weight:600;color:var(--text-primary)">Delete All My Scores</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted)">Remove your leaderboard scores (local + online). Solutions are kept — rerun to resubmit.</div>`;
+    html += `</div>`;
+    html += `<button class="controls-bar__btn controls-bar__btn--danger" id="settings-delete-scores-btn" style="white-space:nowrap">Delete Scores</button>`;
+    html += `</div>`;
+
+    // Delete all local data
     html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid #f8514930;border-radius:6px;background:rgba(248,81,73,0.03)">`;
     html += `<div>`;
     html += `<div style="font-weight:600;color:var(--text-primary)">Delete All Local Data</div>`;
@@ -132,6 +147,24 @@ export class SettingsOverlay {
 
     const closeBtn = this.content.querySelector('#settings-close-btn');
     closeBtn?.addEventListener('click', () => this.hide());
+
+    // Delete all leaderboard scores
+    const deleteScoresBtn = this.content.querySelector('#settings-delete-scores-btn') as HTMLButtonElement;
+    deleteScoresBtn?.addEventListener('click', async () => {
+      deleteScoresBtn.textContent = 'Deleting...';
+      deleteScoresBtn.disabled = true;
+      // Clear local scores
+      clearLeaderboard();
+      // Clear online scores
+      if (isOnlineEnabled()) {
+        await deleteAllMyOnlineScores(ALL_PUZZLES.map(p => p.id));
+      }
+      deleteScoresBtn.textContent = 'Done ✓';
+      setTimeout(() => {
+        deleteScoresBtn.textContent = 'Delete Scores';
+        deleteScoresBtn.disabled = false;
+      }, 2000);
+    });
 
     // Danger zone: reset button shows confirmation dialog
     const resetBtn = this.content.querySelector('#settings-reset-btn');
