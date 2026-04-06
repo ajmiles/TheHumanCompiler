@@ -17,7 +17,7 @@ import {
   Firestore,
 } from 'firebase/firestore';
 import { firebaseConfig, FIREBASE_ENABLED } from './config';
-import { LeaderboardEntry, LeaderboardCategory } from '../puzzle/leaderboard';
+import { LeaderboardEntry, LeaderboardEntryWithOwner, LeaderboardCategory } from '../puzzle/leaderboard';
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
@@ -44,6 +44,11 @@ async function ensureInit(): Promise<boolean> {
 
 /** Get the current anonymous user's UID. */
 function getUid(): string | null {
+  return auth?.currentUser?.uid ?? null;
+}
+
+/** Expose the current user's UID for ownership checks. */
+export function getMyUid(): string | null {
   return auth?.currentUser?.uid ?? null;
 }
 
@@ -80,21 +85,24 @@ export async function submitOnlineScore(
 
 /**
  * Fetch the top entries for a puzzle from Firestore, sorted by category.
+ * Each entry includes an `isMine` flag based on the current user's UID.
  */
 export async function fetchOnlineLeaderboard(
   puzzleId: string,
   category: LeaderboardCategory,
   maxEntries = 20,
-): Promise<LeaderboardEntry[]> {
+): Promise<LeaderboardEntryWithOwner[]> {
   const ok = await ensureInit();
   if (!ok || !db) return [];
+
+  const currentUid = getUid();
 
   try {
     const entriesRef = collection(db, 'leaderboards', puzzleId, 'entries');
     const q = query(entriesRef, orderBy(category, 'asc'), limit(maxEntries));
     const snapshot = await getDocs(q);
 
-    const entries: LeaderboardEntry[] = [];
+    const entries: LeaderboardEntryWithOwner[] = [];
     snapshot.forEach((doc) => {
       const d = doc.data();
       entries.push({
@@ -103,6 +111,7 @@ export async function fetchOnlineLeaderboard(
         vgprsUsed: d.vgprsUsed ?? 0,
         cycles: d.cycles ?? 0,
         timestamp: d.timestamp ?? 0,
+        isMine: !!currentUid && d.uid === currentUid,
       });
     });
     return entries;

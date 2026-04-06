@@ -1,11 +1,12 @@
 // ── Leaderboard Overlay UI ──
 
 import {
-  LeaderboardEntry,
+  LeaderboardEntryWithOwner,
   LeaderboardCategory,
   getRankedEntries,
   addLeaderboardEntry,
   clearLeaderboard,
+  computeVisibleRows,
 } from '../puzzle/leaderboard';
 import {
   submitOnlineScore,
@@ -77,7 +78,7 @@ export class LeaderboardOverlay {
     // Fetch online scores (always refresh on show and after submit)
     if (isOnlineEnabled()) {
       Promise.all(CATEGORIES.map(cat =>
-        fetchOnlineLeaderboard(this.puzzleId, cat.key, 20)
+        fetchOnlineLeaderboard(this.puzzleId, cat.key, 50)
       )).then(results => {
         this._cachedOnlineResults = results;
         this._renderInner(puzzleTitle, justSubmitted, results);
@@ -85,9 +86,9 @@ export class LeaderboardOverlay {
     }
   }
 
-  private _cachedOnlineResults: LeaderboardEntry[][] = [];
+  private _cachedOnlineResults: LeaderboardEntryWithOwner[][] = [];
 
-  private _renderInner(puzzleTitle: string, justSubmitted: boolean, onlineResults: LeaderboardEntry[][]): void {
+  private _renderInner(puzzleTitle: string, justSubmitted: boolean, onlineResults: LeaderboardEntryWithOwner[][]): void {
     const stats = this.stats!;
     const pref = getLeaderboardPref();
 
@@ -147,19 +148,31 @@ export class LeaderboardOverlay {
     for (let ci = 0; ci < CATEGORIES.length; ci++) {
       const cat = CATEGORIES[ci];
       const localEntries = getRankedEntries(this.puzzleId, cat.key);
-      const onlineEntries = onlineResults[ci] ?? [];
+      const onlineEntries: LeaderboardEntryWithOwner[] = onlineResults[ci] ?? [];
+
+      // Tag local entries with isMine based on saved player name
+      const myName = localStorage.getItem('humancompiler_player_name') ?? '';
+      const localTagged: LeaderboardEntryWithOwner[] = localEntries.map(e => ({
+        ...e,
+        isMine: !!myName && e.name === myName,
+      }));
 
       // Merge local + online, deduplicate by name+score, sort
-      const merged = new Map<string, LeaderboardEntry>();
-      for (const e of [...localEntries, ...onlineEntries]) {
+      const merged = new Map<string, LeaderboardEntryWithOwner>();
+      for (const e of [...localTagged, ...onlineEntries]) {
         const key = `${e.name}:${e[cat.key]}`;
-        if (!merged.has(key) || e[cat.key] < merged.get(key)![cat.key]) {
+        const existing = merged.get(key);
+        if (!existing || e[cat.key] < existing[cat.key]) {
           merged.set(key, e);
+        } else if (existing && e.isMine) {
+          existing.isMine = true;
         }
       }
       const entries = [...merged.values()]
-        .sort((a, b) => a[cat.key] - b[cat.key])
-        .slice(0, 20);
+        .sort((a, b) => a[cat.key] - b[cat.key]);
+
+      const { indices, separatorBefore } = computeVisibleRows(entries);
+
       html += `
         <div class="leaderboard-table-section">
           <div class="leaderboard-table-title">${cat.icon} ${cat.label} (${cat.unit})</div>
@@ -177,20 +190,27 @@ export class LeaderboardOverlay {
       if (entries.length === 0) {
         html += `<tr><td colspan="3" class="leaderboard-empty">No entries yet</td></tr>`;
       } else {
-        entries.forEach((entry, i) => {
+        for (const idx of indices) {
+          const entry = entries[idx];
+          if (separatorBefore.has(idx)) {
+            html += `<tr class="leaderboard-separator"><td colspan="3">···</td></tr>`;
+          }
           const isCurrentScore = justSubmitted &&
             entry[cat.key] === stats[cat.key] &&
             entry.timestamp === stats.codeSize; // rough match
-          const highlight = isCurrentScore ? ' class="leaderboard-row--highlight"' : '';
-          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+          const classes: string[] = [];
+          if (isCurrentScore) classes.push('leaderboard-row--highlight');
+          if (entry.isMine) classes.push('leaderboard-row--mine');
+          const classAttr = classes.length > 0 ? ` class="${classes.join(' ')}"` : '';
+          const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`;
           html += `
-            <tr${highlight}>
+            <tr${classAttr}>
               <td>${medal}</td>
               <td>${this.escapeHtml(entry.name)}</td>
               <td>${entry[cat.key]}</td>
             </tr>
           `;
-        });
+        }
       }
 
       html += `</tbody></table></div>`;

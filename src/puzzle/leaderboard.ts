@@ -79,3 +79,57 @@ export function getRankedEntries(
     .sort((a, b) => a[category] - b[category])
     .slice(0, MAX_ENTRIES);
 }
+
+// ── Podium + Context Types & Helpers ──
+
+export interface LeaderboardEntryWithOwner extends LeaderboardEntry {
+  isMine: boolean;
+}
+
+export interface VisibleRowResult {
+  indices: number[];
+  separatorBefore: Set<number>;
+}
+
+/**
+ * Compute which row indices to display in a "podium + context" view.
+ * - Shows all entries if total ≤ 8.
+ * - Otherwise shows top 3 (podium) + 2 above/below the user's best position.
+ * - Returns separator positions where there are gaps between shown rows.
+ */
+export function computeVisibleRows<T extends { isMine: boolean }>(
+  entries: T[],
+): VisibleRowResult {
+  const total = entries.length;
+
+  if (total <= 8) {
+    return {
+      indices: Array.from({ length: total }, (_, i) => i),
+      separatorBefore: new Set(),
+    };
+  }
+
+  const PODIUM = 3;
+  const CONTEXT_RADIUS = 2;
+
+  const visible = new Set<number>();
+  for (let i = 0; i < Math.min(PODIUM, total); i++) visible.add(i);
+
+  const myIndex = entries.findIndex(e => e.isMine);
+  if (myIndex !== -1) {
+    const start = Math.max(0, myIndex - CONTEXT_RADIUS);
+    const end = Math.min(total - 1, myIndex + CONTEXT_RADIUS);
+    for (let i = start; i <= end; i++) visible.add(i);
+  }
+
+  const indices = [...visible].sort((a, b) => a - b);
+
+  const separatorBefore = new Set<number>();
+  for (let i = 1; i < indices.length; i++) {
+    if (indices[i] !== indices[i - 1] + 1) {
+      separatorBefore.add(indices[i]);
+    }
+  }
+
+  return { indices, separatorBefore };
+}

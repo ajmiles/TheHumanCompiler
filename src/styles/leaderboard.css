@@ -195,6 +195,24 @@
   color: var(--accent-green);
 }
 
+.leaderboard-row--mine td {
+  background: rgba(0, 200, 255, 0.08);
+}
+
+.leaderboard-row--mine td:first-child {
+  box-shadow: inset 3px 0 0 0 var(--accent-cyan, #00c8ff);
+}
+
+.leaderboard-separator td {
+  padding: 2px 8px !important;
+  text-align: center !important;
+  color: var(--text-muted) !important;
+  font-size: 10px;
+  border-bottom: 1px solid var(--border-muted);
+  background: none !important;
+  font-weight: normal !important;
+}
+
 .leaderboard-empty {
   text-align: center !important;
   color: var(--text-muted) !important;
