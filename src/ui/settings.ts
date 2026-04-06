@@ -88,8 +88,35 @@ export class SettingsOverlay {
     }
 
     html += `</div>`;
+
+    // Danger zone
+    html += `<div style="margin:24px 0 0;padding-top:16px;border-top:1px solid var(--border-default)">`;
+    html += `<div style="color:#f85149;font-weight:600;margin-bottom:12px">Danger Zone</div>`;
+    html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid #f8514930;border-radius:6px;background:rgba(248,81,73,0.03)">`;
+    html += `<div>`;
+    html += `<div style="font-weight:600;color:var(--text-primary)">Delete All Local Data</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted)">Remove all saved solutions, progress, scores, and settings</div>`;
+    html += `</div>`;
+    html += `<button class="controls-bar__btn controls-bar__btn--danger" id="settings-reset-btn">Delete Everything</button>`;
+    html += `</div>`;
+    html += `</div>`;
+
     html += `<div style="text-align:right;margin-top:16px">`;
     html += `<button class="controls-bar__btn leaderboard-close-btn" id="settings-close-btn">Close</button>`;
+    html += `</div>`;
+
+    // Confirmation dialog (hidden by default)
+    html += `<div id="settings-confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:none;align-items:center;justify-content:center">`;
+    html += `<div style="background:var(--bg-secondary);border:1px solid #f85149;border-radius:12px;padding:24px;max-width:400px;width:90%">`;
+    html += `<h3 style="color:#f85149;margin:0 0 12px">⚠️ Are you sure?</h3>`;
+    html += `<p style="color:var(--text-primary);font-size:13px;margin:0 0 16px">This will permanently delete all your saved solutions, puzzle progress, leaderboard scores, and settings. This cannot be undone.</p>`;
+    html += `<p style="color:var(--text-muted);font-size:13px;margin:0 0 12px">Type <strong style="color:#f85149">Delete</strong> to confirm:</p>`;
+    html += `<input type="text" id="settings-confirm-input" style="width:100%;padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:4px;color:var(--text-primary);font-family:var(--font-mono);font-size:14px;box-sizing:border-box;margin-bottom:16px" placeholder="Type 'Delete' here" autocomplete="off">`;
+    html += `<div style="display:flex;gap:8px;justify-content:flex-end">`;
+    html += `<button class="controls-bar__btn" id="settings-confirm-cancel">Cancel</button>`;
+    html += `<button class="controls-bar__btn controls-bar__btn--danger" id="settings-confirm-ok" disabled>Delete Everything</button>`;
+    html += `</div>`;
+    html += `</div>`;
     html += `</div>`;
 
     this.content.innerHTML = html;
@@ -105,5 +132,36 @@ export class SettingsOverlay {
 
     const closeBtn = this.content.querySelector('#settings-close-btn');
     closeBtn?.addEventListener('click', () => this.hide());
+
+    // Danger zone: reset button shows confirmation dialog
+    const resetBtn = this.content.querySelector('#settings-reset-btn');
+    const confirmOverlay = this.content.querySelector('#settings-confirm-overlay') as HTMLElement;
+    const confirmInput = this.content.querySelector('#settings-confirm-input') as HTMLInputElement;
+    const confirmOk = this.content.querySelector('#settings-confirm-ok') as HTMLButtonElement;
+    const confirmCancel = this.content.querySelector('#settings-confirm-cancel');
+
+    resetBtn?.addEventListener('click', () => {
+      if (confirmOverlay) {
+        confirmOverlay.style.display = 'flex';
+        confirmInput.value = '';
+        confirmOk.disabled = true;
+        setTimeout(() => confirmInput?.focus(), 50);
+      }
+    });
+
+    confirmInput?.addEventListener('input', () => {
+      confirmOk.disabled = confirmInput.value !== 'Delete';
+    });
+
+    confirmCancel?.addEventListener('click', () => {
+      if (confirmOverlay) confirmOverlay.style.display = 'none';
+    });
+
+    confirmOk?.addEventListener('click', () => {
+      if (confirmInput.value === 'Delete') {
+        localStorage.clear();
+        location.reload();
+      }
+    });
   }
 }
