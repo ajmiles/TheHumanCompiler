@@ -150,6 +150,8 @@ export class App {
   private currentTutorial: Tutorial | null = null;
   private completedTutorialIds: Set<string>;
   private ioContainer!: HTMLElement;
+  private mainLayout!: HTMLElement;
+  private rightPanel!: HTMLElement;
 
   constructor(root: HTMLElement) {
     this.completedIds = this.loadCompleted();
@@ -221,6 +223,7 @@ export class App {
     // Main 3-column layout
     const main = document.createElement('div');
     main.className = 'main-layout';
+    this.mainLayout = main;
 
     // Left column: registers
     const leftPanel = document.createElement('div');
@@ -255,6 +258,7 @@ export class App {
     // Right column: I/O panel + tutorial panel
     const rightPanel = document.createElement('div');
     rightPanel.className = 'panel';
+    this.rightPanel = rightPanel;
     const ioContainer = document.createElement('div');
     ioContainer.style.flex = '1';
     ioContainer.style.overflow = 'auto';
@@ -677,6 +681,10 @@ export class App {
     this.emulator.reset();
     this.ioPanel.clearPuzzle();
 
+    // Hide right panel and expand editor to full width
+    this.rightPanel.style.display = 'none';
+    this.mainLayout.style.gridTemplateColumns = '260px 4px 1fr';
+
     const template = '; Sandbox — write any code and run it\n;\n; Example:\nv_mov_b32 v0, 1.0\nv_mov_b32 v1, 2.0\nv_add_f32 v2, v0, v1\ns_endpgm\n';
     this.editor.setSource(template);
     this.doAssemble();
@@ -685,12 +693,18 @@ export class App {
     this.statusBar.setStatus('Sandbox: free play — no goals', 'info');
   }
 
+  private exitSandbox(): void {
+    this.rightPanel.style.display = '';
+    this.mainLayout.style.gridTemplateColumns = '';
+  }
+
   private loadPuzzle(id: string): void {
     const puzzle = getPuzzleById(id);
     if (!puzzle) return;
 
-    // Exit tutorial mode if active
+    // Exit tutorial/sandbox mode if active
     this.exitTutorialMode();
+    this.exitSandbox();
 
     this.doStop();
     this.primed = false;
@@ -857,6 +871,7 @@ export class App {
     const tutorial = getTutorialById(id);
     if (!tutorial) return;
 
+    this.exitSandbox();
     this.doStop();
     this.primed = false;
     this.currentPuzzle = null;
