@@ -17,7 +17,7 @@ export interface BestScore {
 export class PuzzleSelect {
   private overlay: HTMLElement;
   private content: HTMLElement;
-  private selectCb: ((id: string, kind: 'puzzle' | 'tutorial') => void) | null = null;
+  private selectCb: ((id: string, kind: 'puzzle' | 'tutorial' | 'sandbox') => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
@@ -55,6 +55,33 @@ export class PuzzleSelect {
     // Level list
     const list = document.createElement('div');
     list.className = 'level-list';
+
+    // Sandbox row (always first, orange tint)
+    const sandboxRow = document.createElement('div');
+    sandboxRow.className = 'level-row level-row--sandbox';
+    sandboxRow.onclick = () => {
+      this.selectCb?.('sandbox', 'sandbox');
+      this.hide();
+    };
+
+    const sandboxIcon = document.createElement('span');
+    sandboxIcon.className = 'level-row__num level-row__num--sandbox';
+    sandboxIcon.textContent = '🧪';
+
+    const sandboxTitle = document.createElement('span');
+    sandboxTitle.className = 'level-row__title';
+    sandboxTitle.textContent = 'Sandbox';
+
+    const sandboxTag = document.createElement('span');
+    sandboxTag.className = 'level-row__tag level-row__tag--sandbox';
+    sandboxTag.textContent = 'FREE PLAY';
+
+    const sandboxDesc = document.createElement('span');
+    sandboxDesc.className = 'level-row__desc';
+    sandboxDesc.textContent = 'Write and run any code — no goals, no scoring';
+
+    sandboxRow.append(sandboxIcon, sandboxTitle, sandboxTag, sandboxDesc);
+    list.appendChild(sandboxRow);
 
     let levelNum = 1;
     for (const level of levels) {
@@ -136,7 +163,7 @@ export class PuzzleSelect {
     this.overlay.classList.add('puzzle-overlay--hidden');
   }
 
-  onSelect(cb: (id: string, kind: 'puzzle' | 'tutorial') => void): void {
+  onSelect(cb: (id: string, kind: 'puzzle' | 'tutorial' | 'sandbox') => void): void {
     this.selectCb = cb;
   }
 }

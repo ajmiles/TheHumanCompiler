@@ -361,7 +361,9 @@ export class App {
 
     // Puzzle / tutorial selection
     this.puzzleSelect.onSelect((id, kind) => {
-      if (kind === 'tutorial') {
+      if (kind === 'sandbox') {
+        this.loadSandbox();
+      } else if (kind === 'tutorial') {
         this.loadTutorial(id);
       } else {
         this.loadPuzzle(id);
@@ -663,6 +665,25 @@ export class App {
   }
 
   // ── Puzzle Engine ──
+
+  private loadSandbox(): void {
+    this.exitTutorialMode();
+    this.doStop();
+    this.primed = false;
+    this.currentPuzzle = null;
+    this.currentInvocation = 0;
+    this.collectedOutputs.clear();
+
+    this.emulator.reset();
+    this.ioPanel.clearPuzzle();
+
+    const template = '; Sandbox — write any code and run it\n;\n; Example:\nv_mov_b32 v0, 1.0\nv_mov_b32 v1, 2.0\nv_add_f32 v2, v0, v1\ns_endpgm\n';
+    this.editor.setSource(template);
+    this.doAssemble();
+
+    this.registers.setVGPRMode('f32');
+    this.statusBar.setStatus('Sandbox: free play — no goals', 'info');
+  }
 
   private loadPuzzle(id: string): void {
     const puzzle = getPuzzleById(id);

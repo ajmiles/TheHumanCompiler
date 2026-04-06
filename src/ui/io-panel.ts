@@ -66,6 +66,14 @@ export class IOPanel {
     }
   }
 
+  clearPuzzle(): void {
+    this.currentPuzzle = null;
+    this.infoEl.innerHTML = '';
+    this.tableWrapper.innerHTML = '';
+    this.invocationBar.innerHTML = '';
+    this.formatToggle.style.display = 'none';
+  }
+
   setPuzzle(puzzle: Puzzle): void {
     this.currentPuzzle = puzzle;
     this.hintsVisible = false;
