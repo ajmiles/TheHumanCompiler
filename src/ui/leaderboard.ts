@@ -1,11 +1,17 @@
 // ── Leaderboard Overlay UI ──
 
 import {
+  LeaderboardEntry,
   LeaderboardCategory,
   getRankedEntries,
   addLeaderboardEntry,
   clearLeaderboard,
 } from '../puzzle/leaderboard';
+import {
+  submitOnlineScore,
+  fetchOnlineLeaderboard,
+  isOnlineEnabled,
+} from '../firebase/online-leaderboard';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
   { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
@@ -48,6 +54,7 @@ export class LeaderboardOverlay {
   show(puzzleId: string, puzzleTitle: string, stats: SolutionStats): void {
     this.puzzleId = puzzleId;
     this.stats = stats;
+    this._onlineFetched = false;
     this.overlay.classList.remove('puzzle-overlay--hidden');
     this.render(puzzleTitle, false);
   }
@@ -62,6 +69,24 @@ export class LeaderboardOverlay {
   }
 
   private render(puzzleTitle: string, justSubmitted: boolean): void {
+    // If online is enabled, fetch scores asynchronously and re-render
+    if (isOnlineEnabled() && !this._onlineFetched) {
+      this._onlineFetched = true;
+      this._renderInner(puzzleTitle, justSubmitted, []);
+      // Fetch online scores for each category and re-render
+      Promise.all(CATEGORIES.map(cat =>
+        fetchOnlineLeaderboard(this.puzzleId, cat.key, 20)
+      )).then(results => {
+        this._renderInner(puzzleTitle, justSubmitted, results);
+      }).catch(() => {});
+    } else {
+      this._renderInner(puzzleTitle, justSubmitted, []);
+    }
+  }
+
+  private _onlineFetched = false;
+
+  private _renderInner(puzzleTitle: string, justSubmitted: boolean, onlineResults: LeaderboardEntry[][]): void {
     const stats = this.stats!;
 
     let html = `
@@ -105,8 +130,22 @@ export class LeaderboardOverlay {
 
     html += `<div class="leaderboard-tables">`;
 
-    for (const cat of CATEGORIES) {
-      const entries = getRankedEntries(this.puzzleId, cat.key);
+    for (let ci = 0; ci < CATEGORIES.length; ci++) {
+      const cat = CATEGORIES[ci];
+      const localEntries = getRankedEntries(this.puzzleId, cat.key);
+      const onlineEntries = onlineResults[ci] ?? [];
+
+      // Merge local + online, deduplicate by name+score, sort
+      const merged = new Map<string, LeaderboardEntry>();
+      for (const e of [...localEntries, ...onlineEntries]) {
+        const key = `${e.name}:${e[cat.key]}`;
+        if (!merged.has(key) || e[cat.key] < merged.get(key)![cat.key]) {
+          merged.set(key, e);
+        }
+      }
+      const entries = [...merged.values()]
+        .sort((a, b) => a[cat.key] - b[cat.key])
+        .slice(0, 20);
       html += `
         <div class="leaderboard-table-section">
           <div class="leaderboard-table-title">${cat.icon} ${cat.label} (${cat.unit})</div>
@@ -148,7 +187,11 @@ export class LeaderboardOverlay {
     html += `<button class="controls-bar__btn controls-bar__btn--danger" id="lb-clear-btn">Clear Scores</button>`;
     html += `<button class="controls-bar__btn leaderboard-close-btn" id="lb-close-btn">Close</button>`;
     html += `</div>`;
-    html += `<div class="leaderboard-local-notice">⚠ Leaderboards are currently local only (stored in your browser). Online leaderboards coming soon!</div>`;
+    html += `<div class="leaderboard-local-notice">${
+      isOnlineEnabled()
+        ? '🌐 Scores are synced online — compete with other players!'
+        : '⚠ Leaderboards are currently local only (stored in your browser). Online leaderboards coming soon!'
+    }</div>`;
 
     this.content.innerHTML = html;
 
@@ -187,13 +230,20 @@ export class LeaderboardOverlay {
 
         localStorage.setItem('humancompiler_player_name', name);
 
-        addLeaderboardEntry(this.puzzleId, {
+        const entry = {
           name,
           codeSize: stats.codeSize,
           vgprsUsed: stats.vgprsUsed,
           cycles: stats.cycles,
           timestamp: Date.now(),
-        });
+        };
+
+        addLeaderboardEntry(this.puzzleId, entry);
+
+        // Submit to online leaderboard if configured
+        if (isOnlineEnabled()) {
+          submitOnlineScore(this.puzzleId, entry).catch(() => {});
+        }
 
         this.render(puzzleTitle, true);
       });
