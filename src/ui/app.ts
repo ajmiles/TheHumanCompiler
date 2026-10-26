@@ -93,9 +93,10 @@ function buildLevelOrder(): LevelItem[] {
 const LEVEL_ORDER = buildLevelOrder();
 import { validatePuzzle } from '../puzzle/validator';
 import { WAVE_WIDTH } from '../isa/constants';
-import { AssemblyResult, OperandType } from '../isa/types';
+import { AssemblyResult, Operand, OperandType } from '../isa/types';
 import { decodeBinary, disassemble } from '../isa/encoding';
-import { lookupByOpcode } from '../isa/opcodes';
+import { lookupByMnemonic, lookupByOpcode } from '../isa/opcodes';
+import { operandRegCount, OperandRole } from '../isa/operands';
 import { VERSION } from '../version';
 import { TutorialPanel } from './tutorial-panel';
 
@@ -128,6 +129,8 @@ export class App {
   private currentInvocation = 0;
   private totalInvocations = 0;
   private collectedOutputs = new Map<number, number[]>();
+  /** Highest VGPR reached through v_movrel* indexing across this run's invocations. */
+  private peakIndirectVgpr = -1;
   private totalCycles = 0; // accumulated across invocations
 
   // Run state
@@ -453,23 +456,16 @@ export class App {
     this.doReset();
   }
 
-  /** Find the highest VGPR index referenced by the program and puzzle I/O. */
+  /** Find the highest VGPR index used by the program (named or reached by v_movrel*) and puzzle I/O. */
   private computeMaxVGPR(): number {
-    let max = -1;
+    let max = Math.max(this.highestNamedRegister(OperandType.VGPR), this.peakIndirectVgpr);
 
     // From puzzle I/O ports
     if (this.currentPuzzle) {
-      for (const port of this.currentPuzzle.inputs) max = Math.max(max, port.register);
-      for (const port of this.currentPuzzle.outputs) max = Math.max(max, port.register);
-    }
-
-    // From assembled instructions
-    if (this.assemblyResult) {
-      for (const instr of this.assemblyResult.instructions) {
-        if (instr.dst.type === OperandType.VGPR) max = Math.max(max, instr.dst.value);
-        if (instr.src0.type === OperandType.VGPR) max = Math.max(max, instr.src0.value);
-        if (instr.src1?.type === OperandType.VGPR) max = Math.max(max, instr.src1.value);
+      for (const port of this.currentPuzzle.inputs) {
+        if (!port.isSGPR) max = Math.max(max, port.register);
       }
+      for (const port of this.currentPuzzle.outputs) max = Math.max(max, port.register);
     }
 
     return max;
@@ -477,16 +473,27 @@ export class App {
 
   /** Find the highest SGPR index referenced by the program. */
   private computeMaxSGPR(): number {
-    let max = -1;
+    let max = this.highestNamedRegister(OperandType.SGPR);
+    for (const port of this.currentPuzzle?.inputs ?? []) {
+      if (port.isSGPR) max = Math.max(max, port.register);
+    }
+    return max;
+  }
 
-    if (this.assemblyResult) {
-      for (const instr of this.assemblyResult.instructions) {
-        if (instr.dst.type === OperandType.SGPR) max = Math.max(max, instr.dst.value);
-        if (instr.src0.type === OperandType.SGPR) max = Math.max(max, instr.src0.value);
-        if (instr.src1?.type === OperandType.SGPR) max = Math.max(max, instr.src1.value);
+  /** Highest register of one file named by an operand, counting every register of a range such as v[4:5]. */
+  private highestNamedRegister(type: OperandType): number {
+    let max = -1;
+    for (const instr of this.assemblyResult?.instructions ?? []) {
+      const info = lookupByMnemonic(instr.mnemonic);
+      const operands: [OperandRole | null, Operand | undefined][] = [
+        ['dst', instr.dst], ['src0', instr.src0], ['src1', instr.src1], ['src2', instr.src2], [null, instr.sdst],
+      ];
+      for (const [role, op] of operands) {
+        if (op?.type !== type) continue;
+        const width = Math.max(op.regCount ?? 1, info && role ? operandRegCount(info, role) : 1);
+        max = Math.max(max, op.value + width - 1);
       }
     }
-
     return max;
   }
 
@@ -552,6 +559,10 @@ export class App {
     this.currentInvocation = 0;
     this.totalCycles = 0;
     this.collectedOutputs.clear();
+    if (this.peakIndirectVgpr >= 0) {
+      this.peakIndirectVgpr = -1;
+      this.registers.setUsedVGPRs(this.computeMaxVGPR());
+    }
 
     // Always reload the binary from the current assembly result
     if (this.assemblyResult && this.assemblyResult.errors.length === 0 &&
@@ -594,6 +605,10 @@ export class App {
 
   private afterStep(): void {
     this.controls.updateCycle(this.emulator.getCycleCount());
+    if (this.emulator.state.maxIndirectVgpr > this.peakIndirectVgpr) {
+      this.peakIndirectVgpr = this.emulator.state.maxIndirectVgpr;
+      this.registers.setUsedVGPRs(this.computeMaxVGPR());
+    }
     this.updateAllDisplays();
   }
 
@@ -794,6 +809,14 @@ export class App {
   }
 
   private onProgramComplete(): void {
+    if (this.emulator.fault) {
+      this.doStop();
+      const where = this.currentPuzzle && this.totalInvocations > 1
+        ? ` (invocation ${this.currentInvocation + 1} / ${this.totalInvocations})` : '';
+      this.statusBar.setStatus(`✗ Fault${where}: ${this.emulator.fault}`, 'error');
+      return;
+    }
+
     if (!this.currentPuzzle) {
       this.doStop();
       this.statusBar.setStatus('Program complete', 'info');

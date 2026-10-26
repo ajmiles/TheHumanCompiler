@@ -70,8 +70,9 @@ const WELCOME_TO_GPU: Tutorial = {
         '🔵 <strong>SALU</strong> (Scalar ALU) — Operations that run once for the whole wave: <code>s_mov_b32</code>, <code>s_add_i32</code>\n\n' +
         '🟡 <strong>SOPP</strong> (Program control) — Branches, barriers, waits: <code>s_endpgm</code>, <code>s_waitcnt</code>\n\n' +
         '🟠 <strong>VMEM</strong> (Vector memory) — Per-lane memory access: <code>buffer_load_dword</code>\n\n' +
-        '🔵 <strong>SMEM</strong> (Scalar memory) — Shared memory loads: <code>s_load_dwordx4</code>\n\n' +
-        '🔴 <strong>DS</strong> (Local data share) — Shared memory between lanes: <code>ds_read_b32</code>',
+        '🔵 <strong>SMEM</strong> (Scalar memory) — Loads of uniform data, one value for the whole wave: <code>s_load_dwordx4</code>\n\n' +
+        '🔴 <strong>DS</strong> (Local data share) — Shared memory between lanes: <code>ds_read_b32</code>\n\n' +
+        '<em>The emulator runs VALU, SALU, SOPP and DS instructions; VMEM and SMEM are listed for completeness.</em>',
     },
     {
       title: 'Ready to go!',
@@ -120,7 +121,9 @@ const BRANCHING: Tutorial = {
         '<code>v_mul_f32 v0, v0, 2.0</code> — only runs if s0 > 10\n' +
         '<code>skip:</code>\n\n' +
         'Since the condition is <em>scalar</em> (same for all lanes), the entire wavefront either takes the branch or doesn\'t. No lanes are left behind.\n\n' +
-        '<em>Note: The assembler doesn\'t support labels yet, so branch offsets must be computed manually. This tutorial focuses on the concepts.</em>',
+        'Write a label such as <code>skip:</code> before the target instruction; the assembler turns it into the PC-relative offset, counted in dwords from the instruction after the branch. Step through the example below: s0 is 12, so the multiply runs and v0 ends up as 2.0. Change s0 to 5 and the branch skips it.',
+      code: '; s0 = 12, v0 = 1.0\ns_mov_b32 s0, 12\nv_mov_b32 v0, 1.0\n; Is s0 > 10?\ns_cmp_gt_u32 s0, 10\n; If not (SCC = 0), skip the multiply\ns_cbranch_scc0 skip\nv_mul_f32 v0, 2.0, v0\nskip:\ns_endpgm',
+      highlightSpecial: 'SCC',
     },
     {
       title: 'The EXEC Mask',
@@ -145,10 +148,10 @@ const BRANCHING: Tutorial = {
       title: 'The Divergent If/Else Pattern',
       text:
         'Let\'s see the save-and-mask pattern in action. In this example, lanes 0–15 have <code>v0=0.5</code> and lanes 16–31 have <code>v0=4.0</code>.\n\n' +
-        'We compare <code>v0 > 1.0</code> — lanes 16–31 pass (VCC bits 16–31 set). Then <code>s_and_saveexec_b64 s0, vcc</code> saves the old EXEC to s0 and masks EXEC to only the "true" lanes.\n\n' +
+        'We compare <code>v0 > 1.0</code> — lanes 16–31 pass (VCC bits 16–31 set). Then <code>s_and_saveexec_b32 s0, vcc_lo</code> saves the old EXEC to s0 and masks EXEC to only the "true" lanes. (A wave32 mask is 32 bits, so the <code>_b32</code> form is the natural choice.)\n\n' +
         'Now <code>v_mul_f32 v1, v0, 2.0</code> only runs on lanes 16–31 (the "if" body). We restore EXEC from s0 and all lanes are active again. Step through and watch <strong>VCC</strong> and <strong>EXEC</strong> change!\n\n' +
         '<em>v1 ends up as 8.0 for lanes 16–31 and 0.0 for lanes 0–15 — only the lanes that passed the comparison were modified.</em>',
-      code: '; Setup: lanes 0-15 get 0.5, lanes 16-31 get 4.0\nv_mov_b32 v0, 0.5\ns_mov_b32 exec_lo, 0xFFFF0000\nv_mov_b32 v0, 4.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; Compare v0 > 1.0 → VCC has bits set for lanes 16-31\nv_cmp_gt_f32 v0, 1.0\n;\n; Save EXEC to s0, then EXEC &= VCC (only "true" lanes)\ns_and_saveexec_b64 s0, vcc\n;\n; "If" body — only lanes 16-31 run this\nv_mul_f32 v1, v0, 2.0\n;\n; Restore EXEC — all lanes active again\ns_mov_b32 exec_lo, s0\ns_endpgm',
+      code: '; Setup: lanes 0-15 get 0.5, lanes 16-31 get 4.0\nv_mov_b32 v0, 0.5\ns_mov_b32 exec_lo, 0xFFFF0000\nv_mov_b32 v0, 4.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; Compare v0 > 1.0 → VCC has bits set for lanes 16-31\nv_cmp_gt_f32 v0, 1.0\n;\n; Save EXEC to s0, then EXEC &= VCC (only "true" lanes)\ns_and_saveexec_b32 s0, vcc_lo\n;\n; "If" body — only lanes 16-31 run this\nv_mul_f32 v1, v0, 2.0\n;\n; Restore EXEC — all lanes active again\ns_mov_b32 exec_lo, s0\ns_endpgm',
       highlightSpecial: 'EXEC',
     },
     {
@@ -179,7 +182,7 @@ const INTRA_WAVE: Tutorial = {
     {
       title: 'v_readfirstlane_b32 — Broadcast to Scalar',
       text:
-        'The simplest form of lane communication: <code>v_readfirstlane_b32</code> reads the value from <strong>lane 0</strong> (the first active lane) of a VGPR and writes it to a <strong>scalar register</strong>.\n\n' +
+        'The simplest form of lane communication: <code>v_readfirstlane_b32</code> reads the value from the <strong>first active lane</strong> of a VGPR (lane 0 when every lane is active) and writes it to a <strong>scalar register</strong>.\n\n' +
         'This is used when you need a per-lane value promoted to a scalar — for example, to use as a branch condition or a memory address that must be uniform.\n\n' +
         'Step through the code below. We first load different values into the upper and lower halves using EXEC masking, then <code>v_readfirstlane_b32</code> reads lane 0\'s value (1.0) into s0.',
       code: '; Load 1.0 into all lanes\nv_mov_b32 v0, 1.0\n; Mask: only upper 16 lanes\ns_mov_b32 exec_lo, 0xFFFF0000\n; Upper lanes get 2.0\nv_mov_b32 v0, 2.0\n; Restore all lanes\ns_mov_b32 exec_lo, 0xFFFFFFFF\n; Read lane 0 (value=1.0) into s0\nv_readfirstlane_b32 s0, v0\ns_endpgm',
@@ -203,7 +206,7 @@ const INTRA_WAVE: Tutorial = {
         '│  mode=0  │ xor_mask │ or_mask  │and_mask│\n' +
         '└──────────┴──────────┴──────────┴───┘</code>\n\n' +
         'The source lane is computed as: <code>src = ((lane & and_mask) | or_mask) ^ xor_mask</code>\n\n' +
-        'When bit 15 is set, it uses <strong>QDM (Quad Distribute Mode)</strong> — each group of 4 lanes gets independent 2-bit selectors to pick a source lane within its quad.\n\n' +
+        'When bit 15 is set (and the offset is below <code>0xC000</code>), it uses <strong>QDM (Quad Distribute Mode)</strong>: <code>offset[7:0]</code> holds four 2-bit selectors, one per lane position, and every group of 4 lanes uses them to pick its source lanes within the quad.\n\n' +
         'Try this example. First, even lanes get 0.0 and odd lanes get 1.0. Then:\n' +
         '• <strong>XOR swap</strong> (<code>0x041F</code>): xor=1, and=0x1F → swaps adjacent pairs (0↔1, 2↔3, …) so v1 has the values flipped\n' +
         '• <strong>OR broadcast odd</strong> (<code>0x003E</code>): or=1, and=0x1E → every lane reads its odd neighbour, so v2 is all 1.0',
@@ -212,35 +215,39 @@ const INTRA_WAVE: Tutorial = {
     {
       title: 'DPP — Data Parallel Primitives',
       text:
-        '<strong>DPP</strong> (Data Parallel Primitives) is not a separate instruction — it\'s a <em>modifier</em> on existing VALU instructions. It lets you read a source operand from a <strong>neighbouring lane</strong> instead of the current lane.\n\n' +
-        'DPP operations include:\n' +
-        '• <strong>Row shift</strong> — shift data left/right by 1–15 lanes within a row of 16\n' +
-        '• <strong>Row rotate</strong> — circular shift within a row\n' +
-        '• <strong>Row broadcast</strong> — copy one lane\'s value to all lanes in the row\n' +
-        '• <strong>quad_perm</strong> — arbitrary 4-lane permutation within each group of 4 lanes\n' +
-        '• <strong>Wave shift/rotate</strong> — shift across the full 32-lane wavefront\n\n' +
-        'DPP is the workhorse behind <code>WavePrefixSum</code>, <code>WaveActiveSum</code>, and other subgroup operations in HLSL/GLSL.',
+        '<strong>DPP</strong> (Data Parallel Primitives) is not a separate instruction — it\'s a <em>modifier</em> on existing VOP1/VOP2 instructions. It lets src0 come from a <strong>neighbouring lane</strong> instead of the current lane.\n\n' +
+        '<strong>DPP16</strong> works inside each row of 16 lanes:\n' +
+        '• <strong>quad_perm:[a,b,c,d]</strong> — any permutation within each group of 4 lanes\n' +
+        '• <strong>row_shl:n</strong> / <strong>row_shr:n</strong> — lane i reads lane i+n / i−n of its row. Lanes whose source would fall outside the row are not written, or read 0 with <code>bound_ctrl:1</code>\n' +
+        '• <strong>row_ror:n</strong> — rotate within the row: lane i reads lane (i−n) mod 16\n' +
+        '• <strong>row_mirror</strong> / <strong>row_half_mirror</strong> — reverse each row / each half-row\n' +
+        '• <strong>row_share:n</strong> — every lane reads lane n of its row\n' +
+        '• <strong>row_xmask:n</strong> — lane i reads lane i XOR n\n\n' +
+        '<strong>DPP8</strong> (<code>dpp8:[…]</code>) lets each lane pick any lane within its group of 8.\n\n' +
+        'On RDNA2, DPP never crosses a 16-lane row — GCN\'s <code>wave_shl</code>, <code>wave_ror</code> and <code>row_bcast</code> no longer exist. To move data between the two rows, use <code>v_permlanex16_b32</code>, <code>ds_swizzle_b32</code> or <code>v_readlane_b32</code>.\n\n' +
+        'Step through the example and compare v1–v3 with the lane index in v0. DPP is the workhorse behind <code>WavePrefixSum</code>, <code>WaveActiveSum</code>, and other subgroup operations in HLSL/GLSL.',
+      code: '; v0 = lane index (0..31)\nv_mbcnt_lo_u32_b32 v0, -1, 0\n;\n; Lane i reads lane i-1 of its row; lanes 0 and 16 have no source and read 0\nv_mov_b32 v1, v0 row_shr:1 bound_ctrl:1\n;\n; Lane i reads lane i XOR 1 (swap neighbours)\nv_mov_b32 v2, v0 row_xmask:1\n;\n; Every lane reads lane 3 of its own row (3 or 19)\nv_mov_b32 v3, v0 row_share:3\ns_endpgm',
     },
     {
       title: 'Building a Parallel Reduction',
       text:
-        'A classic use of lane communication: summing all 32 lanes\' values into a single result. Using DPP row-shifts, a full reduction takes just 5 steps:\n\n' +
-        '<code>Step 1:</code> Add each lane with its neighbour 1 apart (DPP row_shr:1) → 16 partial sums\n' +
-        '<code>Step 2:</code> Add with neighbour 2 apart (DPP row_shr:2) → 8 partial sums\n' +
-        '<code>Step 3:</code> Add with neighbour 4 apart (DPP row_shr:4) → 4 partial sums\n' +
-        '<code>Step 4:</code> Add with neighbour 8 apart (DPP row_shr:8) → 2 partial sums\n' +
-        '<code>Step 5:</code> Add the two halves (DPP row_shr:16 or ds_swizzle) → 1 final sum\n\n' +
-        'Each step halves the number of active partial sums. After 5 iterations, lane 0 holds the sum of all 32 values — computed in 5 cycles with no memory access.\n\n' +
+        'A classic use of lane communication: summing all 32 lanes\' values. Each step doubles the number of lanes folded into every partial sum:\n\n' +
+        '<code>Step 1:</code> <code>quad_perm:[1,0,3,2]</code> — add your neighbour → pairs\n' +
+        '<code>Step 2:</code> <code>quad_perm:[2,3,0,1]</code> — add the other pair → every lane holds its quad sum\n' +
+        '<code>Step 3:</code> <code>row_ror:4</code> — add the previous quad → sums of 8 lanes\n' +
+        '<code>Step 4:</code> <code>row_ror:8</code> — add the other half-row → every lane holds its row sum\n' +
+        '<code>Step 5:</code> DPP can\'t cross rows, so fetch the other row\'s sum with <code>ds_swizzle_b32</code> (xor_mask 16: <code>offset:0x401F</code>) or <code>v_permlanex16_b32</code>, and add it\n\n' +
+        'Because every step is a rotation or permutation, <strong>every lane</strong> ends up with the full sum — no broadcast needed. A <code>row_shr</code> chain also works, but only the last lane of each row receives the complete sum.\n\n' +
         'This log₂(N) reduction pattern is fundamental to GPU parallel programming.',
     },
     {
       title: 'Key takeaways',
       text:
         'Intra-wave communication in summary:\n\n' +
-        '• <code>v_readfirstlane_b32</code> broadcasts lane 0\'s value to a scalar register — the simplest lane→scalar bridge.\n\n' +
+        '• <code>v_readfirstlane_b32</code> copies the first active lane\'s value to a scalar register — the simplest lane→scalar bridge.\n\n' +
         '• <code>v_readlane_b32</code> reads any lane by index — useful for targeted data extraction.\n\n' +
         '• <code>ds_swizzle_b32</code> permutes data between lanes using a control word — flexible and fast, despite the "ds" name.\n\n' +
-        '• <strong>DPP</strong> modifiers on VALU instructions enable neighbouring-lane access for reductions, scans, and shuffles.\n\n' +
+        '• <strong>DPP</strong> modifiers read src0 from another lane of the same 16-lane row — the basis of fast reductions, scans and shuffles. <code>v_permlanex16_b32</code> and <code>ds_swizzle_b32</code> cross rows.\n\n' +
         'These primitives map to HLSL\'s <code>Wave*</code> intrinsics and are essential for high-performance GPU programming.',
     },
   ],
@@ -257,7 +264,7 @@ const SDWA_TUTORIAL: Tutorial = {
       title: 'What is SDWA?',
       text:
         'GPU registers are 32 bits wide, but data often comes in smaller pieces — 8-bit color channels, 16-bit integers, packed formats. <strong>SDWA</strong> (Sub-Dword Addressing) lets you operate on individual <em>bytes</em> or <em>words</em> within a register without manual shifting and masking.\n\n' +
-        'SDWA is a <em>modifier</em> on existing VOP1/VOP2 instructions. It adds source selectors (which part to read), destination selectors (which part to write), and sign/zero extension — all in a single instruction.',
+        'SDWA is a <em>modifier</em> on existing VOP1, VOP2 and VOPC instructions. It adds source selectors (which part to read), destination selectors (which part to write), and sign/zero extension — all in a single instruction.',
     },
     {
       title: 'Source Selectors',
@@ -287,7 +294,7 @@ const SDWA_TUTORIAL: Tutorial = {
       text:
         '<code>dst_sel</code> controls which portion of the destination register to write. Combined with <code>dst_unused</code>, you control what happens to the bits you <em>don\'t</em> write:\n\n' +
         '• <code>dst_unused:UNUSED_PAD</code> — zero the unused bits (default)\n' +
-        '• <code>dst_unused:UNUSED_SEXT</code> — sign-extend the written portion\n' +
+        '• <code>dst_unused:UNUSED_SEXT</code> — zero the bits below the written portion and fill the bits above it with its top (sign) bit\n' +
         '• <code>dst_unused:UNUSED_PRESERVE</code> — keep the old destination value in unused bits\n\n' +
         'Try this: we write a value into BYTE_1 of the destination, with different unused modes. Switch to <strong>HEX</strong> to see how the surrounding bytes differ.',
       code: '; Source: v0 = 0x42 (the value to write)\nv_mov_b32 v0, 0x42\n;\n; Write to BYTE_1, pad unused with zeros\nv_mov_b32 v1, v0 dst_sel:BYTE_1 dst_unused:UNUSED_PAD\n; Result: 0x00004200\n;\n; Write to BYTE_1, preserve rest\nv_mov_b32 v2, 0xFFFFFFFF\nv_mov_b32 v2, v0 dst_sel:BYTE_1 dst_unused:UNUSED_PRESERVE\n; Result: 0xFFFF42FF\ns_endpgm',
@@ -303,7 +310,7 @@ const SDWA_TUTORIAL: Tutorial = {
     {
       title: 'SDWA with ALU Operations',
       text:
-        'SDWA isn\'t just for moves — it works with any VOP1/VOP2 instruction. You can add bytes, multiply words, or compare sub-dword values directly.\n\n' +
+        'SDWA isn\'t just for moves — it works with most VOP1, VOP2 and VOPC instructions. You can add bytes, multiply words, or compare sub-dword values directly.\n\n' +
         'Both sources can have independent selectors with <code>src0_sel</code> and <code>src1_sel</code>. This lets you do things like "add byte 0 of v0 to byte 2 of v1" in a single instruction.\n\n' +
         'Try this: we add the low byte of v0 to the high byte of v1, storing the result as a full dword.',
       code: '; v0 = 0x00000003 (byte 0 = 3)\nv_mov_b32 v0, 0x00000003\n; v1 = 0x05000000 (byte 3 = 5)\nv_mov_b32 v1, 0x05000000\n;\n; Add byte 0 of v0 + byte 3 of v1 → v2\nv_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_3\n; v2 = 8 (3 + 5)\ns_endpgm',
@@ -315,7 +322,7 @@ const SDWA_TUTORIAL: Tutorial = {
         '• <strong>Source selectors</strong> (<code>src0_sel</code>, <code>src1_sel</code>) pick which byte or word to read — no manual shifting needed.\n\n' +
         '• <strong>Sign extension</strong> (<code>src0_sext</code>) interprets the sub-dword as signed and extends to 32 bits.\n\n' +
         '• <strong>Destination selectors</strong> (<code>dst_sel</code>) write to a specific byte/word position, with <code>dst_unused</code> controlling the rest.\n\n' +
-        '• Works on any VOP1/VOP2 instruction — moves, adds, multiplies, comparisons.\n\n' +
+        '• Works on most VOP1, VOP2 and VOPC instructions — moves, adds, multiplies, comparisons.\n\n' +
         '• Eliminates common shift-and-mask patterns, saving instructions when packing/unpacking data.',
     },
   ],
@@ -373,7 +380,7 @@ const PACKED_FP16: Tutorial = {
         '📊 <strong>Min/Max:</strong> <code>v_pk_min_f16</code>, <code>v_pk_max_f16</code>\n\n' +
         '🔧 <strong>Integer:</strong> <code>v_pk_add_u16</code>, <code>v_pk_mul_lo_u16</code>, <code>v_pk_lshlrev_b16</code>, <code>v_pk_max/min_i16/u16</code>, and more\n\n' +
         '🔄 <strong>Mixed precision:</strong> <code>v_fma_mix_f32</code> — takes a mixture of f16 and f32 inputs and produces an f32 output, bridging between precision levels\n\n' +
-        'All VOP3P instructions use the <code>0x33</code> encoding prefix and have OP_SEL/OP_SEL_HI modifiers to control which half of each source to read.',
+        'All VOP3P instructions use the packed-math encoding (bits [31:23] = <code>0x198</code>, so the top byte is 0xCC) and have OP_SEL/OP_SEL_HI modifiers to control which half of each source to read.',
     },
     {
       title: 'OP_SEL — Half Selection',
@@ -391,14 +398,15 @@ const PACKED_FP16: Tutorial = {
         '<code>op_sel_hi</code> controls what the <em>hi</em> operation reads. By default all sources read from their hi half (op_sel_hi = [1,1]). Setting a bit to 0 makes the hi operation read from the <em>lo</em> half instead.\n\n' +
         'This is how you broadcast the lo value to both halves:\n' +
         '<code>op_sel_hi:[0,0]</code> — hi operation reads lo halves (same as lo operation)\n\n' +
-        'Step through: v0 = {hi: 5.0, lo: 3.0}. With <code>op_sel_hi:[0,0]</code>, both lo and hi operations read the lo halves and add them: 3+3 = 6 in both positions → v1 = {6.0, 6.0}.',
-      code: '; v0 = {hi: 5.0, lo: 3.0}\n; f16(3.0)=0x4200, f16(5.0)=0x4500\nv_mov_b32 v0, 0x45004200\n;\n; Default: lo=lo+lo=6, hi=hi+hi=10 → {10.0, 6.0}\nv_pk_add_f16 v1, v0, v0\n;\n; op_sel_hi:[0,0]: hi also reads lo halves\n; Both operations: lo+lo = 3+3 = 6 → {6.0, 6.0}\nv_pk_add_f16 v2, v0, v0 op_sel_hi:[0,0]\n;\n; Combine: op_sel:[1,1] op_sel_hi:[1,1]\n; Both operations read hi: 5+5 = 10 → {10.0, 10.0}\nv_pk_add_f16 v3, v0, v0 op_sel:[1,1] op_sel_hi:[1,1]\ns_endpgm',
+        'Step through: v0 = {hi: 5.0, lo: 3.0}. With <code>op_sel_hi:[0,0]</code>, both lo and hi operations read the lo halves and add them: 3+3 = 6 in both positions → v2 = {6.0, 6.0}.\n\n' +
+        'This matters for constants too: a constant such as <code>2.0</code> has 0 in its high half, so <code>v_pk_mul_f16 v4, v0, 2.0</code> only doubles the lo half. Adding <code>op_sel_hi:[1,0]</code> makes the hi operation read the constant\'s lo half as well.',
+      code: '; v0 = {hi: 5.0, lo: 3.0}\n; f16(3.0)=0x4200, f16(5.0)=0x4500\nv_mov_b32 v0, 0x45004200\n;\n; Default: lo=lo+lo=6, hi=hi+hi=10 → {10.0, 6.0}\nv_pk_add_f16 v1, v0, v0\n;\n; op_sel_hi:[0,0]: hi also reads lo halves\n; Both operations: lo+lo = 3+3 = 6 → {6.0, 6.0}\nv_pk_add_f16 v2, v0, v0 op_sel_hi:[0,0]\n;\n; Combine: op_sel:[1,1] op_sel_hi:[1,1]\n; Both operations read hi: 5+5 = 10 → {10.0, 10.0}\nv_pk_add_f16 v3, v0, v0 op_sel:[1,1] op_sel_hi:[1,1]\n;\n; The constant\'s hi half is 0: hi = 5*0, lo = 3*2 → {0.0, 6.0}\nv_pk_mul_f16 v4, v0, 2.0\n;\n; op_sel_hi:[1,0]: hi reads the constant\'s lo half → {10.0, 6.0}\nv_pk_mul_f16 v5, v0, 2.0 op_sel_hi:[1,0]\ns_endpgm',
     },
     {
       title: 'Performance: 2× Throughput',
       text:
         'The key insight for performance:\n\n' +
-        '• One <code>v_pk_add_f16</code> does the same work as <strong>two</strong> <code>v_add_f32</code> instructions\n' +
+        '• One <code>v_pk_add_f16</code> does the same work as <strong>two</strong> <code>v_add_f16</code> instructions\n' +
         '• Same cycle count, same register pressure, twice the data\n' +
         '• For workloads that can tolerate f16 precision, this is a free 2× speedup\n\n' +
         'Real-world uses:\n' +

@@ -1,17 +1,18 @@
 // ── AMD Assembly Lexer ──
 
 export enum TokenType {
-  MNEMONIC = 'MNEMONIC',
+  MNEMONIC = 'MNEMONIC',   // Identifier: instruction mnemonic, label reference or counter name
   REGISTER = 'REGISTER',
   NUMBER = 'NUMBER',
   COMMA = 'COMMA',
   NEWLINE = 'NEWLINE',
   COMMENT = 'COMMENT',
-  MODIFIER = 'MODIFIER',  // abs, neg
+  MODIFIER = 'MODIFIER',   // abs, neg, clamp, row_shr:1, op_sel:[0,1], …
   LPAREN = 'LPAREN',
   RPAREN = 'RPAREN',
   PIPE = 'PIPE',           // | for |src| abs syntax
   LABEL = 'LABEL',         // my_label: (definition)
+  ERROR = 'ERROR',         // Unexpected character
   EOF = 'EOF',
 }
 
@@ -22,10 +23,27 @@ export interface Token {
   column: number;
 }
 
-const REGISTER_RE = /^[vs]\d+$/;
-const SPECIAL_REGS = new Set(['exec', 'exec_lo', 'exec_hi', 'vcc', 'vcc_lo', 'vcc_hi', 'm0', 'null']);
-const MODIFIERS = new Set(['abs', 'neg', 'clamp', 'idxen', 'offen', 'glc']);
-const MNEMONIC_RE = /^[a-z_][a-z0-9_]*$/;
+const REGISTER_RE = /^(?:[vs]\d+|ttmp\d+)$/;
+const SPECIAL_REGS = new Set([
+  'exec', 'exec_lo', 'exec_hi', 'vcc', 'vcc_lo', 'vcc_hi', 'm0', 'null',
+  'scc', 'vccz', 'execz', 'src_scc', 'src_vccz', 'src_execz',
+]);
+const FLAG_MODIFIERS = new Set([
+  'abs', 'neg', 'clamp', 'idxen', 'offen', 'glc', 'gds',
+  'row_mirror', 'row_half_mirror', 'row_bcast15', 'row_bcast31', 'bound_ctrl',
+  'src0_sext', 'src1_sext',
+]);
+/** Modifiers written as name:number. */
+const VALUE_MODIFIERS = new Set([
+  'mul', 'div', 'offset', 'offset0', 'offset1',
+  'row_shl', 'row_shr', 'row_ror', 'row_share', 'row_xmask', 'row_mask', 'bank_mask', 'bound_ctrl', 'fi',
+  'wave_shl', 'wave_shr', 'wave_rol', 'wave_ror', 'row_bcast',
+]);
+/** Modifiers written as name:WORD. */
+const WORD_MODIFIERS = new Set(['dst_sel', 'dst_unused', 'src0_sel', 'src1_sel']);
+/** Modifiers written as name:[a,b,…]. */
+const LIST_MODIFIERS = new Set(['quad_perm', 'dpp8', 'op_sel', 'op_sel_hi', 'neg_lo', 'neg_hi']);
+const IDENT_RE = /^[a-z_.][a-z0-9_.$]*$/;
 
 export function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
@@ -35,155 +53,126 @@ export function tokenize(source: string): Token[] {
     const lineText = lines[lineIdx];
     const lineNum = lineIdx + 1;
     let col = 0;
+    const push = (type: TokenType, value: string, start: number) =>
+      tokens.push({ type, value, line: lineNum, column: start + 1 });
 
     while (col < lineText.length) {
       const ch = lineText[col];
 
-      // Skip whitespace (not newline — handled per-line)
       if (ch === ' ' || ch === '\t' || ch === '\r') {
         col++;
         continue;
       }
 
-      // Comment: skip rest of line
-      if (ch === ';') {
+      // Comments: ';' or '//' to end of line
+      if (ch === ';' || (ch === '/' && lineText[col + 1] === '/')) {
         col = lineText.length;
         continue;
       }
 
-      // Comma
-      if (ch === ',') {
-        tokens.push({ type: TokenType.COMMA, value: ',', line: lineNum, column: col + 1 });
-        col++;
-        continue;
-      }
+      if (ch === ',') { push(TokenType.COMMA, ',', col); col++; continue; }
+      if (ch === '(') { push(TokenType.LPAREN, '(', col); col++; continue; }
+      if (ch === ')') { push(TokenType.RPAREN, ')', col); col++; continue; }
+      if (ch === '|') { push(TokenType.PIPE, '|', col); col++; continue; }
+      // '&' separates s_waitcnt counters: vmcnt(0) & lgkmcnt(0)
+      if (ch === '&') { col++; continue; }
 
-      // Parentheses
-      if (ch === '(') {
-        tokens.push({ type: TokenType.LPAREN, value: '(', line: lineNum, column: col + 1 });
-        col++;
-        continue;
-      }
-      if (ch === ')') {
-        tokens.push({ type: TokenType.RPAREN, value: ')', line: lineNum, column: col + 1 });
-        col++;
-        continue;
-      }
-
-      // Pipe for |src| abs syntax
-      if (ch === '|') {
-        tokens.push({ type: TokenType.PIPE, value: '|', line: lineNum, column: col + 1 });
-        col++;
-        continue;
-      }
-
-      // Number: hex, float, or integer (may start with - for negative)
-      // But '-' before a register (v/s) is a neg modifier, not a negative number
+      // '-' before a register, |abs| or abs(...) is a neg modifier, not a negative number
       if (ch === '-' && col + 1 < lineText.length) {
         const nextCh = lineText[col + 1];
-        if (nextCh === 'v' || nextCh === 's' || nextCh === '|' || nextCh === 'a') {
-          // Neg modifier before register, |abs|, or abs()
-          tokens.push({ type: TokenType.MODIFIER, value: 'neg', line: lineNum, column: col + 1 });
+        if (isAlpha(nextCh) || nextCh === '|') {
+          push(TokenType.MODIFIER, 'neg', col);
           col++;
           continue;
         }
       }
-      if (isDigit(ch) || (ch === '-' && col + 1 < lineText.length && isDigitOrDot(lineText[col + 1]))) {
+
+      // Number: hex, decimal integer or float (optional exponent), optionally negative
+      if (isDigit(ch) || (ch === '.' && isDigit(lineText[col + 1] ?? '')) ||
+          (ch === '-' && col + 1 < lineText.length && isDigitOrDot(lineText[col + 1]))) {
         const start = col;
         if (ch === '-') col++;
-
-        // Hex literal
-        if (col + 1 < lineText.length && lineText[col] === '0' && (lineText[col + 1] === 'x' || lineText[col + 1] === 'X')) {
+        if (lineText[col] === '0' && (lineText[col + 1] === 'x' || lineText[col + 1] === 'X')) {
           col += 2;
           while (col < lineText.length && isHexDigit(lineText[col])) col++;
         } else {
           while (col < lineText.length && isDigit(lineText[col])) col++;
-          // Float: check for decimal point
-          if (col < lineText.length && lineText[col] === '.') {
+          if (lineText[col] === '.') {
             col++;
             while (col < lineText.length && isDigit(lineText[col])) col++;
           }
+          if ((lineText[col] === 'e' || lineText[col] === 'E') &&
+              (isDigit(lineText[col + 1] ?? '') || ((lineText[col + 1] === '+' || lineText[col + 1] === '-') && isDigit(lineText[col + 2] ?? '')))) {
+            col += 2;
+            while (col < lineText.length && isDigit(lineText[col])) col++;
+          }
         }
-
-        tokens.push({ type: TokenType.NUMBER, value: lineText.slice(start, col), line: lineNum, column: start + 1 });
+        push(TokenType.NUMBER, lineText.slice(start, col), start);
         continue;
       }
 
-      // Identifier: mnemonic or register
-      if (isAlpha(ch) || ch === '_') {
+      // Identifier: mnemonic, register, modifier or label
+      if (isAlpha(ch) || (ch === '.' && isAlpha(lineText[col + 1] ?? ''))) {
         const start = col;
-        while (col < lineText.length && isAlphaNum(lineText[col])) col++;
-        const word = lineText.slice(start, col);
-        const lower = word.toLowerCase();
+        col++;
+        while (col < lineText.length && (isAlphaNum(lineText[col]) || lineText[col] === '.' || lineText[col] === '$')) col++;
+        const lower = lineText.slice(start, col).toLowerCase();
+        const next = lineText[col];
 
-        // Register range syntax: s[N:M] or v[N:M]
-        if ((lower === 's' || lower === 'v') && col < lineText.length && lineText[col] === '[') {
-          const rangeStart = col;
-          col++; // skip [
-          while (col < lineText.length && lineText[col] !== ']') col++;
-          if (col < lineText.length) col++; // skip ]
-          const fullToken = word + lineText.slice(rangeStart, col);
-          tokens.push({ type: TokenType.REGISTER, value: fullToken.toLowerCase(), line: lineNum, column: start + 1 });
+        // Register range syntax: s[N:M], v[N:M], ttmp[N:M]
+        if ((lower === 's' || lower === 'v' || lower === 'ttmp') && next === '[') {
+          const close = lineText.indexOf(']', col);
+          col = close < 0 ? lineText.length : close + 1;
+          push(TokenType.REGISTER, (lower + lineText.slice(start + lower.length, col)).toLowerCase().replace(/\s+/g, ''), start);
           continue;
         }
 
-        if (REGISTER_RE.test(lower)) {
-          tokens.push({ type: TokenType.REGISTER, value: lower, line: lineNum, column: start + 1 });
-        } else if (SPECIAL_REGS.has(lower)) {
-          tokens.push({ type: TokenType.REGISTER, value: lower, line: lineNum, column: start + 1 });
-        } else if (MODIFIERS.has(lower)) {
-          tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
-        } else if ((lower === 'mul' || lower === 'div' || lower === 'offset' || lower === 'offset0' || lower === 'offset1' ||
-                    lower === 'row_shl' || lower === 'row_shr' || lower === 'row_ror' || lower === 'bound_ctrl' ||
-                    lower === 'wave_shl' || lower === 'wave_shr' || lower === 'wave_rol' || lower === 'wave_ror') && col < lineText.length && lineText[col] === ':') {
-          // Compound modifier: mul:2, row_shr:1, bound_ctrl:1, etc.
-          col++; // skip ':'
-          const dStart = col;
-          // Handle hex (0x...) and decimal values
-          if (col + 1 < lineText.length && lineText[col] === '0' && (lineText[col + 1] === 'x' || lineText[col + 1] === 'X')) {
-            col += 2; // skip '0x'
-            while (col < lineText.length && /[0-9a-fA-F]/.test(lineText[col])) col++;
+        if (next === ':' && VALUE_MODIFIERS.has(lower)) {
+          col++;
+          const vStart = col;
+          if (lineText[col] === '-') col++;
+          if (lineText[col] === '0' && (lineText[col + 1] === 'x' || lineText[col + 1] === 'X')) {
+            col += 2;
+            while (col < lineText.length && isHexDigit(lineText[col])) col++;
           } else {
             while (col < lineText.length && isDigit(lineText[col])) col++;
           }
-          const compound = lower + ':' + lineText.slice(dStart, col);
-          tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
-        } else if ((lower === 'dst_sel' || lower === 'dst_unused' || lower === 'src0_sel' || lower === 'src1_sel') && col < lineText.length && lineText[col] === ':') {
-          // SDWA compound modifier: dst_sel:BYTE_0, src0_sel:WORD_1, dst_unused:UNUSED_PAD, etc.
-          col++; // skip ':'
-          const dStart = col;
+          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col)}`, start);
+          continue;
+        }
+        if (next === ':' && WORD_MODIFIERS.has(lower)) {
+          col++;
+          const vStart = col;
           while (col < lineText.length && isAlphaNum(lineText[col])) col++;
-          const compound = lower + ':' + lineText.slice(dStart, col);
-          tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
-        } else if ((lower === 'src0_sext' || lower === 'src1_sext') && (col >= lineText.length || lineText[col] !== ':')) {
-          // SDWA sext modifier (no value — just a flag)
-          tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
-        } else if ((lower === 'quad_perm' || lower === 'dpp8' || lower === 'op_sel' || lower === 'op_sel_hi') && col < lineText.length && lineText[col] === ':') {
-          // DPP bracket modifier: quad_perm:[3,2,1,0] or dpp8:[7,6,5,4,3,2,1,0]
+          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col).toUpperCase()}`, start);
+          continue;
+        }
+        if (next === ':' && LIST_MODIFIERS.has(lower)) {
+          col++;
+          const vStart = col;
+          const close = lineText.indexOf(']', col);
+          col = close < 0 ? lineText.length : close + 1;
+          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col).replace(/\s+/g, '')}`, start);
+          continue;
+        }
+
+        if (REGISTER_RE.test(lower) || SPECIAL_REGS.has(lower)) {
+          push(TokenType.REGISTER, lower, start);
+        } else if (FLAG_MODIFIERS.has(lower) && next !== ':') {
+          push(TokenType.MODIFIER, lower, start);
+        } else if (next === ':' && IDENT_RE.test(lower)) {
           col++; // skip ':'
-          const dStart = col;
-          // Read until closing bracket
-          while (col < lineText.length && lineText[col] !== ']') col++;
-          if (col < lineText.length) col++; // skip ']'
-          const compound = lower + ':' + lineText.slice(dStart, col);
-          tokens.push({ type: TokenType.MODIFIER, value: compound, line: lineNum, column: start + 1 });
-        } else if (lower === 'row_mirror' || lower === 'row_half_mirror' || lower === 'row_bcast15' || lower === 'row_bcast31') {
-          tokens.push({ type: TokenType.MODIFIER, value: lower, line: lineNum, column: start + 1 });
-        } else if (col < lineText.length && lineText[col] === ':' && MNEMONIC_RE.test(lower)) {
-          // Label definition: my_label:
-          col++; // skip ':'
-          tokens.push({ type: TokenType.LABEL, value: lower, line: lineNum, column: start + 1 });
-        } else if (MNEMONIC_RE.test(lower)) {
-          tokens.push({ type: TokenType.MNEMONIC, value: lower, line: lineNum, column: start + 1 });
+          push(TokenType.LABEL, lower, start);
+        } else {
+          push(TokenType.MNEMONIC, lower, start);
         }
         continue;
       }
 
-      // Unknown character — skip
+      push(TokenType.ERROR, ch, col);
       col++;
     }
 
-    // Emit newline token after each line (except possibly the last empty line)
     if (lineIdx < lines.length - 1 || lineText.length > 0) {
       tokens.push({ type: TokenType.NEWLINE, value: '\n', line: lineNum, column: lineText.length + 1 });
     }

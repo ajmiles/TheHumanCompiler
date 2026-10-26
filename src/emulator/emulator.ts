@@ -3,24 +3,35 @@
 
 import { GPUState } from './state';
 import { ResolvedInstruction, decodeProgram } from './decoder';
-import { executeInstruction } from './executor';
+import { executeInstruction, EmulatorFault } from './executor';
+
+/** Default instruction budget for run(): protects against infinite loops. */
+export const DEFAULT_MAX_STEPS = 1_000_000;
 
 export class Emulator {
   state: GPUState;
   halted: boolean;
+  /** Why execution stopped abnormally (bad branch target, unsupported instruction, …), or null. */
+  fault: string | null;
   private program: ResolvedInstruction[];
+  private indexByAddress: Map<number, number>;
+  private programDwords: number;
 
   constructor() {
     this.state = new GPUState();
     this.program = [];
+    this.indexByAddress = new Map();
+    this.programDwords = 0;
     this.halted = false;
+    this.fault = null;
   }
 
   /** Load a binary program, decode it, and reset execution state. */
   load(binary: Uint32Array): void {
     this.program = decodeProgram(binary);
-    this.state.reset();
-    this.halted = false;
+    this.indexByAddress = new Map(this.program.map((p, i) => [p.decoded.address, i]));
+    this.programDwords = binary.length;
+    this.reset();
   }
 
   /**
@@ -30,73 +41,61 @@ export class Emulator {
   step(): boolean {
     if (this.isComplete()) return false;
 
-    const instr = this.program[this.state.pc];
-    const pcBefore = this.state.pc;
-    executeInstruction(this.state, instr);
-
-    // Handle SOPP branch instructions
-    if (instr.decoded.format === 'SOPP') {
-      const mnemonic = instr.opcodeInfo.mnemonic;
-      const simm16 = instr.decoded.simm16 ?? 0;
-      // Sign-extend 16-bit immediate
-      const offset = (simm16 << 16) >> 16;
-      let branched = false;
-
-      if (mnemonic === 's_branch') {
-        branched = true;
-      } else if (mnemonic === 's_cbranch_scc0') {
-        branched = this.state.scc === 0;
-      } else if (mnemonic === 's_cbranch_scc1') {
-        branched = this.state.scc === 1;
-      } else if (mnemonic === 's_cbranch_execz') {
-        branched = this.state.exec === 0;
-      } else if (mnemonic === 's_cbranch_execnz') {
-        branched = this.state.exec !== 0;
-      } else if (mnemonic === 's_cbranch_vccz') {
-        branched = this.state.vcc === 0;
-      } else if (mnemonic === 's_cbranch_vccnz') {
-        branched = this.state.vcc !== 0;
-      }
-
-      if (branched) {
-        // Branch target: PC + 1 + SIMM16 (in instruction units)
-        this.state.pc = pcBefore + 1 + offset;
-      } else {
-        this.state.pc++;
-      }
-    } else if (instr.decoded.format === 'SOP1') {
-      const mnemonic = instr.opcodeInfo.mnemonic;
-      if (mnemonic === 's_setpc_b64' || mnemonic === 's_swappc_b64') {
-        // PC = ssrc0 (byte address / 4 → instruction index)
-        const src0 = instr.decoded.src0Encoded;
-        let addr: number;
-        if (src0 >= 0 && src0 <= 105) {
-          addr = this.state.readSGPR(src0);
-        } else {
-          addr = 0;
-        }
-        this.state.pc = (addr >>> 2); // byte address → instruction index
-      } else {
-        this.state.pc++;
-      }
-    } else {
-      this.state.pc++;
+    const pc = this.state.pc;
+    const instr = this.program[pc];
+    const nextAddress = instr.decoded.address + instr.decoded.size;
+    let flow;
+    try {
+      flow = executeInstruction(this.state, instr, { nextPcBytes: nextAddress * 4 });
+    } catch (e) {
+      if (!(e instanceof EmulatorFault)) throw e;
+      this.raiseFault(e.message);
+      return true;
     }
-
     this.state.cycleCount++;
 
-    // Halting instruction (s_endpgm): set halted flag
-    if (instr.opcodeInfo.halts) {
+    if (!flow) {
+      this.state.pc = pc + 1;
+    } else if (flow.kind === 'halt') {
+      this.state.pc = pc + 1;
       this.halted = true;
+    } else if (flow.kind === 'branch') {
+      this.jumpTo(nextAddress + flow.offset);
+    } else if (flow.byteAddress % 4 !== 0) {
+      this.raiseFault(`${instr.opcodeInfo.mnemonic} jumped to a misaligned address 0x${flow.byteAddress.toString(16)}`);
+    } else {
+      this.jumpTo(flow.byteAddress / 4);
     }
-
     return true;
   }
 
-  /** Run all remaining instructions to completion. */
-  run(): void {
+  /** Continue at a dword address; the address just past the program ends execution. */
+  private jumpTo(dwordAddress: number): void {
+    if (dwordAddress === this.programDwords) {
+      this.state.pc = this.program.length;
+      return;
+    }
+    const index = this.indexByAddress.get(dwordAddress);
+    if (index === undefined) {
+      this.raiseFault(`Jump to byte address 0x${(dwordAddress * 4).toString(16)}, which is not the start of an instruction`);
+      return;
+    }
+    this.state.pc = index;
+  }
+
+  private raiseFault(message: string): void {
+    this.fault = message;
+    this.halted = true;
+  }
+
+  /** Run all remaining instructions to completion (or until the step budget runs out). */
+  run(maxSteps = DEFAULT_MAX_STEPS): void {
+    let steps = 0;
     while (this.step()) {
-      // execute until program ends
+      if (++steps >= maxSteps && !this.isComplete()) {
+        this.raiseFault(`Stopped after ${maxSteps} instructions — is there an infinite loop?`);
+        return;
+      }
     }
   }
 
@@ -104,9 +103,10 @@ export class Emulator {
   reset(): void {
     this.state.reset();
     this.halted = false;
+    this.fault = null;
   }
 
-  /** Check if execution has completed (halted or past end of program). */
+  /** Check if execution has completed (halted, faulted or past the end of the program). */
   isComplete(): boolean {
     return this.halted || this.state.pc >= this.program.length;
   }
@@ -122,21 +122,9 @@ export class Emulator {
     return this.state.cycleCount;
   }
 
-  /** Get current PC as byte address. */
+  /** Byte address of the current instruction (or of the end of the program). */
   getPCBytes(): number {
-    if (this.isComplete() && this.program.length > 0) {
-      // Past last instruction: use binary length
-      const last = this.program[this.program.length - 1];
-      // Estimate: last instruction address + its size in words
-      const lastAddr = last.decoded.address;
-      const lastSize = (last.decoded.literal !== undefined) ? 2 :
-        (last.decoded.src2 !== undefined || last.decoded.src0Abs || last.decoded.src0Neg ||
-         last.decoded.src1Abs || last.decoded.src1Neg || last.decoded.omod || last.decoded.clamp) ? 2 : 1;
-      return (lastAddr + lastSize) * 4;
-    }
-    if (this.state.pc < this.program.length) {
-      return this.program[this.state.pc].decoded.address * 4;
-    }
-    return 0;
+    if (this.state.pc < this.program.length) return this.program[this.state.pc].decoded.address * 4;
+    return this.programDwords * 4;
   }
 }

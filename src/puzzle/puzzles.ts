@@ -93,7 +93,7 @@ const ABSOLUTE_VALUE: Puzzle = {
     { name: 'Output', register: 1, values: absExpected },
   ],
   hints: [
-    'There is no v_abs instruction in the MVP set.',
+    'RDNA2 has no v_abs instruction.',
     'Can you negate a value by subtracting from zero?',
     'v_max_f32 picks the larger of two values...',
   ],
@@ -429,7 +429,7 @@ const QUAD_AVERAGE: Puzzle = {
     'DPP quad_perm can shuffle values within each group of 4 lanes.',
     'Add v0 with v0 shifted by quad_perm:[1,0,3,2] to get pairwise sums.',
     'Then add those partial sums shifted by quad_perm:[2,3,0,1] for the full sum.',
-    'Multiply by 0.25 (or use mul:4 with div:2 tricks) to get the average.',
+    'Multiply by 0.25 at the end to get the average (DPP instructions can\'t use output modifiers like div:2).',
   ],
   optimalInstructions: 4,
 };
@@ -441,7 +441,8 @@ const waveAvgInput = seededValues(77, 64, 0, 100);
 const waveAvgExpected: number[] = [];
 for (let inv = 0; inv < 2; inv++) {
   const start = inv * 32;
-  // Simulate f32 tree reduction matching quad_perm → row_shr → ds_swizzle pattern
+  // Simulate an f32 tree reduction (pairs → quads → rows → both rows); the validator's
+  // tolerance accepts any summation order
   const vals = waveAvgInput.slice(start, start + 32).map(asF32);
   // Pairwise: 0+1, 2+3, etc.
   for (let i = 0; i < 32; i += 2) vals[i] = asF32(vals[i] + vals[i + 1]);
@@ -471,11 +472,10 @@ const WAVE_AVERAGE: Puzzle = {
   ],
   hints: [
     'Start with a quad reduction using quad_perm (like Quad Average).',
-    'After the quad sum, you need to combine across quads using row_shr.',
-    'row_shr:4 crosses quad boundaries within a row of 16.',
-    'row_shr:8 combines the two halves of each 16-lane row.',
-    'Finally, you need to combine the two rows. ds_swizzle with xor=16 can do this.',
-    'Divide by 32 at the end (multiply by 0.03125 or use 1/32).',
+    'Then fold the four quads of each 16-lane row together: row_ror:4 and then row_ror:8 (or row_xmask:4 and row_xmask:8) leave the row sum in every lane.',
+    'row_shr only shifts one way — lanes at the start of a row have no source — so it can\'t give every lane the full sum.',
+    'DPP never crosses rows on RDNA2. Fetch the other row with ds_swizzle_b32 (xor_mask 16 = offset:0x401F) or v_permlanex16_b32, then add.',
+    'Divide by 32 at the end (multiply by 0.03125).',
   ],
   optimalInstructions: 7,
 };
@@ -626,7 +626,7 @@ const CHANNEL_MAX: Puzzle = {
     'Use SDWA src0_sel/src1_sel:BYTE_N to extract individual bytes.',
     'v_max_u32 with SDWA selectors lets you compare bytes directly.',
     'Build up the max: max(R,G) → max(that,B) → max(that,A).',
-    'To replicate a byte to all 4 positions, use v_mul_u32_u24 with 0x01010101.',
+    'To replicate a byte to all 4 positions, multiply it by 0x01010101 with v_mul_lo_u32 (v_mul_u32_u24 only uses the low 24 bits of each operand, so it would make just 3 copies).',
     'Or use SDWA dst_sel:BYTE_N with dst_unused:UNUSED_PRESERVE to write each byte.',
   ],
   optimalInstructions: 5,

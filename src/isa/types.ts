@@ -16,7 +16,20 @@ export enum InstructionFormat {
   MTBUF = 'MTBUF',
   MIMG = 'MIMG',
   DS = 'DS',
+  FLAT = 'FLAT',
+  EXP = 'EXP',
+  VINTRP = 'VINTRP',
+  UNKNOWN = 'UNKNOWN',
 }
+
+/** Concrete machine encoding of an instruction. */
+export type EncodingKind =
+  | 'VOP1' | 'VOP2' | 'VOPC' | 'VOP3A' | 'VOP3B' | 'VOP3P'
+  | 'SOP1' | 'SOP2' | 'SOPC' | 'SOPK' | 'SOPP' | 'SMEM'
+  | 'DS' | 'MUBUF' | 'MTBUF' | 'MIMG' | 'FLAT' | 'EXP' | 'VINTRP' | 'UNKNOWN';
+
+/** Extra dword following a 32-bit VALU encoding (or any literal constant). */
+export type EncodingExtra = 'DPP16' | 'DPP8' | 'SDWA' | 'LITERAL';
 
 export enum OperandType {
   VGPR = 'VGPR',
@@ -29,10 +42,12 @@ export enum OperandType {
 
 export interface Operand {
   type: OperandType;
-  value: number;       // Register index or constant value
-  encoded: number;     // 9-bit encoded value for SRC0, or 8-bit for VSRC1/VDST
+  value: number;       // Register index (VGPR index, or scalar operand encoding) or constant value
+  encoded: number;     // 9-bit source encoding (VGPR = 256 + index); constants are re-encoded per operand type
   abs?: boolean;       // |src| — clear sign bit before operation
   neg?: boolean;       // -src — flip sign bit before operation
+  isFloat?: boolean;   // Constant was written in floating-point syntax (e.g. 3.0)
+  regCount?: number;   // Number of registers named by a range such as v[0:1]
 }
 
 export interface ParsedInstruction {
@@ -40,17 +55,22 @@ export interface ParsedInstruction {
   dst: Operand;
   src0: Operand;
   src1?: Operand;
-  src2?: Operand;      // VOP3-only (3-source instructions like FMA)
+  src2?: Operand;      // VOP3 3-source instructions; also the carry-in / condition SGPR of VOP3 carry ops and v_cndmask_b32
+  sdst?: Operand;      // Scalar destination: VOPC result mask, VOP3B carry-out (defaults to VCC)
+  kLiteral?: number;   // Implied 32-bit literal K of v_madmk/v_madak/v_fmamk/v_fmaak (raw bits)
   line: number;
   column: number;
   omod?: number;       // Output modifier: 0=none, 1=×2, 2=×4, 3=÷2
   clamp?: boolean;     // Clamp output to [0.0, 1.0]
-  offset?: number;     // Memory offset (SMEM, MUBUF, DS)
+  offset?: number;     // Memory offset (DS: OFFSET1:OFFSET0)
   memFlags?: number;   // Packed memory flags: bit1=idxen, bit2=glc, bit0=offen
   // DPP modifiers
   dppCtrl?: number;    // DPP16 control (row_shr:N, quad_perm, etc.)
   dpp8?: number[];     // DPP8: 8 lane selectors
   boundCtrl?: boolean; // DPP16 bound control
+  fetchInactive?: boolean; // DPP8/DPP16 FI: read pre-existing values from inactive lanes
+  rowMask?: number;    // DPP16 ROW_MASK (default 0xF)
+  bankMask?: number;   // DPP16 BANK_MASK (default 0xF)
   // SDWA modifiers (Sub-Dword Addressing)
   sdwaDstSel?: number;    // DST_SEL: 0=BYTE_0..3, 4=WORD_0, 5=WORD_1, 6=DWORD
   sdwaDstUnused?: number; // DST_UNUSED: 0=PAD, 1=SEXT, 2=PRESERVE
@@ -60,24 +80,32 @@ export interface ParsedInstruction {
   sdwaSrc1Sext?: boolean; // SRC1 sign-extend
   // Branch support
   labelRef?: string;   // Unresolved label reference (branch target)
-  simm16?: number;     // Resolved SIMM16 (branch offset or waitcnt)
-  // VOP3P modifiers
-  opSel?: number;      // OP_SEL: 2-bit, controls lo-half source selection
-  opSelHi?: number;    // OP_SEL_HI: 4-bit, controls hi-half source selection
+  simm16?: number;     // Resolved SIMM16 (branch offset in dwords, or waitcnt)
+  forceVop3?: boolean; // Written with an _e64 suffix: always use the VOP3 encoding
+  // VOP3 / VOP3P modifiers
+  opSel?: number;      // OP_SEL: VOP3 bits[3:0] = src0,src1,src2,dst; VOP3P bits[2:0] = src0..src2 lo-half select
+  opSelHi?: number;    // VOP3P OP_SEL_HI bits[2:0] = src0..src2 hi-half select (default 0b111)
+  negLo?: number;      // VOP3P NEG_LO bits[2:0] (stored as src0/1/2 neg)
+  negHi?: number;      // VOP3P NEG_HI bits[2:0]
 }
 
 export interface DecodedInstruction {
-  format: InstructionFormat;
+  format: InstructionFormat; // Opcode table format (VOP3-encoded VOP1/VOP2/VOPC keep their base format)
   opcode: number;
-  dst: number;         // VGPR index (0-255)
-  src0Encoded: number; // 9-bit encoded source
-  src1?: number;       // 8-bit VGPR index (VOP2) or 9-bit (VOP3)
-  src2?: number;       // 9-bit (VOP3 3-source only)
-  literal?: number;    // 32-bit literal if SRC0 == 255
-  address: number;     // Word offset in the binary
+  dst: number;         // VDST field: VGPR index, or SGPR encoding for scalar destinations
+  src0Encoded: number; // 9-bit encoded source (DS: ADDR VGPR index)
+  src1?: number;       // 9-bit encoded source (VOP2 VSRC1 is stored as 256 + VGPR; DS: DATA0 VGPR index)
+  src2?: number;       // 9-bit encoded source (VOP3; implicit VCC of VOP2 v_cndmask/carry ops; DS: DATA1)
+  sdst?: number;       // Scalar destination: VOPC mask target, VOP3B carry-out
+  literal?: number;    // 32-bit literal (SRC == 255), implied K constant, or Xbox v_nop data
+  address: number;     // Dword offset of the instruction in the binary
+  size: number;        // Instruction size in dwords (including literal / DPP / SDWA words)
+  encoding: EncodingKind;
+  extra?: EncodingExtra;
+  vop3?: boolean;      // Encoded with the 64-bit VOP3A/VOP3B encoding
   // Extra fields for memory/scalar instructions
   simm16?: number;     // 16-bit immediate (SOPP, SOPK)
-  offset?: number;     // Memory offset (MUBUF, SMEM)
+  offset?: number;     // Memory offset (MUBUF, SMEM, DS)
   srsrc?: number;      // Resource descriptor SGPR quad index (MUBUF, MIMG)
   ssamp?: number;      // Sampler SGPR quad index (MIMG)
   sbase?: number;      // SMEM base SGPR pair index
@@ -96,12 +124,14 @@ export interface DecodedInstruction {
   // DPP modifiers
   dppCtrl?: number;    // DPP16: 9-bit control word (row_shr, quad_perm, etc.)
   dpp8?: number[];     // DPP8: 8 lane selectors (3-bit each, within groups of 8)
-  boundCtrl?: boolean; // DPP16: true = out-of-range reads return 0
-  dppSrc0?: number;    // DPP: actual VGPR index for src0 (from DPP word bits [31:24])
-  // VOP3P packed modifiers
-  opSel?: number;      // OP_SEL bits: which 16-bit half to read from src0/src1
-  opSelHi?: number;    // OP_SEL_HI bits: src0/src1/src2/dst half selection (4 bits)
-  negHi?: number;      // NEG_HI bits: negate upper 16-bit half of src0/src1/src2
+  boundCtrl?: boolean; // DPP16: true = invalid source lanes read 0, false = lane not written
+  fetchInactive?: boolean; // DPP FI bit (DPP16) / DPP8FI encoding
+  rowMask?: number;    // DPP16 ROW_MASK
+  bankMask?: number;   // DPP16 BANK_MASK
+  // VOP3 / VOP3P modifiers
+  opSel?: number;      // VOP3: OP_SEL[3:0]; VOP3P: OP_SEL[2:0]
+  opSelHi?: number;    // VOP3P OP_SEL_HI[2:0]
+  negHi?: number;      // VOP3P NEG_HI bits for src0/src1/src2
   // SDWA modifiers (Sub-Dword Addressing)
   sdwaDstSel?: number;    // DST_SEL: 0=BYTE_0..3, 4=WORD_0, 5=WORD_1, 6=DWORD
   sdwaDstUnused?: number; // DST_UNUSED: 0=PAD, 1=SEXT, 2=PRESERVE
@@ -113,6 +143,36 @@ export interface DecodedInstruction {
 
 export type SemanticFn = (a: number, b?: number, c?: number) => number;
 
+/**
+ * Value type of a VALU operand.
+ *  - f32/f16: floating point; the semantic function receives and returns JS numbers.
+ *  - b32: raw 32-bit pattern (unsigned number).
+ *  - u16/i16/b16: low (or op_sel-selected) 16 bits, zero- or sign-extended.
+ * 16-bit destinations write only their half of the VGPR and preserve the other half (GFX10).
+ */
+export type ValueType = 'f32' | 'f16' | 'b32' | 'u16' | 'i16' | 'b16';
+
+/** Bit width of a scalar operand (0 = not present). */
+export type ScalarWidth = 0 | 32 | 64;
+
+export interface SaluContext {
+  scc: number;   // SCC before the instruction
+  d: bigint;     // Destination value before the instruction (accumulating/conditional ops)
+}
+
+/** Scalar ALU semantics, evaluated with BigInt so 64-bit operands are exact. */
+export interface SaluSemantics {
+  d: ScalarWidth;
+  s0: ScalarWidth;
+  s1: ScalarWidth;
+  /** SOPK only: how SIMM16 is extended to form S1 (S0 is the destination's old value). */
+  simm?: 'sext' | 'zext';
+  /** Returns the new destination value, or undefined to leave it unchanged. */
+  op: (s0: bigint, s1: bigint, ctx: SaluContext) => bigint | undefined;
+  /** Returns the new SCC value; omitted when the instruction does not write SCC. */
+  scc?: (s0: bigint, s1: bigint, d: bigint, ctx: SaluContext) => boolean;
+}
+
 export interface OpcodeInfo {
   mnemonic: string;
   format: InstructionFormat;
@@ -121,12 +181,27 @@ export interface OpcodeInfo {
   execute: SemanticFn;
   description: string;
   syntax: string;
-  readsVCC?: boolean;   // v_cndmask_b32: uses VCC to select
-  writesVCC?: boolean;  // VOPC: writes comparison result to VCC
+  readsVCC?: boolean;   // Reads VCC (or the VOP3 SRC2 SGPR) per lane
+  writesVCC?: boolean;  // Writes a lane mask to VCC (or the VOP3 SDST SGPR)
   halts?: boolean;      // s_endpgm: stops execution
   isIntegerOp?: boolean; // true: raw u32 input AND output (v_and_b32, v_mov_b32, etc.)
   integerInput?: boolean; // true: raw u32 input, float output (v_cvt_f32_i32, v_cvt_f32_ubyte*)
   integerOutput?: boolean; // true: float input, raw u32 output (v_cvt_u32_f32, v_cvt_i32_f32)
+  /** Explicit operand value types; takes precedence over the integer flags above. */
+  types?: { d: ValueType; s: ValueType[] };
+  /** VOP3 OP_SEL selects the 16-bit half of each source/destination. */
+  opSel?: boolean;
+  /** Destination is also an implicit source (passed as the last semantic argument). */
+  accumulate?: boolean;
+  /** Implied literal K: 'mk' → execute(S0, K, S1), 'ak' → execute(S0, S1, K). No VOP3 form. */
+  kLiteral?: 'mk' | 'ak';
+  /** Carry-chain integer op: carry-out to VCC/SDST, optional carry-in from VCC/SRC2. */
+  carry?: 'add' | 'sub' | 'subrev';
+  carryIn?: boolean;
+  /** Encoded with VOP3B (SDST field in place of ABS/OP_SEL). */
+  vop3b?: boolean;
+  /** Scalar ALU semantics (SOP1/SOP2/SOPC/SOPK). */
+  salu?: SaluSemantics;
 }
 
 export interface AssemblyError {

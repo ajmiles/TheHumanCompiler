@@ -20,6 +20,7 @@ export const INLINE_INT_NEG_MAX = 208; // encodes literal -16
 
 // Inline float constants
 export const INLINE_FLOAT_BASE = 240;
+export const INV_2PI_F32 = Math.fround(1 / (2 * Math.PI)); // 0x3E22F983
 export const INLINE_FLOAT_MAP: Record<number, number> = {
   240: 0.5,
   241: -0.5,
@@ -29,6 +30,20 @@ export const INLINE_FLOAT_MAP: Record<number, number> = {
   245: -2.0,
   246: 4.0,
   247: -4.0,
+  248: INV_2PI_F32,
+};
+
+// Inline float constants as seen by 16-bit float operands (FP16 bit patterns)
+export const INLINE_FLOAT16_BITS: Record<number, number> = {
+  240: 0x3800,
+  241: 0xB800,
+  242: 0x3C00,
+  243: 0xBC00,
+  244: 0x4000,
+  245: 0xC000,
+  246: 0x4400,
+  247: 0xC400,
+  248: 0x3118,
 };
 
 // Reverse map: float value → encoding
@@ -41,7 +56,19 @@ export const FLOAT_TO_INLINE = new Map<number, number>([
   [-2.0, 245],
   [4.0, 246],
   [-4.0, 247],
+  [INV_2PI_F32, 248],
 ]);
+
+// Special scalar sources (9-bit operand encodings)
+export const TTMP_MIN = 108;
+export const TTMP_MAX = 123;
+export const SRC_DPP8 = 0xE9;    // DPP8: inactive source lanes read as zero
+export const SRC_DPP8FI = 0xEA;  // DPP8 with fetch-inactive
+export const SRC_SDWA = 0xF9;
+export const SRC_DPP16 = 0xFA;
+export const SRC_VCCZ = 251;
+export const SRC_EXECZ = 252;
+export const SRC_SCC = 253;
 
 // Literal constant marker
 export const LITERAL_CONST = 255;
@@ -95,18 +122,24 @@ export const SOP1_OP_SHIFT = 8;
 export const SOP1_OP_MASK = 0xFF;       // 8 bits
 export const SOP1_SSRC0_MASK = 0xFF;    // 8 bits
 
-// VOP3A encoding (64-bit, two dwords):
-// Dword 0: [31:26]=0x34 prefix, [25:16]=OP(10), [11]=CLAMP, [10:8]=ABS(3), [7:0]=VDST(8)
+// VOP3A encoding (64-bit, two dwords) — GFX10:
+// Dword 0: [31:26]=0x35 prefix, [25:16]=OP(10), [15]=CLAMP, [14:11]=OP_SEL(4), [10:8]=ABS(3), [7:0]=VDST(8)
 // Dword 1: [31:29]=NEG(3), [28:27]=OMOD(2), [26:18]=SRC2(9), [17:9]=SRC1(9), [8:0]=SRC0(9)
-export const VOP3_ENCODING_PREFIX = 0x34; // 6 bits
+// VOP3B (carry-out and other scalar-destination opcodes) shares the prefix and replaces
+// OP_SEL/ABS with SDST[14:8].
+export const VOP3_ENCODING_PREFIX = 0x35; // 6 bits
 export const VOP3_PREFIX_SHIFT = 26;
 export const VOP3_PREFIX_MASK = 0x3F;    // 6 bits
 export const VOP3_OP_SHIFT = 16;
 export const VOP3_OP_MASK = 0x3FF;       // 10 bits
-export const VOP3_CLAMP_BIT = 11;
+export const VOP3_CLAMP_BIT = 15;
+export const VOP3_OPSEL_SHIFT = 11;
+export const VOP3_OPSEL_MASK = 0xF;      // 4 bits (src0, src1, src2, dst)
 export const VOP3_ABS_SHIFT = 8;
 export const VOP3_ABS_MASK = 0x7;        // 3 bits (src0=bit0, src1=bit1, src2=bit2)
 export const VOP3_VDST_MASK = 0xFF;      // 8 bits
+export const VOP3B_SDST_SHIFT = 8;
+export const VOP3B_SDST_MASK = 0x7F;     // 7 bits
 
 // Dword 1 bit positions (relative to dword 1)
 export const VOP3_SRC0_MASK = 0x1FF;     // 9 bits [8:0]
@@ -123,9 +156,13 @@ export const VOP3_NEG_MASK = 0x7;        // 3 bits [31:29]
 export const VOP3_VOP2_OFFSET = 0x100;
 // VOP1→VOP3 opcode offset: VOP3_opcode = VOP1_opcode + 0x180
 export const VOP3_VOP1_OFFSET = 0x180;
-// Keep the old name for backward compat (used in encoder for VOP2 promotion)
-/** @deprecated Use VOP3_VOP2_OFFSET or VOP3_VOP1_OFFSET */
-export { VOP3_VOP2_OFFSET as VOP3_VOP1_OFFSET_LEGACY };
+
+// VOP3P encoding (64-bit) — GFX10:
+// Dword 0: [31:24]=0xCC, [22:16]=OP(7), [15]=CLAMP, [14]=OP_SEL_HI[2], [13:11]=OP_SEL[2:0],
+//          [10:8]=NEG_HI(3), [7:0]=VDST(8)
+// Dword 1: [31:29]=NEG(3), [28:27]=OP_SEL_HI[1:0], [26:18]=SRC2, [17:9]=SRC1, [8:0]=SRC0
+export const VOP3P_ENCODING_PREFIX = 0x33; // bits [31:26]
+export const VOP3P_OP_MASK = 0x7F;
 
 // SOP2 encoding: bits[31:30]=10, [29:23]=OP(7), [22:16]=SDST(7), [15:8]=SSRC1(8), [7:0]=SSRC0(8)
 export const SOP2_OP_SHIFT = 23;
@@ -215,9 +252,11 @@ export function tryEncodeInline(value: number): number | null {
   if (Number.isInteger(value) && value >= -16 && value <= -1) {
     return INLINE_INT_NEG_MIN + (-value - 1);
   }
-  // Inline floats
-  const floatEncoding = FLOAT_TO_INLINE.get(value);
-  if (floatEncoding !== undefined) return floatEncoding;
+  // Inline floats (1/(2π) matches on its single-precision value)
+  const floatEncoding = FLOAT_TO_INLINE.get(value) ?? FLOAT_TO_INLINE.get(Math.fround(value));
+  if (floatEncoding !== undefined && Math.fround(value) === Math.fround(INLINE_FLOAT_MAP[floatEncoding])) {
+    return floatEncoding;
+  }
 
   return null;
 }

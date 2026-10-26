@@ -4,6 +4,17 @@ import { assemble } from '../src/assembler/assembler';
 import { Emulator } from '../src/emulator/emulator';
 import { decodeBinary, disassemble } from '../src/isa/encoding';
 import { lookupByOpcode, lookupByMnemonic } from '../src/isa/opcodes';
+import { f16ToF32, f32ToF16 } from '../src/isa/float16';
+
+/** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
+function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
+  emu.state.writeVGPR_u32(reg, lane, f32ToF16(value));
+}
+
+/** Read the f16 value in the low half of a VGPR lane. */
+function readF16(emu: Emulator, reg: number, lane: number): number {
+  return f16ToF32(emu.state.readVGPR_u32(reg, lane) & 0xFFFF);
+}
 
 // ── Test Harness ──
 
@@ -1067,7 +1078,7 @@ function setupSwizzle(offsetHex: string): Emulator {
   assert(emu.state.readVGPR_u32(1, 5) === 4, 'ds_swizzle QDM broadcast: lane 5 → 4');
 }
 
-// EXEC masking: disabled lanes should not be modified
+// EXEC masking: disabled lanes are not written, and reading an inactive lane returns 0
 {
   const lines: string[] = [];
   // Set v0[lane] = lane for all 32
@@ -1085,9 +1096,21 @@ function setupSwizzle(offsetHex: string): Emulator {
   lines.push('s_endpgm');
   const emu = setup(lines.join('\n'));
   emu.run();
-  assert(emu.state.readVGPR_u32(1, 0) === 1, 'ds_swizzle EXEC: active lane 0 swizzled (reads lane 1)');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'ds_swizzle EXEC: active lane 0 reading inactive lane 1 gets 0');
   assert(emu.state.readVGPR_u32(1, 1) === 0xFF, 'ds_swizzle EXEC: inactive lane 1 unchanged (0xFF)');
   assert(emu.state.readVGPR_u32(1, 2) === 0xFF, 'ds_swizzle EXEC: inactive lane 2 unchanged (0xFF)');
+}
+
+// EXEC masking: an active source lane is read normally
+{
+  const lines = ['v_mov_b32 v1, 0xFF', 's_mov_b32 exec_lo, 3'];
+  lines.unshift('v_mbcnt_lo_u32_b32 v0, -1, 0');
+  lines.push('ds_swizzle_b32 v1, v0 offset:0x041F', 's_endpgm');
+  const emu = setup(lines.join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'ds_swizzle EXEC: lane 0 reads active lane 1');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'ds_swizzle EXEC: lane 1 reads active lane 0');
+  assert(emu.state.readVGPR_u32(1, 2) === 0xFF, 'ds_swizzle EXEC: inactive lane 2 unchanged');
 }
 
 // ════════════════════════════════════════════
@@ -1186,7 +1209,7 @@ function setupLaneIndices(): string[] {
 }
 
 // ════════════════════════════════════════════
-//  DPP16 — row_shr, row_shl, row_ror, quad_perm, wave_shl/shr, row_mirror
+//  DPP16 — row_shr, row_shl, row_ror, quad_perm, row_mirror, row_share, row_xmask
 // ════════════════════════════════════════════
 group('DPP16');
 
@@ -1207,37 +1230,49 @@ function setupDpp16(dppMod: string): Emulator {
   return emu;
 }
 
-// row_shr:1 — each lane reads from lane+1 within a row of 16
+// row_shr:1 — lane n reads lane n-1 of its row; the first lane of each row has no source
 {
   const emu = setupDpp16('row_shr:1 bound_ctrl:1');
-  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16 row_shr:1: lane 0 reads lane 1');
-  assert(emu.state.readVGPR_u32(1, 14) === 15, 'DPP16 row_shr:1: lane 14 reads lane 15');
-  assert(emu.state.readVGPR_u32(1, 15) === 0, 'DPP16 row_shr:1: lane 15 OOB → 0 (bound_ctrl)');
-  assert(emu.state.readVGPR_u32(1, 16) === 17, 'DPP16 row_shr:1: lane 16 reads lane 17 (row 1)');
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'DPP16 row_shr:1: lane 0 has no source → 0 (bound_ctrl)');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'DPP16 row_shr:1: lane 1 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 15) === 14, 'DPP16 row_shr:1: lane 15 reads lane 14');
+  assert(emu.state.readVGPR_u32(1, 16) === 0, 'DPP16 row_shr:1: lane 16 (row 1 start) → 0');
+  assert(emu.state.readVGPR_u32(1, 17) === 16, 'DPP16 row_shr:1: lane 17 reads lane 16');
 }
 
-// row_shl:1 — each lane reads from lane-1 within a row
+// row_shl:1 — lane n reads lane n+1 of its row
 {
   const emu = setupDpp16('row_shl:1 bound_ctrl:1');
-  assert(emu.state.readVGPR_u32(1, 0) === 0, 'DPP16 row_shl:1: lane 0 OOB → 0 (bound_ctrl)');
-  assert(emu.state.readVGPR_u32(1, 1) === 0, 'DPP16 row_shl:1: lane 1 reads lane 0');
-  assert(emu.state.readVGPR_u32(1, 15) === 14, 'DPP16 row_shl:1: lane 15 reads lane 14');
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16 row_shl:1: lane 0 reads lane 1');
+  assert(emu.state.readVGPR_u32(1, 14) === 15, 'DPP16 row_shl:1: lane 14 reads lane 15');
+  assert(emu.state.readVGPR_u32(1, 15) === 0, 'DPP16 row_shl:1: lane 15 has no source → 0 (bound_ctrl)');
+  assert(emu.state.readVGPR_u32(1, 16) === 17, 'DPP16 row_shl:1: lane 16 reads lane 17 (row 1)');
 }
 
-// row_shr:4 — shift right by 4 within row
+// row_shr:4 — shift by 4 within the row
 {
   const emu = setupDpp16('row_shr:4 bound_ctrl:1');
-  assert(emu.state.readVGPR_u32(1, 0) === 4, 'DPP16 row_shr:4: lane 0 reads lane 4');
-  assert(emu.state.readVGPR_u32(1, 11) === 15, 'DPP16 row_shr:4: lane 11 reads lane 15');
-  assert(emu.state.readVGPR_u32(1, 12) === 0, 'DPP16 row_shr:4: lane 12 OOB → 0');
+  assert(emu.state.readVGPR_u32(1, 3) === 0, 'DPP16 row_shr:4: lane 3 has no source → 0');
+  assert(emu.state.readVGPR_u32(1, 4) === 0, 'DPP16 row_shr:4: lane 4 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 15) === 11, 'DPP16 row_shr:4: lane 15 reads lane 11');
 }
 
-// row_ror:1 — rotate right within row (wraps around)
+// Without bound_ctrl, lanes with no source lane are not written
+{
+  const lines: string[] = ['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_mov_b32 v1, 0x77', 'v_mov_b32 v1, v0 row_shr:2', 's_endpgm'];
+  const emu = setup(lines.join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0x77, 'DPP16 row_shr:2 without bound_ctrl: lane 0 keeps its old value');
+  assert(emu.state.readVGPR_u32(1, 1) === 0x77, 'DPP16 row_shr:2 without bound_ctrl: lane 1 keeps its old value');
+  assert(emu.state.readVGPR_u32(1, 2) === 0, 'DPP16 row_shr:2 without bound_ctrl: lane 2 reads lane 0');
+}
+
+// row_ror:1 — rotate right within the row: lane n reads lane (n-1) mod 16
 {
   const emu = setupDpp16('row_ror:1');
-  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16 row_ror:1: lane 0 reads lane 1');
-  assert(emu.state.readVGPR_u32(1, 15) === 0, 'DPP16 row_ror:1: lane 15 wraps to lane 0');
-  assert(emu.state.readVGPR_u32(1, 16) === 17, 'DPP16 row_ror:1: lane 16 reads lane 17 (row 1)');
+  assert(emu.state.readVGPR_u32(1, 0) === 15, 'DPP16 row_ror:1: lane 0 wraps to lane 15');
+  assert(emu.state.readVGPR_u32(1, 1) === 0, 'DPP16 row_ror:1: lane 1 reads lane 0');
+  assert(emu.state.readVGPR_u32(1, 16) === 31, 'DPP16 row_ror:1: lane 16 wraps to lane 31 (row 1)');
 }
 
 // quad_perm:[1,0,3,2] — swap adjacent within each quad
@@ -1260,20 +1295,59 @@ function setupDpp16(dppMod: string): Emulator {
   assert(emu.state.readVGPR_u32(1, 4) === 4, 'DPP16 quad_perm bcast: lane 4 → 4 (next quad)');
 }
 
-// wave_shl:1 — shift left across full wave
-{
-  const emu = setupDpp16('wave_shl:1 bound_ctrl:1');
-  assert(emu.state.readVGPR_u32(1, 0) === 0, 'DPP16 wave_shl:1: lane 0 OOB → 0');
-  assert(emu.state.readVGPR_u32(1, 1) === 0, 'DPP16 wave_shl:1: lane 1 reads lane 0');
-  assert(emu.state.readVGPR_u32(1, 16) === 15, 'DPP16 wave_shl:1: lane 16 reads lane 15 (crosses row)');
+// wave_shl / wave_shr / wave_rol / wave_ror / row_bcast are GCN-only: the assembler rejects them
+for (const mod of ['wave_shl:1', 'wave_shr:1', 'wave_rol:1', 'wave_ror:1', 'row_bcast:15', 'row_bcast31']) {
+  const r = assemble(`v_mov_b32 v1, v0 ${mod}\ns_endpgm`);
+  assert(r.errors.length === 1 && /RDNA2/.test(r.errors[0].message), `DPP16: ${mod} is rejected on RDNA2`);
 }
 
-// wave_shr:1 — shift right across full wave
+// row_share:3 — every lane of a row reads lane 3 of that row
 {
-  const emu = setupDpp16('wave_shr:1 bound_ctrl:1');
-  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16 wave_shr:1: lane 0 reads lane 1');
-  assert(emu.state.readVGPR_u32(1, 31) === 0, 'DPP16 wave_shr:1: lane 31 OOB → 0');
-  assert(emu.state.readVGPR_u32(1, 15) === 16, 'DPP16 wave_shr:1: lane 15 reads lane 16 (crosses row)');
+  const emu = setupDpp16('row_share:3');
+  assert(emu.state.readVGPR_u32(1, 0) === 3, 'DPP16 row_share:3: lane 0 reads lane 3');
+  assert(emu.state.readVGPR_u32(1, 15) === 3, 'DPP16 row_share:3: lane 15 reads lane 3');
+  assert(emu.state.readVGPR_u32(1, 16) === 19, 'DPP16 row_share:3: lane 16 reads lane 19 (row 1)');
+}
+
+// row_xmask:5 — lane n reads lane n ^ 5 of its row
+{
+  const emu = setupDpp16('row_xmask:5');
+  assert(emu.state.readVGPR_u32(1, 0) === 5, 'DPP16 row_xmask:5: lane 0 reads lane 5');
+  assert(emu.state.readVGPR_u32(1, 7) === 2, 'DPP16 row_xmask:5: lane 7 reads lane 2');
+  assert(emu.state.readVGPR_u32(1, 21) === 16, 'DPP16 row_xmask:5: lane 21 reads lane 16');
+}
+
+// row_mask / bank_mask gate which lanes are written
+{
+  const emu = setup(['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_mov_b32 v1, 0x77',
+    'v_mov_b32 v1, v0 quad_perm:[0,0,0,0] row_mask:0x1 bank_mask:0x2', 's_endpgm'].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 4) === 4, 'DPP16 row_mask:0x1 bank_mask:0x2: lane 4 (row 0, bank 1) written');
+  assert(emu.state.readVGPR_u32(1, 5) === 4, 'DPP16 row_mask:0x1 bank_mask:0x2: lane 5 (row 0, bank 1) written');
+  assert(emu.state.readVGPR_u32(1, 0) === 0x77, 'DPP16 bank_mask:0x2: lane 0 (bank 0) not written');
+  assert(emu.state.readVGPR_u32(1, 20) === 0x77, 'DPP16 row_mask:0x1: lane 20 (row 1) not written');
+}
+
+// An inactive source lane is invalid unless fi:1 (fetch inactive) is set
+{
+  const base = ['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_mov_b32 v1, 0x77', 's_mov_b32 exec_lo, 0xFFFFFFFD'];
+  let emu = setup([...base, 'v_mov_b32 v1, v0 row_shl:1', 's_endpgm'].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0x77, 'DPP16: source lane 1 inactive → lane 0 not written');
+  emu = setup([...base, 'v_mov_b32 v1, v0 row_shl:1 bound_ctrl:1', 's_endpgm'].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 0, 'DPP16: source lane 1 inactive + bound_ctrl:1 → 0');
+  emu = setup([...base, 'v_mov_b32 v1, v0 row_shl:1 fi:1', 's_endpgm'].join('\n'));
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 1, 'DPP16: fi:1 fetches inactive lane 1');
+}
+
+// DPP16 encoding matches LLVM (GFX10)
+{
+  const r = assemble('v_mov_b32 v5, v1 quad_perm:[3,2,1,0] row_mask:0x0 bank_mask:0x0');
+  assert(r.binary[0] === 0x7E0A02FA && r.binary[1] === 0x00001B01, 'DPP16 encoding: quad_perm word layout');
+  const s = assemble('v_add_nc_u32 v5, v1, v2 row_shr:1 bound_ctrl:1 fi:1');
+  assert(s.binary[1] === (0xFF000000 | (0x111 << 8) | (1 << 18) | (1 << 19) | 1) >>> 0, 'DPP16 encoding: row_shr/FI/BOUND_CTRL/masks');
 }
 
 // row_mirror — reverse within row of 16
@@ -1306,8 +1380,10 @@ function setupDpp16(dppMod: string): Emulator {
   lines.push('s_endpgm');
   const emu = setup(lines.join('\n'));
   emu.run();
-  // Lane 0: src0=v0[lane 1]=1.0 (DPP), src1=v0[lane 0]=0.0 → 1.0
-  assert(approx(emu.state.readVGPR(1, 0), 1.0), 'DPP16 VOP2: v_add_f32 row_shr:1 lane 0 = 0.0 + 1.0');
+  // Lane 0: src0 has no source lane → 0.0 (bound_ctrl), src1 = v0[0] = 0.0
+  assert(approx(emu.state.readVGPR(1, 0), 0.0), 'DPP16 VOP2: v_add_f32 row_shr:1 lane 0 = 0.0 + 0.0');
+  // Lane 5: src0 = v0[lane 4] = 4.0 (DPP), src1 = v0[lane 5] = 5.0
+  assert(approx(emu.state.readVGPR(1, 5), 9.0), 'DPP16 VOP2: v_add_f32 row_shr:1 lane 5 = 4.0 + 5.0');
 }
 
 // ════════════════════════════════════════════
@@ -1503,11 +1579,12 @@ group('PC Manipulation');
 // ════════════════════════════════════════════
 group('VOP3P Packed 16-bit Operations');
 
-// Helper: build VOP3P binary (2 dwords)
-// opSelHi default 0x7 = bits[2:0] set → all source hi reads from hi half
-function buildVOP3P(opcode: number, vdst: number, src0: number, src1: number, src2 = 0, opSelHi = 0x7): number[] {
-  const dword0 = (0x33 << 26) | ((opcode & 0x3FF) << 16) | ((opSelHi & 0xF) << 11) | (vdst & 0xFF);
-  const dword1 = ((src2 & 0x1FF) << 18) | ((src1 & 0x1FF) << 9) | (src0 & 0x1FF);
+// Helper: build a GFX10 VOP3P instruction (2 dwords)
+// Dword 0: [31:24]=0xCC, [22:16]=OP, [15]=CLAMP, [14]=OP_SEL_HI[2], [13:11]=OP_SEL, [10:8]=NEG_HI, [7:0]=VDST
+// Dword 1: [31:29]=NEG_LO, [28:27]=OP_SEL_HI[1:0], [26:18]=SRC2, [17:9]=SRC1, [8:0]=SRC0
+function buildVOP3P(opcode: number, vdst: number, src0: number, src1: number, src2 = 0x80, opSelHi = 0x7, opSel = 0): number[] {
+  const dword0 = (0xCC << 24) | ((opcode & 0x7F) << 16) | (((opSelHi >> 2) & 1) << 14) | ((opSel & 7) << 11) | (vdst & 0xFF);
+  const dword1 = ((opSelHi & 3) << 27) | ((src2 & 0x1FF) << 18) | ((src1 & 0x1FF) << 9) | (src0 & 0x1FF);
   return [dword0 >>> 0, dword1 >>> 0];
 }
 
@@ -1963,7 +2040,7 @@ group('SOP2 (new instructions)');
   assert(emu.state.readSGPR(2) === 20, 's_sub_i32: 30 - 10 = 20');
 }
 
-// s_sub_i32: borrow sets SCC
+// s_sub_i32: SCC = signed overflow (not borrow)
 {
   const emu = setup([
     's_mov_b32 s0, 5',
@@ -1972,7 +2049,19 @@ group('SOP2 (new instructions)');
     's_endpgm',
   ].join('\n'));
   emu.run();
-  assert(emu.state.scc === 1, 's_sub_i32: 5 - 10 sets SCC=1 (borrow)');
+  assert(emu.state.readSGPR(2) === ((-5) >>> 0), 's_sub_i32: 5 - 10 = -5');
+  assert(emu.state.scc === 0, 's_sub_i32: 5 - 10 does not overflow → SCC=0');
+}
+
+{
+  const emu = setup([
+    's_mov_b32 s0, 0x80000000',
+    's_sub_i32 s2, s0, 1',
+    's_endpgm',
+  ].join('\n'));
+  emu.run();
+  assert(emu.state.readSGPR(2) === 0x7FFFFFFF, 's_sub_i32: INT_MIN - 1 wraps to INT_MAX');
+  assert(emu.state.scc === 1, 's_sub_i32: INT_MIN - 1 overflows → SCC=1');
 }
 
 // s_min_i32: signed minimum
@@ -2323,54 +2412,55 @@ group('SOP2 (new instructions)');
   assert(emu.state.readSGPR(2) === 0, 's_absdiff_i32: abs(42 - 42) = 0');
 }
 
-// s_cselect_b64: select based on SCC
+// s_cselect_b64: select based on SCC (64-bit register pairs)
 {
   const emu = setup([
-    's_mov_b32 s0, 100',
-    's_mov_b32 s1, 200',
+    's_mov_b64 s[0:1], 100',
+    's_mov_b64 s[2:3], 200',
     's_cmp_eq_u32 s0, 100',
-    's_cselect_b64 s2, s0, s1',
+    's_cselect_b64 s[4:5], s[0:1], s[2:3]',
     's_endpgm',
   ].join('\n'));
   emu.run();
-  assert(emu.state.readSGPR(2) === 100, 's_cselect_b64: SCC=1 → selects ssrc0 (100)');
+  assert(emu.state.readSGPR(4) === 100 && emu.state.readSGPR(5) === 0, 's_cselect_b64: SCC=1 → selects ssrc0 (100)');
 }
 
 // s_cselect_b64: SCC=0
 {
   const emu = setup([
-    's_mov_b32 s0, 100',
-    's_mov_b32 s1, 200',
+    's_mov_b64 s[0:1], 100',
+    's_mov_b64 s[2:3], -1',
     's_cmp_eq_u32 s0, 999',
-    's_cselect_b64 s2, s0, s1',
+    's_cselect_b64 s[4:5], s[0:1], s[2:3]',
     's_endpgm',
   ].join('\n'));
   emu.run();
-  assert(emu.state.readSGPR(2) === 200, 's_cselect_b64: SCC=0 → selects ssrc1 (200)');
+  assert(emu.state.readSGPR(4) === 0xFFFFFFFF && emu.state.readSGPR(5) === 0xFFFFFFFF, 's_cselect_b64: SCC=0 → selects ssrc1 (-1, all 64 bits)');
 }
 
 // s_lshl_b64: left shift 64-bit
 {
   const emu = setup([
-    's_mov_b32 s0, 1',
-    's_mov_b32 s1, 16',
-    's_lshl_b64 s2, s0, s1',
+    's_mov_b64 s[0:1], 1',
+    's_mov_b32 s4, 40',
+    's_lshl_b64 s[2:3], s[0:1], s4',
     's_endpgm',
   ].join('\n'));
   emu.run();
-  assert(emu.state.readSGPR(2) === (1 << 16), 's_lshl_b64: 1 << 16 = 65536');
+  assert(emu.state.readSGPR(2) === 0 && emu.state.readSGPR(3) === (1 << 8), 's_lshl_b64: 1 << 40 crosses into the high dword');
 }
 
 // s_lshr_b64: right shift 64-bit
 {
   const emu = setup([
-    's_lshr_b64 s2, s0, s1',
+    's_lshr_b64 s[2:3], s[0:1], s4',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0x10000);
-  emu.state.writeSGPR(1, 8);
+  emu.state.writeSGPR(1, 0x3);
+  emu.state.writeSGPR(4, 8);
   emu.run();
-  assert(emu.state.readSGPR(2) === 0x100, 's_lshr_b64: 0x10000 >> 8 = 0x100');
+  assert(emu.state.readSGPR(2) === 0x03000100 && emu.state.readSGPR(3) === 0, 's_lshr_b64: 0x3_00010000 >> 8 = 0x03000100');
 }
 
 // s_ashr_i64
@@ -2461,15 +2551,18 @@ group('SOP1 (new instructions)');
   assert(emu.state.scc === 0, 's_not_b32: SCC=0 when result is 0');
 }
 
-// s_not_b64: bitwise NOT (low 32 bits)
+// s_not_b64: bitwise NOT of a register pair
 {
   const emu = setup([
-    's_not_b64 s1, s0',
+    's_not_b64 s[2:3], s[0:1]',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0x0F0F0F0F);
+  emu.state.writeSGPR(1, 0xFFFFFFFF);
   emu.run();
-  assert(emu.state.readSGPR(1) === (0xF0F0F0F0 >>> 0), 's_not_b64: ~0x0F0F0F0F');
+  assert(emu.state.readSGPR(2) === (0xF0F0F0F0 >>> 0), 's_not_b64: low dword ~0x0F0F0F0F');
+  assert(emu.state.readSGPR(3) === 0, 's_not_b64: high dword ~0xFFFFFFFF');
+  assert(emu.state.scc === 1, 's_not_b64: SCC=1 (result non-zero)');
 }
 
 // s_wqm_b32: whole quad mode — single bit per quad activates all 4
@@ -2541,24 +2634,25 @@ group('SOP1 (new instructions)');
 // s_bitreplicate_b64_b32: replicate bits
 {
   const emu = setup([
-    's_bitreplicate_b64_b32 s1, s0',
+    's_bitreplicate_b64_b32 s[2:3], s0',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0x00000005); // bits 0 and 2 set → 0b0101
   emu.run();
   // bit 0 → bits 1:0 = 0b11, bit 2 → bits 5:4 = 0b11
-  assert(emu.state.readSGPR(1) === 0x00000033, 's_bitreplicate: 0x5 → 0x33');
+  assert(emu.state.readSGPR(2) === 0x00000033 && emu.state.readSGPR(3) === 0, 's_bitreplicate: 0x5 → 0x33');
 }
 
-// s_bitreplicate_b64_b32: all low 16 bits set
+// s_bitreplicate_b64_b32: all low 16 bits set fill the low dword; bit 16 starts the high dword
 {
   const emu = setup([
-    's_bitreplicate_b64_b32 s1, s0',
+    's_bitreplicate_b64_b32 s[2:3], s0',
     's_endpgm',
   ].join('\n'));
-  emu.state.writeSGPR(0, 0x0000FFFF);
+  emu.state.writeSGPR(0, 0x0001FFFF);
   emu.run();
-  assert(emu.state.readSGPR(1) === 0xFFFFFFFF, 's_bitreplicate: 0xFFFF → 0xFFFFFFFF');
+  assert(emu.state.readSGPR(2) === 0xFFFFFFFF, 's_bitreplicate: 0xFFFF → low dword 0xFFFFFFFF');
+  assert(emu.state.readSGPR(3) === 0x3, 's_bitreplicate: bit 16 → high dword 0x3');
 }
 
 // ════════════════════════════════════════════
@@ -2984,7 +3078,7 @@ group('VOP1 New Instructions');
 // v_cvt_u16_f16: float to unsigned 16
 {
   const emu = setup('v_cvt_u16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 42.7);
+  writeF16(emu, 0, 0, 42.7);
   emu.state.modifiedRegs.clear();
   emu.run();
   assert(emu.state.readVGPR_u32(1, 0) === 42, 'v_cvt_u16_f16: 42.7 → 42');
@@ -2992,7 +3086,7 @@ group('VOP1 New Instructions');
 
 {
   const emu = setup('v_cvt_u16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, -1.0);
+  writeF16(emu, 0, 0, -1.0);
   emu.state.modifiedRegs.clear();
   emu.run();
   assert(emu.state.readVGPR_u32(1, 0) === 0, 'v_cvt_u16_f16: -1.0 clamped to 0');
@@ -3001,7 +3095,7 @@ group('VOP1 New Instructions');
 // v_cvt_i16_f16: float to signed 16
 {
   const emu = setup('v_cvt_i16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, -5.9);
+  writeF16(emu, 0, 0, -5.9);
   emu.state.modifiedRegs.clear();
   emu.run();
   const result = emu.state.readVGPR_u32(1, 0);
@@ -3011,7 +3105,7 @@ group('VOP1 New Instructions');
 
 {
   const emu = setup('v_cvt_i16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 100.0);
+  writeF16(emu, 0, 0, 100.0);
   emu.state.modifiedRegs.clear();
   emu.run();
   assert(emu.state.readVGPR_u32(1, 0) === 100, 'v_cvt_i16_f16: 100.0 → 100');
@@ -3020,137 +3114,137 @@ group('VOP1 New Instructions');
 // v_rsq_f16: reciprocal sqrt
 {
   const emu = setup('v_rsq_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 4.0);
+  writeF16(emu, 0, 0, 4.0);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 0.5), 'v_rsq_f16: 1/√4 = 0.5');
+  assert(approx(readF16(emu, 1, 0), 0.5), 'v_rsq_f16: 1/√4 = 0.5');
 }
 
 {
   const emu = setup('v_rsq_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 1.0);
+  writeF16(emu, 0, 0, 1.0);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 1.0), 'v_rsq_f16: 1/√1 = 1.0');
+  assert(approx(readF16(emu, 1, 0), 1.0), 'v_rsq_f16: 1/√1 = 1.0');
 }
 
 // v_log_f16: log2
 {
   const emu = setup('v_log_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 8.0);
+  writeF16(emu, 0, 0, 8.0);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 3.0), 'v_log_f16: log2(8) = 3.0');
+  assert(approx(readF16(emu, 1, 0), 3.0), 'v_log_f16: log2(8) = 3.0');
 }
 
 {
   const emu = setup('v_log_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 1.0);
+  writeF16(emu, 0, 0, 1.0);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 0.0), 'v_log_f16: log2(1) = 0.0');
+  assert(approx(readF16(emu, 1, 0), 0.0), 'v_log_f16: log2(1) = 0.0');
 }
 
 // v_ceil_f16
 {
   const emu = setup('v_ceil_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 2.3);
+  writeF16(emu, 0, 0, 2.3);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 3.0), 'v_ceil_f16: ceil(2.3) = 3.0');
+  assert(approx(readF16(emu, 1, 0), 3.0), 'v_ceil_f16: ceil(2.3) = 3.0');
 }
 
 {
   const emu = setup('v_ceil_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, -1.5);
+  writeF16(emu, 0, 0, -1.5);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), -1.0), 'v_ceil_f16: ceil(-1.5) = -1.0');
+  assert(approx(readF16(emu, 1, 0), -1.0), 'v_ceil_f16: ceil(-1.5) = -1.0');
 }
 
 // v_trunc_f16
 {
   const emu = setup('v_trunc_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 3.7);
+  writeF16(emu, 0, 0, 3.7);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 3.0), 'v_trunc_f16: trunc(3.7) = 3.0');
+  assert(approx(readF16(emu, 1, 0), 3.0), 'v_trunc_f16: trunc(3.7) = 3.0');
 }
 
 {
   const emu = setup('v_trunc_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, -2.9);
+  writeF16(emu, 0, 0, -2.9);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), -2.0), 'v_trunc_f16: trunc(-2.9) = -2.0');
+  assert(approx(readF16(emu, 1, 0), -2.0), 'v_trunc_f16: trunc(-2.9) = -2.0');
 }
 
 // v_rndne_f16: round to nearest even
 {
   const emu = setup('v_rndne_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 2.5);
+  writeF16(emu, 0, 0, 2.5);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 2.0), 'v_rndne_f16: roundEven(2.5) = 2.0');
+  assert(approx(readF16(emu, 1, 0), 2.0), 'v_rndne_f16: roundEven(2.5) = 2.0');
 }
 
 {
   const emu = setup('v_rndne_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 3.5);
+  writeF16(emu, 0, 0, 3.5);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 4.0), 'v_rndne_f16: roundEven(3.5) = 4.0');
+  assert(approx(readF16(emu, 1, 0), 4.0), 'v_rndne_f16: roundEven(3.5) = 4.0');
 }
 
 // v_fract_f16
 {
   const emu = setup('v_fract_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 3.75);
+  writeF16(emu, 0, 0, 3.75);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 0.75), 'v_fract_f16: fract(3.75) = 0.75');
+  assert(approx(readF16(emu, 1, 0), 0.75), 'v_fract_f16: fract(3.75) = 0.75');
 }
 
 {
   const emu = setup('v_fract_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, -0.25);
+  writeF16(emu, 0, 0, -0.25);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 0.75), 'v_fract_f16: fract(-0.25) = 0.75');
+  assert(approx(readF16(emu, 1, 0), 0.75), 'v_fract_f16: fract(-0.25) = 0.75');
 }
 
 // v_sin_f16
 {
   const emu = setup('v_sin_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.25); // sin(2π × 0.25) = sin(π/2) = 1.0
+  writeF16(emu, 0, 0, 0.25); // sin(2π × 0.25) = sin(π/2) = 1.0
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 1.0), 'v_sin_f16: sin(2π × 0.25) = 1.0');
+  assert(approx(readF16(emu, 1, 0), 1.0), 'v_sin_f16: sin(2π × 0.25) = 1.0');
 }
 
 {
   const emu = setup('v_sin_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.0);
+  writeF16(emu, 0, 0, 0.0);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 0.0), 'v_sin_f16: sin(0) = 0.0');
+  assert(approx(readF16(emu, 1, 0), 0.0), 'v_sin_f16: sin(0) = 0.0');
 }
 
 // v_cos_f16
 {
   const emu = setup('v_cos_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.0); // cos(0) = 1.0
+  writeF16(emu, 0, 0, 0.0); // cos(0) = 1.0
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 1.0), 'v_cos_f16: cos(0) = 1.0');
+  assert(approx(readF16(emu, 1, 0), 1.0), 'v_cos_f16: cos(0) = 1.0');
 }
 
 {
   const emu = setup('v_cos_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.5); // cos(2π × 0.5) = cos(π) = -1.0
+  writeF16(emu, 0, 0, 0.5); // cos(2π × 0.5) = cos(π) = -1.0
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), -1.0), 'v_cos_f16: cos(2π × 0.5) = -1.0');
+  assert(approx(readF16(emu, 1, 0), -1.0), 'v_cos_f16: cos(2π × 0.5) = -1.0');
 }
 
 // ════════════════════════════════════════════
@@ -3158,96 +3252,98 @@ group('VOP1 New Instructions');
 // ════════════════════════════════════════════
 group('VOP2 New Instructions');
 
-// v_sub_co_ci_u32 (carry-in from VCC, executor treats as cndmask)
+// v_sub_co_ci_u32: vdst = src0 - vsrc1 - VCC[lane]; VCC[lane] = borrow
 {
   const emu = setup('v_sub_co_ci_u32 v2, v0, v1\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 10);
   emu.state.writeVGPR_u32(1, 0, 3);
-  emu.state.vcc = 0; // VCC[0]=0 → selects src0
+  emu.state.vcc = 0;
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 10, 'v_sub_co_ci_u32: VCC=0 → selects src0=10');
+  assert(emu.state.readVGPR_u32(2, 0) === 7, 'v_sub_co_ci_u32: 10 - 3 - 0 = 7');
+  assert((emu.state.vcc & 1) === 0, 'v_sub_co_ci_u32: no borrow out');
 }
 
 {
-  const emu = setup('v_sub_co_ci_u32 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR_u32(0, 0, 10);
+  const emu = setup('v_sub_co_ci_u32 v2, vcc_lo, v0, v1, vcc_lo\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 3);
   emu.state.writeVGPR_u32(1, 0, 3);
-  emu.state.vcc = 1; // VCC[0]=1 → selects src1
+  emu.state.vcc = 1;
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 3, 'v_sub_co_ci_u32: VCC=1 → selects src1=3');
+  assert(emu.state.readVGPR_u32(2, 0) === 0xFFFFFFFF, 'v_sub_co_ci_u32: 3 - 3 - 1 wraps to 0xFFFFFFFF');
+  assert((emu.state.vcc & 1) === 1, 'v_sub_co_ci_u32: borrow out sets VCC');
 }
 
-// v_subrev_co_ci_u32 (carry-in from VCC, executor treats as cndmask)
+// v_subrev_co_ci_u32: vdst = vsrc1 - src0 - VCC[lane]
 {
   const emu = setup('v_subrev_co_ci_u32 v2, v0, v1\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 3);
   emu.state.writeVGPR_u32(1, 0, 10);
-  emu.state.vcc = 0; // VCC[0]=0 → selects src0
+  emu.state.vcc = 0;
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 3, 'v_subrev_co_ci_u32: VCC=0 → selects src0=3');
+  assert(emu.state.readVGPR_u32(2, 0) === 7, 'v_subrev_co_ci_u32: 10 - 3 - 0 = 7');
 }
 
 {
   const emu = setup('v_subrev_co_ci_u32 v2, v0, v1\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 5);
   emu.state.writeVGPR_u32(1, 0, 10);
-  emu.state.vcc = 1; // VCC[0]=1 → selects src1
+  emu.state.vcc = 1;
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 10, 'v_subrev_co_ci_u32: VCC=1 → selects src1=10');
+  assert(emu.state.readVGPR_u32(2, 0) === 4, 'v_subrev_co_ci_u32: 10 - 5 - 1 = 4');
 }
 
-// v_fmamk_f32
+// v_fmamk_f32: vdst = src0 × K + vsrc1
 {
-  const emu = setup('v_fmamk_f32 v2, v0, v1\ns_endpgm');
+  const emu = setup('v_fmamk_f32 v2, v0, 2.0, v1\ns_endpgm');
   emu.state.writeVGPR(0, 0, 3.0);
-  emu.state.writeVGPR(1, 0, 2.0);
-  emu.state.modifiedRegs.clear();
-  emu.run();
-  assert(approx(emu.state.readVGPR(2, 0), 6.0), 'v_fmamk_f32: 3.0 * 2.0 = 6.0');
-}
-
-{
-  const emu = setup('v_fmamk_f32 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.0);
-  emu.state.writeVGPR(1, 0, 5.0);
-  emu.state.modifiedRegs.clear();
-  emu.run();
-  assert(approx(emu.state.readVGPR(2, 0), 0.0), 'v_fmamk_f32: 0 * 5 = 0');
-}
-
-// v_fmaak_f32
-{
-  const emu = setup('v_fmaak_f32 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 3.0);
-  emu.state.writeVGPR(1, 0, 2.0);
-  emu.state.modifiedRegs.clear();
-  emu.run();
-  assert(approx(emu.state.readVGPR(2, 0), 6.0), 'v_fmaak_f32: 3.0 * 2.0 = 6.0');
-}
-
-{
-  const emu = setup('v_fmaak_f32 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 1.0);
   emu.state.writeVGPR(1, 0, 1.0);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(2, 0), 1.0), 'v_fmaak_f32: 1.0 * 1.0 = 1.0');
+  assert(approx(emu.state.readVGPR(2, 0), 7.0), 'v_fmamk_f32: 3.0 * 2.0 + 1.0 = 7.0');
 }
 
-// v_cvt_pkrtz_f16_f32: pack two values
+{
+  const r = assemble('v_fmamk_f32 v2, v0, 0x40000000, v1');
+  assert(r.binary.length === 2 && r.binary[1] === 0x40000000, 'v_fmamk_f32: K is the literal dword after the instruction');
+}
+
+// v_fmaak_f32: vdst = src0 × vsrc1 + K
+{
+  const emu = setup('v_fmaak_f32 v2, v0, v1, 0.5\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 3.0);
+  emu.state.writeVGPR(1, 0, 2.0);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  assert(approx(emu.state.readVGPR(2, 0), 6.5), 'v_fmaak_f32: 3.0 * 2.0 + 0.5 = 6.5');
+}
+
+{
+  const r = assemble('v_fmaak_f32 v2, -v0, v1, 0.5');
+  assert(r.errors.length === 1, 'v_fmaak_f32: has no VOP3 form, so modifiers are rejected');
+}
+
+// v_cvt_pkrtz_f16_f32: convert two f32 values to f16 (round toward zero) and pack them
 {
   const emu = setup('v_cvt_pkrtz_f16_f32 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR_u32(0, 0, 0x0000ABCD);
-  emu.state.writeVGPR_u32(1, 0, 0x00001234);
+  emu.state.writeVGPR(0, 0, 1.0);
+  emu.state.writeVGPR(1, 0, -2.5);
   emu.state.modifiedRegs.clear();
   emu.run();
   const r = emu.state.readVGPR_u32(2, 0);
-  assert((r & 0xFFFF) === 0xABCD, 'v_cvt_pkrtz_f16_f32: low 16 bits = src0[15:0]');
-  assert(((r >>> 16) & 0xFFFF) === 0x1234, 'v_cvt_pkrtz_f16_f32: high 16 bits = src1[15:0]');
+  assert((r & 0xFFFF) === 0x3C00, 'v_cvt_pkrtz_f16_f32: low half = f16(src0) = 1.0');
+  assert((r >>> 16) === 0xC100, 'v_cvt_pkrtz_f16_f32: high half = f16(vsrc1) = -2.5');
+}
+
+{
+  // 1 + 0.75 ulp(f16) rounds to nearest as 0x3C01 but toward zero as 0x3C00
+  const emu = setup('v_cvt_pkrtz_f16_f32 v2, v0, v0\ns_endpgm');
+  emu.state.writeVGPR(0, 0, 1 + 0.75 / 1024);
+  emu.run();
+  assert((emu.state.readVGPR_u32(2, 0) & 0xFFFF) === 0x3C00, 'v_cvt_pkrtz_f16_f32: rounds toward zero');
 }
 
 // ════════════════════════════════════════════
@@ -3297,7 +3393,7 @@ group('VOP3 New Instructions');
   assert(approx(emu.state.readVGPR(3, 0), 1.0), 'v_cubeid_f32: -X face = 1');
 }
 
-// v_cubema_f32
+// v_cubema_f32: 2 × the major-axis coordinate (signed); ties prefer Z, then Y
 {
   const emu = setup('v_cubema_f32 v3, v0, v1, v2\ns_endpgm');
   emu.state.writeVGPR(0, 0, 3.0);
@@ -3305,7 +3401,7 @@ group('VOP3 New Instructions');
   emu.state.writeVGPR(2, 0, 2.0);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(approx(emu.state.readVGPR(3, 0), 8.0), 'v_cubema_f32: 2*max(3,4,2) = 8.0');
+  assert(approx(emu.state.readVGPR(3, 0), -8.0), 'v_cubema_f32: major axis Y = -4 → -8.0');
 }
 
 {
@@ -3617,58 +3713,54 @@ group('VOP3 New Instructions');
   assert(emu.state.readVGPR_u32(3, 0) === 0xFFFFFFFF, 'v_xor3_b32: 0xAA..^0x55..^0 = 0xFF..');
 }
 
-// v_lshlrev_b64
+// v_lshlrev_b64: 64-bit register pairs v[dst:dst+1] = v[src1:src1+1] << src0
 {
-  const emu = setup('v_lshlrev_b64 v2, v0, v1\ns_endpgm');
+  const emu = setup('v_lshlrev_b64 v[2:3], v0, v[4:5]\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 4);
-  emu.state.writeVGPR_u32(1, 0, 0x0F);
+  emu.state.writeVGPR_u32(4, 0, 0xF000000F);
+  emu.state.writeVGPR_u32(5, 0, 0x1);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 0xF0, 'v_lshlrev_b64: 0x0F << 4 = 0xF0');
+  assert(emu.state.readVGPR_u32(2, 0) === 0x000000F0, 'v_lshlrev_b64: low dword 0xF000000F << 4');
+  assert(emu.state.readVGPR_u32(3, 0) === 0x1F, 'v_lshlrev_b64: high dword receives the carried-out bits');
 }
 
 {
-  const emu = setup('v_lshlrev_b64 v2, v0, v1\ns_endpgm');
+  const emu = setup('v_lshlrev_b64 v[2:3], v0, v[4:5]\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 0);
-  emu.state.writeVGPR_u32(1, 0, 42);
+  emu.state.writeVGPR_u32(4, 0, 42);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 42, 'v_lshlrev_b64: shift 0 = identity');
+  assert(emu.state.readVGPR_u32(2, 0) === 42 && emu.state.readVGPR_u32(3, 0) === 0, 'v_lshlrev_b64: shift 0 = identity');
 }
 
 // v_lshrrev_b64
 {
-  const emu = setup('v_lshrrev_b64 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR_u32(0, 0, 4);
-  emu.state.writeVGPR_u32(1, 0, 0xF0);
+  const emu = setup('v_lshrrev_b64 v[2:3], v0, v[4:5]\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 36);
+  emu.state.writeVGPR_u32(4, 0, 0);
+  emu.state.writeVGPR_u32(5, 0, 0xF0);
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 0x0F, 'v_lshrrev_b64: 0xF0 >> 4 = 0x0F');
-}
-
-{
-  const emu = setup('v_lshrrev_b64 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR_u32(0, 0, 0);
-  emu.state.writeVGPR_u32(1, 0, 0xFF);
-  emu.state.modifiedRegs.clear();
-  emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 0xFF, 'v_lshrrev_b64: shift 0 = identity');
+  assert(emu.state.readVGPR_u32(2, 0) === 0x0F && emu.state.readVGPR_u32(3, 0) === 0, 'v_lshrrev_b64: 0xF0_00000000 >> 36 = 0x0F');
 }
 
 // v_ashrrev_i64
 {
-  const emu = setup('v_ashrrev_i64 v2, v0, v1\ns_endpgm');
+  const emu = setup('v_ashrrev_i64 v[2:3], v0, v[4:5]\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 4);
-  emu.state.writeVGPR_u32(1, 0, 0x80000000); // negative value
+  emu.state.writeVGPR_u32(4, 0, 0);
+  emu.state.writeVGPR_u32(5, 0, 0x80000000); // negative 64-bit value
   emu.state.modifiedRegs.clear();
   emu.run();
-  assert(emu.state.readVGPR_u32(2, 0) === 0xF8000000, 'v_ashrrev_i64: sign-extending right shift');
+  assert(emu.state.readVGPR_u32(2, 0) === 0 && emu.state.readVGPR_u32(3, 0) === 0xF8000000, 'v_ashrrev_i64: sign-extending right shift');
 }
 
 {
-  const emu = setup('v_ashrrev_i64 v2, v0, v1\ns_endpgm');
+  const emu = setup('v_ashrrev_i64 v[2:3], v0, v[4:5]\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 1);
-  emu.state.writeVGPR_u32(1, 0, 100);
+  emu.state.writeVGPR_u32(4, 0, 100);
+  emu.state.writeVGPR_u32(5, 0, 0);
   emu.state.modifiedRegs.clear();
   emu.run();
   assert(emu.state.readVGPR_u32(2, 0) === 50, 'v_ashrrev_i64: 100 >> 1 = 50');
@@ -4245,11 +4337,11 @@ group('SOP2/SOPC (RDNA2 additions)');
 // s_orn2_b64: OR-NOT2 64-bit
 {
   const emu = setup([
-    's_orn2_b64 s2, s0, s1',
+    's_orn2_b64 s[2:3], s[0:1], s[4:5]',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0x0F0F0F0F);
-  emu.state.writeSGPR(1, 0xFFFF0000);
+  emu.state.writeSGPR(4, 0xFFFF0000);
   emu.run();
   assert(emu.state.readSGPR(2) === (0x0F0F0F0F | ~0xFFFF0000) >>> 0, 's_orn2_b64: ssrc0 | ~ssrc1');
 }
@@ -4258,8 +4350,8 @@ group('SOP2/SOPC (RDNA2 additions)');
 {
   const emu = setup([
     's_mov_b32 s0, 0',
-    's_mov_b32 s1, 0',
-    's_orn2_b64 s2, s0, s1',
+    's_mov_b32 s4, 0',
+    's_orn2_b64 s[2:3], s[0:1], s[4:5]',
     's_endpgm',
   ].join('\n'));
   emu.run();
@@ -4269,11 +4361,11 @@ group('SOP2/SOPC (RDNA2 additions)');
 // s_nand_b64: NAND 64-bit
 {
   const emu = setup([
-    's_nand_b64 s2, s0, s1',
+    's_nand_b64 s[2:3], s[0:1], s[4:5]',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0xFF00FF00);
-  emu.state.writeSGPR(1, 0xFFFF0000);
+  emu.state.writeSGPR(4, 0xFFFF0000);
   emu.run();
   assert(emu.state.readSGPR(2) === (~(0xFF00FF00 & 0xFFFF0000) >>> 0), 's_nand_b64: ~(ssrc0 & ssrc1)');
 }
@@ -4281,24 +4373,23 @@ group('SOP2/SOPC (RDNA2 additions)');
 // s_nand_b64: all ones → 0
 {
   const emu = setup([
-    's_nand_b64 s2, s0, s1',
+    's_nand_b64 s[2:3], s[0:1], s[4:5]',
     's_endpgm',
   ].join('\n'));
-  emu.state.writeSGPR(0, 0xFFFFFFFF);
-  emu.state.writeSGPR(1, 0xFFFFFFFF);
+  for (const r of [0, 1, 4, 5]) emu.state.writeSGPR(r, 0xFFFFFFFF);
   emu.run();
-  assert(emu.state.readSGPR(2) === 0, 's_nand_b64: ~(0xFFFFFFFF & 0xFFFFFFFF) = 0');
+  assert(emu.state.readSGPR(2) === 0 && emu.state.readSGPR(3) === 0, 's_nand_b64: ~(all ones & all ones) = 0');
   assert(emu.state.scc === 0, 's_nand_b64: result 0 → SCC=0');
 }
 
 // s_nor_b64: NOR 64-bit
 {
   const emu = setup([
-    's_nor_b64 s2, s0, s1',
+    's_nor_b64 s[2:3], s[0:1], s[4:5]',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0x00FF0000);
-  emu.state.writeSGPR(1, 0x000000FF);
+  emu.state.writeSGPR(4, 0x000000FF);
   emu.run();
   assert(emu.state.readSGPR(2) === (~(0x00FF0000 | 0x000000FF) >>> 0), 's_nor_b64: ~(ssrc0 | ssrc1)');
 }
@@ -4307,8 +4398,8 @@ group('SOP2/SOPC (RDNA2 additions)');
 {
   const emu = setup([
     's_mov_b32 s0, 0',
-    's_mov_b32 s1, 0',
-    's_nor_b64 s2, s0, s1',
+    's_mov_b32 s4, 0',
+    's_nor_b64 s[2:3], s[0:1], s[4:5]',
     's_endpgm',
   ].join('\n'));
   emu.run();
@@ -4342,11 +4433,11 @@ group('SOP2/SOPC (RDNA2 additions)');
 // s_xnor_b64: XNOR 64-bit
 {
   const emu = setup([
-    's_xnor_b64 s2, s0, s1',
+    's_xnor_b64 s[2:3], s[0:1], s[4:5]',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0xAAAAAAAA);
-  emu.state.writeSGPR(1, 0xAAAAAAAA);
+  emu.state.writeSGPR(4, 0xAAAAAAAA);
   emu.run();
   assert(emu.state.readSGPR(2) === 0xFFFFFFFF, 's_xnor_b64: identical values → all ones');
 }
@@ -4354,13 +4445,13 @@ group('SOP2/SOPC (RDNA2 additions)');
 // s_xnor_b64: all zero XOR all ones
 {
   const emu = setup([
-    's_xnor_b64 s2, s0, s1',
+    's_xnor_b64 s[2:3], s[0:1], s[4:5]',
     's_endpgm',
   ].join('\n'));
-  emu.state.writeSGPR(0, 0x00000000);
-  emu.state.writeSGPR(1, 0xFFFFFFFF);
+  emu.state.writeSGPR(4, 0xFFFFFFFF);
+  emu.state.writeSGPR(5, 0xFFFFFFFF);
   emu.run();
-  assert(emu.state.readSGPR(2) === 0, 's_xnor_b64: ~(0 ^ 0xFFFFFFFF) = 0');
+  assert(emu.state.readSGPR(2) === 0 && emu.state.readSGPR(3) === 0, 's_xnor_b64: ~(0 ^ all ones) = 0');
   assert(emu.state.scc === 0, 's_xnor_b64: result 0 → SCC=0');
 }
 
@@ -4597,25 +4688,29 @@ group('SOP2/SOPC (RDNA2 additions)');
 // s_cmp_eq_u64: equal 64-bit
 {
   const emu = setup([
-    's_cmp_eq_u64 s0, s1',
+    's_cmp_eq_u64 s[0:1], s[2:3]',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0xDEADBEEF);
-  emu.state.writeSGPR(1, 0xDEADBEEF);
+  emu.state.writeSGPR(1, 0x12345678);
+  emu.state.writeSGPR(2, 0xDEADBEEF);
+  emu.state.writeSGPR(3, 0x12345678);
   emu.run();
   assert(emu.state.scc === 1, 's_cmp_eq_u64: equal values → SCC=1');
 }
 
-// s_cmp_eq_u64: not equal
+// s_cmp_eq_u64: not equal (only the high dwords differ)
 {
   const emu = setup([
-    's_cmp_eq_u64 s0, s1',
+    's_cmp_eq_u64 s[0:1], s[2:3]',
     's_endpgm',
   ].join('\n'));
   emu.state.writeSGPR(0, 0xDEADBEEF);
-  emu.state.writeSGPR(1, 0xCAFEBABE);
+  emu.state.writeSGPR(1, 1);
+  emu.state.writeSGPR(2, 0xDEADBEEF);
+  emu.state.writeSGPR(3, 2);
   emu.run();
-  assert(emu.state.scc === 0, 's_cmp_eq_u64: different values → SCC=0');
+  assert(emu.state.scc === 0, 's_cmp_eq_u64: different high dwords → SCC=0');
 }
 
 // ════════════════════════════════════════════
@@ -4791,16 +4886,26 @@ group('VOP3 Additional Instructions');
   assert(emu.state.readVGPR_u32(3, 0) === 6, 'v_msad_u8: all nonzero = 6');
 }
 
-// v_msad_u8: masked byte (zero src0 bytes skipped)
+// v_msad_u8: bytes where the reference (src1) is zero are skipped
+{
+  const emu = setup('v_msad_u8 v3, v0, v1, v2\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x09030201);
+  emu.state.writeVGPR_u32(1, 0, 0x00010101);
+  emu.state.writeVGPR_u32(2, 0, 10);
+  emu.state.modifiedRegs.clear();
+  emu.run();
+  // reference byte3 = 0 masked, rest: |3-1|+|2-1|+|1-1| = 3, +10 = 13
+  assert(emu.state.readVGPR_u32(3, 0) === 13, 'v_msad_u8: masked reference byte3, result=13');
+}
+
+// v_msad_u8: a zero byte in src0 (not the reference) is still counted
 {
   const emu = setup('v_msad_u8 v3, v0, v1, v2\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 0x00030201);
   emu.state.writeVGPR_u32(1, 0, 0x01010101);
   emu.state.writeVGPR_u32(2, 0, 10);
-  emu.state.modifiedRegs.clear();
   emu.run();
-  // byte3=0 masked, rest: |3-1|+|2-1|+|1-1| = 3, +10 = 13
-  assert(emu.state.readVGPR_u32(3, 0) === 13, 'v_msad_u8: masked byte3, result=13');
+  assert(emu.state.readVGPR_u32(3, 0) === 14, 'v_msad_u8: zero src0 byte counted (|0-1| = 1), result=14');
 }
 
 // v_mad_u64_u32: basic multiply-add
@@ -4930,18 +5035,18 @@ group('VOP1 Indexed Register Move');
   assert(emu.state.readVGPR_u32(6, 0) === 0x22, 'v_movrelsd_b32: v[5+M0]=v6 gets v[0+M0]=v1=0x22');
 }
 
-// v_movrelsd_2_b32: v[vdst + M0 + 1] = v[vsrc + M0]
+// v_movrelsd_2_b32: v[vdst + M0[25:16]] = v[vsrc + M0[9:0]]
 {
   const emu = setup([
     'v_mov_b32 v0, 0xAA',
     'v_mov_b32 v1, 0xBB',
     'v_mov_b32 v2, 0xCC',
-    's_mov_b32 m0, 1',          // M0 = 1
-    'v_movrelsd_2_b32 v5, v0',  // v[5+1+1] = v7 = v[0+1] = v1 = 0xBB
+    's_mov_b32 m0, 0x00020001', // source offset 1, destination offset 2
+    'v_movrelsd_2_b32 v5, v0',  // v[5+2] = v7 = v[0+1] = v1 = 0xBB
     's_endpgm',
   ].join('\n'));
   emu.run();
-  assert(emu.state.readVGPR_u32(7, 0) === 0xBB, 'v_movrelsd_2_b32: v[5+M0+1]=v7 gets v[0+M0]=v1=0xBB');
+  assert(emu.state.readVGPR_u32(7, 0) === 0xBB, 'v_movrelsd_2_b32: v[5+M0[25:16]]=v7 gets v[0+M0[9:0]]=v1=0xBB');
 }
 
 // ════════════════════════════════════════════
@@ -4973,16 +5078,16 @@ group('VOP1 Rounding Conversions');
   assert((emu.state.readVGPR_u32(1, 0) | 0) === -1, 'v_cvt_flr_i32_f32: -0.1 → -1');
 }
 
-// v_cvt_off_f32_i4: signed 4-bit to float
+// v_cvt_off_f32_i4: signed 4-bit value / 16 (interpolation offset)
 {
   const emu = setup('v_cvt_off_f32_i4 v1, v0\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, 5); emu.run();
-  assert(approx(emu.state.readVGPR(1, 0), 5.0), 'v_cvt_off_f32_i4: 5 → 5.0');
+  assert(approx(emu.state.readVGPR(1, 0), 0.3125), 'v_cvt_off_f32_i4: 5 → 5/16 = 0.3125');
 }
 {
   const emu = setup('v_cvt_off_f32_i4 v1, v0\ns_endpgm');
-  emu.state.writeVGPR_u32(0, 0, 0xF); emu.run(); // 0xF = -1 in signed 4-bit
-  assert(approx(emu.state.readVGPR(1, 0), -1.0), 'v_cvt_off_f32_i4: 0xF → -1.0');
+  emu.state.writeVGPR_u32(0, 0, 0x8); emu.run(); // 0x8 = -8 in signed 4-bit
+  assert(approx(emu.state.readVGPR(1, 0), -0.5), 'v_cvt_off_f32_i4: 0x8 → -8/16 = -0.5');
 }
 
 // v_rcp_iflag_f32
@@ -5316,14 +5421,14 @@ function buildVOP2(opcode: number, vdst: number, vsrc1: number, src0: number): n
   return (((opcode & 0x3F) << 25) | ((vdst & 0xFF) << 17) | ((vsrc1 & 0xFF) << 9) | (src0 & 0x1FF)) >>> 0;
 }
 
-// Helper: build VOP1 binary word
+// Helper: build VOP1 binary word: [31:25]=0x3F, [24:17]=VDST, [16:9]=OP, [8:0]=SRC0
 function buildVOP1(opcode: number, vdst: number, src0: number): number {
-  return ((0x3F << 25) | ((opcode & 0xFF) << 17) | ((vdst & 0xFF) << 9) | (src0 & 0x1FF)) >>> 0;
+  return ((0x3F << 25) | ((vdst & 0xFF) << 17) | ((opcode & 0xFF) << 9) | (src0 & 0x1FF)) >>> 0;
 }
 
-// VOP3 helper for 3-source ops
+// VOP3 helper for 3-source ops (GFX10: prefix 0x35, unused fields hold inline 0)
 function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number, src2: number): number[] {
-  const dword0 = ((0x34 << 26) | ((opcode & 0x3FF) << 16) | (vdst & 0xFF)) >>> 0;
+  const dword0 = ((0x35 << 26) | ((opcode & 0x3FF) << 16) | (vdst & 0xFF)) >>> 0;
   const dword1 = (((src2 & 0x1FF) << 18) | ((src1 & 0x1FF) << 9) | (src0 & 0x1FF)) >>> 0;
   return [dword0, dword1];
 }
@@ -5381,43 +5486,43 @@ function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number
 // ── v_subrev_f16 (opcode 0x34): vdst = vsrc1 - src0 ──
 {
   const emu = setup('v_subrev_f16 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 3.0);
-  emu.state.writeVGPR(1, 0, 10.0);
+  writeF16(emu, 0, 0, 3.0);
+  writeF16(emu, 1, 0, 10.0);
   emu.run();
-  assert(approx(emu.state.readVGPR(2, 0), 7.0), 'v_subrev_f16: 10.0 - 3.0 = 7.0');
+  assert(approx(readF16(emu, 2, 0), 7.0), 'v_subrev_f16: 10.0 - 3.0 = 7.0');
 }
 
 // v_subrev_f16 with larger src0
 {
   const emu = setup('v_subrev_f16 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 10.0);
-  emu.state.writeVGPR(1, 0, 3.0);
+  writeF16(emu, 0, 0, 10.0);
+  writeF16(emu, 1, 0, 3.0);
   emu.run();
-  assert(approx(emu.state.readVGPR(2, 0), -7.0), 'v_subrev_f16: 3.0 - 10.0 = -7.0');
+  assert(approx(readF16(emu, 2, 0), -7.0), 'v_subrev_f16: 3.0 - 10.0 = -7.0');
 }
 
 // ── v_fmamk_f16 (opcode 0x37): vdst = src0 * K + vsrc1 ──
 {
   const word = buildVOP2(0x37, 2, 1, 256 + 0);
-  const kBits = floatBits(3.0);
+  const kBits = f32ToF16(3.0);
   const binary = new Uint32Array([word, kBits, ENDPGM]);
   const emu = new Emulator(); emu.load(binary);
-  emu.state.writeVGPR(0, 0, 2.0);
-  emu.state.writeVGPR(1, 0, 4.0);
+  writeF16(emu, 0, 0, 2.0);
+  writeF16(emu, 1, 0, 4.0);
   emu.run();
-  assert(approx(emu.state.readVGPR(2, 0), 10.0), 'v_fmamk_f16: 2.0 * 3.0 + 4.0 = 10.0');
+  assert(approx(readF16(emu, 2, 0), 10.0), 'v_fmamk_f16: 2.0 * 3.0 + 4.0 = 10.0');
 }
 
 // ── v_fmaak_f16 (opcode 0x38): vdst = src0 * vsrc1 + K ──
 {
   const word = buildVOP2(0x38, 2, 1, 256 + 0);
-  const kBits = floatBits(50.0);
+  const kBits = f32ToF16(50.0);
   const binary = new Uint32Array([word, kBits, ENDPGM]);
   const emu = new Emulator(); emu.load(binary);
-  emu.state.writeVGPR(0, 0, 5.0);
-  emu.state.writeVGPR(1, 0, 4.0);
+  writeF16(emu, 0, 0, 5.0);
+  writeF16(emu, 1, 0, 4.0);
   emu.run();
-  assert(approx(emu.state.readVGPR(2, 0), 70.0), 'v_fmaak_f16: 5.0 * 4.0 + 50.0 = 70.0');
+  assert(approx(readF16(emu, 2, 0), 70.0), 'v_fmaak_f16: 5.0 * 4.0 + 50.0 = 70.0');
 }
 
 // ── v_pk_fmac_f16 (opcode 0x3C): vdst += src0 * vsrc1 (packed f16) ──
@@ -5520,7 +5625,7 @@ function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number
 // ── v_cvt_norm_i16_f16 (opcode 0x63): vdst = (i16)(src0 * 32767) ──
 {
   const emu = setup('v_cvt_norm_i16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 1.0);
+  writeF16(emu, 0, 0, 1.0);
   emu.run();
   const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
   assert(result === 32767, 'v_cvt_norm_i16_f16: 1.0 → 32767');
@@ -5529,7 +5634,7 @@ function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number
 // v_cvt_norm_i16_f16 with 0.5
 {
   const emu = setup('v_cvt_norm_i16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.5);
+  writeF16(emu, 0, 0, 0.5);
   emu.run();
   const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
   // 0.5 * 32767 = 16383.5 → rounds to 16384
@@ -5539,7 +5644,7 @@ function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number
 // v_cvt_norm_i16_f16 with 0.0
 {
   const emu = setup('v_cvt_norm_i16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.0);
+  writeF16(emu, 0, 0, 0.0);
   emu.run();
   const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
   assert(result === 0, 'v_cvt_norm_i16_f16: 0.0 → 0');
@@ -5548,7 +5653,7 @@ function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number
 // ── v_cvt_norm_u16_f16 (opcode 0x64): vdst = (u16)(src0 * 65535) ──
 {
   const emu = setup('v_cvt_norm_u16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 1.0);
+  writeF16(emu, 0, 0, 1.0);
   emu.run();
   const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
   assert(result === 65535, 'v_cvt_norm_u16_f16: 1.0 → 65535');
@@ -5557,7 +5662,7 @@ function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number
 // v_cvt_norm_u16_f16 with 0.5
 {
   const emu = setup('v_cvt_norm_u16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.5);
+  writeF16(emu, 0, 0, 0.5);
   emu.run();
   const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
   // 0.5 * 65535 = 32767.5 → rounds to 32768
@@ -5567,62 +5672,64 @@ function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number
 // v_cvt_norm_u16_f16 with 0.0
 {
   const emu = setup('v_cvt_norm_u16_f16 v1, v0\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 0.0);
+  writeF16(emu, 0, 0, 0.0);
   emu.run();
   const result = emu.state.readVGPR_u32(1, 0) & 0xFFFF;
   assert(result === 0, 'v_cvt_norm_u16_f16: 0.0 → 0');
 }
 
-// ── v_qsad_pk_u16_u8 (opcode 0x172) ──
+// ── v_qsad_pk_u16_u8: four SADs over sliding 32-bit windows of the 64-bit src0 ──
 {
-  const words = buildVOP3_3src(0x172, 2, V0, V1, V2);
-  const binary = new Uint32Array([...words, ENDPGM]);
-  const emu = new Emulator(); emu.load(binary);
-  // src0 = [10, 20, 30, 40], src1 = [15, 25, 35, 45]
+  const emu = setup('v_qsad_pk_u16_u8 v[4:5], v[0:1], v2, v[6:7]\ns_endpgm');
+  // src0 bytes (low to high): 10, 20, 30, 40, 50, 60, 70, 80; reference = 15, 25, 35, 45
   emu.state.writeVGPR_u32(0, 0, (40 << 24) | (30 << 16) | (20 << 8) | 10);
-  emu.state.writeVGPR_u32(1, 0, (45 << 24) | (35 << 16) | (25 << 8) | 15);
-  emu.state.writeVGPR_u32(2, 0, 0); // accumulator
+  emu.state.writeVGPR_u32(1, 0, (80 << 24) | (70 << 16) | (60 << 8) | 50);
+  emu.state.writeVGPR_u32(2, 0, (45 << 24) | (35 << 16) | (25 << 8) | 15);
+  emu.state.writeVGPR_u32(6, 0, (2 << 16) | 1);   // accumulators 1, 2
+  emu.state.writeVGPR_u32(7, 0, (4 << 16) | 3);   // accumulators 3, 4
   emu.run();
-  // |10-15| + |20-25| + |30-35| + |40-45| = 5+5+5+5 = 20
-  assert(emu.state.readVGPR_u32(2, 0) === 20, 'v_qsad_pk_u16_u8: SAD = 20');
+  // window0 = 10,20,30,40 → 20; window1 = 20,30,40,50 → 5+5+5+5 = 20; window2 = 30..60 → 15+15+15+15 = 60; window3 = 40..70 → 100
+  assert(emu.state.readVGPR_u32(4, 0) === (((20 + 2) << 16) | (20 + 1)) >>> 0, 'v_qsad_pk_u16_u8: windows 0 and 1');
+  assert(emu.state.readVGPR_u32(5, 0) === (((100 + 4) << 16) | (60 + 3)) >>> 0, 'v_qsad_pk_u16_u8: windows 2 and 3');
 }
 
-// ── v_mqsad_pk_u16_u8 (opcode 0x173) ──
+// ── v_mqsad_pk_u16_u8: masked version (reference bytes that are 0 are skipped) ──
 {
-  const words = buildVOP3_3src(0x173, 2, V0, V1, V2);
-  const binary = new Uint32Array([...words, ENDPGM]);
-  const emu = new Emulator(); emu.load(binary);
-  // src0 = [0, 20, 0, 40] (mask: skip byte 0 and 2), src1 = [15, 25, 35, 45]
-  emu.state.writeVGPR_u32(0, 0, (40 << 24) | (0 << 16) | (20 << 8) | 0);
-  emu.state.writeVGPR_u32(1, 0, (45 << 24) | (35 << 16) | (25 << 8) | 15);
-  emu.state.writeVGPR_u32(2, 0, 5); // accumulator
+  const emu = setup('v_mqsad_pk_u16_u8 v[4:5], v[0:1], v2, v[6:7]\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (40 << 24) | (30 << 16) | (20 << 8) | 10);
+  emu.state.writeVGPR_u32(1, 0, 0);
+  emu.state.writeVGPR_u32(2, 0, (45 << 24) | (0 << 16) | (25 << 8) | 0);  // reference bytes 0 and 2 masked
+  emu.state.writeVGPR_u32(6, 0, 5);
+  emu.state.writeVGPR_u32(7, 0, 0);
   emu.run();
-  // skip byte0 (0), |20-25|=5, skip byte2 (0), |40-45|=5 → 5+5+5 = 15
-  assert(emu.state.readVGPR_u32(2, 0) === 15, 'v_mqsad_pk_u16_u8: masked SAD + accum = 15');
+  // window0: |20-25| + |40-45| = 10, + 5 = 15
+  assert((emu.state.readVGPR_u32(4, 0) & 0xFFFF) === 15, 'v_mqsad_pk_u16_u8: masked SAD + accum = 15');
 }
 
-// ── v_mqsad_u32_u8 (opcode 0x175) ──
+// ── v_mqsad_u32_u8: masked quad SAD with 32-bit accumulators (128-bit src2 and result) ──
 {
-  const words = buildVOP3_3src(0x175, 2, V0, V1, V2);
-  const binary = new Uint32Array([...words, ENDPGM]);
-  const emu = new Emulator(); emu.load(binary);
+  const emu = setup('v_mqsad_u32_u8 v[4:7], v[0:1], v2, v[8:11]\ns_endpgm');
   emu.state.writeVGPR_u32(0, 0, (100 << 24) | (50 << 16) | (0 << 8) | 200);
-  emu.state.writeVGPR_u32(1, 0, (90 << 24) | (60 << 16) | (0 << 8) | 180);
-  emu.state.writeVGPR_u32(2, 0, 1000);
+  emu.state.writeVGPR_u32(1, 0, 0);
+  emu.state.writeVGPR_u32(2, 0, (90 << 24) | (60 << 16) | (0 << 8) | 180);
+  emu.state.writeVGPR_u32(8, 0, 1000);
+  emu.state.writeVGPR_u32(9, 0, 7);
   emu.run();
-  // |200-180|=20, skip byte1 (0), |50-60|=10, |100-90|=10 → 20+10+10+1000 = 1040
-  assert(emu.state.readVGPR_u32(2, 0) === 1040, 'v_mqsad_u32_u8: masked SAD u32 = 1040');
+  // window0: |200-180| + skip + |50-60| + |100-90| = 40 → 1040
+  assert(emu.state.readVGPR_u32(4, 0) === 1040, 'v_mqsad_u32_u8: masked SAD u32 = 1040');
+  // window1 = bytes 0,50,100,0: |0-180| + skip + |100-60| + |0-90| = 310 → +7
+  assert(emu.state.readVGPR_u32(5, 0) === 317, 'v_mqsad_u32_u8: second window uses S0[39:8]');
 }
 
 // ── v_fmac_f16: accumulate test (similar to v_fmac_f32) ──
 {
   const emu = setup('v_fmac_f16 v2, v0, v1\ns_endpgm');
-  emu.state.writeVGPR(0, 0, 3.0);  // src0
-  emu.state.writeVGPR(1, 0, 4.0);  // vsrc1
-  emu.state.writeVGPR(2, 0, 10.0); // vdst (accumulator)
+  writeF16(emu, 0, 0, 3.0);  // src0
+  writeF16(emu, 1, 0, 4.0);  // vsrc1
+  writeF16(emu, 2, 0, 10.0); // vdst (accumulator)
   emu.run();
   // vdst = 3.0 * 4.0 + 10.0 = 22.0
-  assert(approx(emu.state.readVGPR(2, 0), 22.0), 'v_fmac_f16: 3.0 * 4.0 + 10.0 = 22.0');
+  assert(approx(readF16(emu, 2, 0), 22.0), 'v_fmac_f16: 3.0 * 4.0 + 10.0 = 22.0');
 }
 
 // ── Decode roundtrip tests for binary-only instructions ──
@@ -5685,6 +5792,405 @@ function buildVOP3_3src(opcode: number, vdst: number, src0: number, src1: number
   assert(lookupByMnemonic('v_qsad_pk_u16_u8') !== undefined, 'lookup: v_qsad_pk_u16_u8 exists');
   assert(lookupByMnemonic('v_mqsad_pk_u16_u8') !== undefined, 'lookup: v_mqsad_pk_u16_u8 exists');
   assert(lookupByMnemonic('v_mqsad_u32_u8') !== undefined, 'lookup: v_mqsad_u32_u8 exists');
+}
+
+// ════════════════════════════════════════════
+//  Regression tests for the GFX10 engine fixes
+// ════════════════════════════════════════════
+
+/** Assemble `src` + s_endpgm, apply `init`, run, and return the emulator. */
+function run1(src: string, init?: (e: Emulator) => void): Emulator {
+  const emu = setup(src + '\ns_endpgm');
+  init?.(emu);
+  emu.run();
+  return emu;
+}
+
+const enc = (s: string): number[] => Array.from(assemble(s).binary);
+const same = (a: number[], b: number[]): boolean => a.length === b.length && a.every((x, i) => (x >>> 0) === (b[i] >>> 0));
+
+group('Regression: constants');
+
+// Float constants are encoded as f32 values, never as integer bit patterns
+for (const [text, k] of [['3.0', 3], ['100.0', 100], ['-3.0', -3], ['0.1', Math.fround(0.1)], ['1e3', 1000]] as const) {
+  const emu = run1(`v_mul_f32 v1, ${text}, v0`, e => e.state.writeVGPR(0, 0, 1.5));
+  assert(emu.state.readVGPR(1, 0) === Math.fround(1.5 * k), `float constant ${text} is an f32 value`);
+}
+assert(same(enc('v_mul_f32 v1, 3.0, v0'), [((8 << 25) | (1 << 17) | 0xFF) >>> 0, 0x40400000]), '3.0 is the literal 0x40400000');
+assert((enc('v_mov_b32 v0, 0.15915494309189535')[0] & 0x1FF) === 248, '1/(2π) is inline constant 248');
+assert(run1('v_mov_b32 v0, -0.0').state.readVGPR_u32(0, 0) === 0x80000000, '-0.0 keeps its sign (literal 0x80000000)');
+{
+  const emu = run1('v_add_f16 v1, 3.5, v0', e => writeF16(e, 0, 0, 1.0));
+  assert(readF16(emu, 1, 0) === 4.5, 'f16 literal 3.5 is converted to f16');
+  assert(enc('v_add_f16 v1, 3.5, v0')[1] === f32ToF16(3.5), 'f16 literal holds the f16 bit pattern');
+  assert(readF16(run1('v_add_f16 v1, 2.0, v0', e => writeF16(e, 0, 0, 1.0)), 1, 0) === 3.0, 'inline 2.0 is f16 2.0 for f16 operands');
+}
+assert(assemble('v_add_nc_u16 v0, 0x1ff00, v1').errors.length === 1, '16-bit operands reject constants that do not fit');
+{
+  const emu = run1('s_mov_b64 s[0:1], 0x80000000');
+  assert(emu.state.readSGPR(0) === 0x80000000 && emu.state.readSGPR(1) === 0, 'a 32-bit literal is zero-extended for b64 operands');
+  assert(run1('s_mov_b64 s[0:1], -5').state.readSGPR(1) === 0xFFFFFFFF, 'inline integers are sign-extended to 64 bits');
+}
+
+group('Regression: branches, labels and the program counter');
+{
+  const emu = run1(['s_branch skip', 'v_mov_b32 v0, 1', 'skip:', 'v_mov_b32 v1, 2'].join('\n'));
+  assert(emu.state.readVGPR_u32(0, 0) === 0 && emu.state.readVGPR_u32(1, 0) === 2, 'forward branch lands exactly on its label');
+  const r = assemble(['s_branch skip', 'v_bfe_u32 v0, v1, 0x3039, s1', 'skip:', 's_endpgm'].join('\n'));
+  assert((r.binary[0] & 0xFFFF) === 3, 'branch offsets count dwords (VOP3 + literal = 3)');
+  const loop = run1(['s_mov_b32 s0, 5', 'v_mov_b32 v0, 0', 'loop:', 'v_add_nc_u32 v0, 1, v0', 's_sub_u32 s0, s0, 1',
+    's_cmp_lg_u32 s0, 0', 's_cbranch_scc1 loop'].join('\n'));
+  assert(loop.state.readVGPR_u32(0, 0) === 5, 'backward branch loop runs 5 times');
+}
+{
+  assert(assemble('a:\na:\ns_endpgm').errors.some(e => /already defined/.test(e.message)), 'duplicate label is an error');
+  assert(assemble('s_branch nowhere\ns_endpgm').errors.some(e => /Undefined label/.test(e.message)), 'undefined label is an error');
+  const r = assemble('s_branch end\nv_nop\nend:');
+  assert(r.errors.length === 0 && (r.binary[0] & 0xFFFF) === 1, 'a label after the last instruction is valid');
+  const emu = new Emulator();
+  emu.load(r.binary);
+  emu.run();
+  assert(emu.isComplete() && emu.fault === null, 'branching to the end of the program completes it');
+}
+{
+  const emu = run1(['v_add_f32 v0, v1, v2 clamp', 's_getpc_b64 s[0:1]'].join('\n'));
+  assert(emu.state.readSGPR(0) === 12 && emu.state.readSGPR(1) === 0, 's_getpc_b64: byte address of the next instruction');
+  const jump = run1(['s_getpc_b64 s[0:1]', 's_add_u32 s0, s0, 12', 's_setpc_b64 s[0:1]', 'v_mov_b32 v0, 1', 'v_mov_b32 v1, 2'].join('\n'));
+  assert(jump.state.readVGPR_u32(0, 0) === 0 && jump.state.readVGPR_u32(1, 0) === 2, 's_setpc_b64 jumps to a byte address');
+  const step = setup(['v_add_f32 v0, v1, v2 clamp', 'v_mov_b32 v0, 1', 's_endpgm'].join('\n'));
+  step.step();
+  assert(step.getPCBytes() === 8, 'getPCBytes uses real instruction sizes');
+}
+{
+  const mis = run1(['s_mov_b64 s[0:1], 2', 's_setpc_b64 s[0:1]'].join('\n'));
+  assert(mis.fault !== null && /misaligned/.test(mis.fault), 'a misaligned jump faults');
+  const mid = run1(['v_bfe_u32 v0, v1, 0x3039, s1', 's_mov_b64 s[0:1], 4', 's_setpc_b64 s[0:1]'].join('\n'));
+  assert(mid.fault !== null && /not the start of an instruction/.test(mid.fault), 'a jump into the middle of an instruction faults');
+  const spin = setup('loop:\ns_branch loop');
+  spin.run(1000);
+  assert(spin.fault !== null && /infinite loop/.test(spin.fault), 'run() stops runaway loops');
+}
+
+group('Regression: carry chains, masks and special sources');
+{
+  const emu = setup(['v_add_co_u32 v4, s10, v0, v2', 'v_add_co_ci_u32 v5, s12, v1, v3, s10', 's_endpgm'].join('\n'));
+  emu.state.writeVGPR_u32(0, 0, 0xFFFFFFFF);
+  emu.state.writeVGPR_u32(1, 0, 1);
+  emu.state.writeVGPR_u32(2, 0, 1);
+  emu.state.writeVGPR_u32(3, 0, 2);
+  emu.state.exec = 1;
+  emu.run();
+  assert(emu.state.readVGPR_u32(4, 0) === 0 && emu.state.readVGPR_u32(5, 0) === 4, '64-bit add via v_add_co_u32 + v_add_co_ci_u32');
+  assert(emu.state.readSGPR(10) === 1 && emu.state.readSGPR(12) === 0, 'carry-out masks go to the chosen SGPRs');
+  assert(emu.state.vcc === 0, 'VCC is untouched when SGPR carries are used');
+}
+{
+  const emu = run1(['s_mov_b32 m0, 77', 'v_mov_b32 v0, m0', 's_mov_b32 s0, exec_lo', 's_mov_b32 vcc_lo, 5',
+    'v_add_nc_u32 v1, vcc_lo, v0'].join('\n'));
+  assert(emu.state.readVGPR_u32(0, 3) === 77, 'm0 as a VALU source');
+  assert(emu.state.readSGPR(0) === 0xFFFFFFFF, 'exec_lo as a SALU source');
+  assert(emu.state.readVGPR_u32(1, 0) === 82, 'vcc_lo as a VALU source');
+}
+{
+  const emu = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_cmp_gt_u32 s4, v0, 15'].join('\n'));
+  assert(emu.state.readSGPR(4) === 0xFFFF0000, 'v_cmp_* can write its mask to an SGPR (VOP3)');
+  assert(emu.state.vcc === 0, 'VCC is untouched when a compare writes an SGPR');
+  const cmpx = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_cmpx_lt_u32 v0, 4', 'v_mov_b32 v1, 9'].join('\n'));
+  assert(cmpx.state.exec === 0xF, 'v_cmpx writes EXEC');
+  assert(cmpx.state.readVGPR_u32(1, 3) === 9 && cmpx.state.readVGPR_u32(1, 4) === 0, 'v_cmpx masks later instructions');
+  const inactive = run1(['s_mov_b32 vcc_lo, -1', 's_mov_b32 exec_lo, 0xFF', 'v_cmp_eq_u32 vcc_lo, v0, v0'].join('\n'));
+  assert(inactive.state.vcc === 0xFF, 'VOPC clears the mask bits of inactive lanes');
+  const sel = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', 's_mov_b32 s6, 0xAAAAAAAA', 'v_cndmask_b32 v1, 100, v0, s6'].join('\n'));
+  assert(sel.state.readVGPR_u32(1, 2) === 100 && sel.state.readVGPR_u32(1, 3) === 3, 'v_cndmask_b32 with an SGPR condition (VOP3)');
+}
+
+group('Regression: 16-bit operations');
+{
+  const emu = setup('v_add_f16 v2, v0, v1\ns_endpgm');
+  writeF16(emu, 0, 0, 1.5);
+  writeF16(emu, 1, 0, 2.25);
+  emu.state.writeVGPR_u32(2, 0, 0xABCD0000);
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === (0xABCD0000 | f32ToF16(3.75)) >>> 0, 'v_add_f16 writes the low half and preserves the high half');
+  const big = setup('v_mul_f16 v2, v0, v1\ns_endpgm');
+  writeF16(big, 0, 0, 1000);
+  writeF16(big, 1, 0, 1000);
+  big.run();
+  assert(readF16(big, 2, 0) === Infinity, 'f16 arithmetic overflows past 65504');
+}
+{
+  const emu = setup('v_add_nc_u16 v2, v0, v1 op_sel:[1,1,1]\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, (7 << 16) | 100);
+  emu.state.writeVGPR_u32(1, 0, (5 << 16) | 200);
+  emu.state.writeVGPR_u32(2, 0, 0x1234);
+  emu.run();
+  assert(emu.state.readVGPR_u32(2, 0) === ((12 << 16) | 0x1234) >>> 0, 'op_sel:[1,1,1] reads and writes the high halves');
+  assert(((enc('v_add_nc_u16 v2, v0, v1 op_sel:[1,1,1]')[0] >>> 11) & 0xF) === 0xB, 'op_sel bits: src0, src1, dst (bit 3) in [14:11]');
+  assert(assemble('v_add_f32 v0, v1, v2 op_sel:[1,0,0]').errors.length === 1, 'op_sel is rejected where the hardware ignores it');
+}
+{
+  const half = (x: number) => (f32ToF16(x) << 16) | f32ToF16(3.0);
+  const a = run1('v_pk_add_f16 v1, v0, 1.0', e => e.state.writeVGPR_u32(0, 0, half(2.0)));
+  assert((a.state.readVGPR_u32(1, 0) & 0xFFFF) === f32ToF16(4.0), 'v_pk_add_f16: an inline constant feeds the low half');
+  assert((a.state.readVGPR_u32(1, 0) >>> 16) === f32ToF16(2.0), 'v_pk_add_f16: the high half of an inline constant is 0');
+  const b = run1('v_pk_add_f16 v1, v0, 1.0 op_sel_hi:[1,0]', e => e.state.writeVGPR_u32(0, 0, half(2.0)));
+  assert((b.state.readVGPR_u32(1, 0) >>> 16) === f32ToF16(3.0), 'op_sel_hi:[1,0] applies the constant to both halves');
+  const mix = run1('v_fma_mix_f32 v2, v0, v1, v1 op_sel:[0,1,0] op_sel_hi:[0,1,1]', e => {
+    e.state.writeVGPR(0, 0, 1.5);
+    e.state.writeVGPR_u32(1, 0, (f32ToF16(4.0) << 16) | f32ToF16(0.25));
+  });
+  assert(mix.state.readVGPR(2, 0) === 6.25, 'v_fma_mix_f32 mixes an f32 source with f16 halves');
+}
+
+group('Regression: K constants, SCC and scalar ops');
+{
+  const a = 1 + 2 ** -12;
+  const init = (e: Emulator) => { e.state.writeVGPR(0, 0, a); e.state.writeVGPR(1, 0, a); };
+  const madak = run1('v_madak_f32 v2, v0, v1, -1.00048828125', init);
+  const fmaak = run1('v_fmaak_f32 v2, v0, v1, -1.00048828125', init);
+  assert(madak.state.readVGPR(2, 0) === 0, 'v_madak_f32 rounds the product (not fused)');
+  assert(fmaak.state.readVGPR(2, 0) === 2 ** -24, 'v_fmaak_f32 is fused');
+}
+{
+  const scc = (lines: string[], before = 0): Emulator => {
+    const e = setup([...lines, 's_endpgm'].join('\n'));
+    e.state.scc = before;
+    e.run();
+    return e;
+  };
+  assert(scc(['s_min_i32 s2, -1, 5']).state.scc === 1, 's_min_i32: SCC = (src0 < src1)');
+  assert(scc(['s_min_u32 s2, 9, 5']).state.scc === 0, 's_min_u32: SCC = (src0 < src1)');
+  assert(scc(['s_max_i32 s2, 7, 5']).state.scc === 1, 's_max_i32: SCC = (src0 > src1)');
+  assert(scc(['s_bfm_b32 s2, 4, 8'], 1).state.scc === 1, 's_bfm_b32 does not write SCC');
+  assert(scc(['s_mul_i32 s2, 0, 5'], 1).state.scc === 1, 's_mul_i32 does not write SCC');
+  assert(scc(['s_bcnt1_i32_b32 s2, 0'], 1).state.scc === 0, 's_bcnt1_i32_b32: SCC = (result != 0)');
+  const addk = scc(['s_mov_b32 s0, 0x7FFFFFFF', 's_addk_i32 s0, 1']);
+  assert(addk.state.readSGPR(0) === 0x80000000 && addk.state.scc === 1, 's_addk_i32: SCC = signed overflow');
+  assert(scc(['s_mov_b32 s0, -1', 's_mul_hi_u32 s2, s0, s0']).state.readSGPR(2) === 0xFFFFFFFE, 's_mul_hi_u32 uses the exact 64-bit product');
+  assert(scc(['s_mov_b32 s0, -2', 's_mul_hi_i32 s2, s0, 3']).state.readSGPR(2) === 0xFFFFFFFF, 's_mul_hi_i32 is signed');
+  const save = scc(['s_mov_b32 s2, 0x0000FFFF', 's_and_saveexec_b32 s0, s2']);
+  assert(save.state.readSGPR(0) === 0xFFFFFFFF && save.state.exec === 0xFFFF && save.state.scc === 1, 's_and_saveexec_b32 saves and masks EXEC_LO');
+  const rel = scc(['s_mov_b32 s5, 55', 's_mov_b32 m0, 3', 's_movrels_b32 s0, s2', 's_movreld_b32 s10, 99']);
+  assert(rel.state.readSGPR(0) === 55 && rel.state.readSGPR(13) === 99, 's_movrels_b32 / s_movreld_b32 index with M0');
+  assert(scc(['s_mov_b64 null, 0']).state.exec === 0xFFFFFFFF, 'a 64-bit write to null leaves EXEC alone');
+}
+
+group('Regression: GFX10 encodings (checked against LLVM)');
+{
+  assert(same(enc('v_bfe_u32 v0, v1, 0x3039, s1'), [0xD5480000, 0x0005FF01, 0x3039]), 'VOP3A: prefix 0x35 and a literal');
+  assert(same(enc('v_add_f32_e64 v5, v1, v2'), [0xD5030005, 0x02020501]), 'VOP3A: promoted VOP2, unused src2 = inline 0');
+  assert(same(enc('v_add_f32 v5, v1, v2 clamp'), [0xD5038005, 0x02020501]), 'VOP3A: clamp is bit 15');
+  assert(same(enc('v_add_co_u32 v5, s6, v1, v2'), [0xD70F0605, 0x02020501]), 'VOP3B: SDST in [14:8]');
+  assert(same(enc('v_cmp_lt_f32 s10, v1, v2'), [0xD401000A, 0x02020501]), 'VOPC in VOP3: VDST holds the SGPR result');
+  assert(same(enc('v_pk_add_f16 v1, v2, v3'), [0xCC0F4001, 0x1A020702]), 'VOP3P: prefix 0xCC, op_sel_hi defaults to 1');
+  assert(same(enc('ds_permute_b32 v0, v1, v2'), [0xDAC80000, 0x00000201]), 'DS: ds_permute_b32 is opcode 0xB2');
+  assert(same(enc('s_mov_b32 s0, s1'), [0xBE800301]), 'SOP1: s_mov_b32 is opcode 0x03');
+  assert(same(enc('s_waitcnt vmcnt(0) lgkmcnt(0)'), [0xBF8C0070]), 's_waitcnt counter syntax');
+  assert(same(enc('v_mov_b32 v0, v1 dpp8:[7,6,5,4,3,2,1,0]'), [0x7E0002E9, 0x05397701]), 'DPP8 lane selectors');
+  assert(same(enc('v_mov_b32 v5, v1 dst_sel:BYTE_0 dst_unused:UNUSED_PAD src0_sel:DWORD'), [0x7E0A02F9, 0x00060001]), 'SDWA word layout');
+  assert(enc('v_mov_b32_e64 v0, v1').length === 2, '_e64 forces the VOP3 encoding');
+  assert(assemble('v_mov_b32_e32 v0, -v1').errors.length === 1, '_e32 cannot encode source modifiers');
+}
+{
+  // Disassembly re-assembles to identical words
+  const src = ['v_add_f32 v0, -v1, |v2| clamp', 'v_cndmask_b32 v3, v0, v1, s4', 'v_mov_b32 v5, v1 row_shr:3 bound_ctrl:1',
+    'v_add_nc_u32 v6, v1, v2 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE src0_sel:BYTE_2 src1_sel:DWORD',
+    'v_pk_fma_f16 v7, v1, v2, v3 op_sel:[1,0,0] neg_lo:[0,1,0]', 's_add_u32 s0, s1, 0x12345', 's_cselect_b64 s[2:3], s[4:5], exec',
+    'ds_read2st64_b32 v[8:9], v1 offset0:1 offset1:2', 'v_cmp_lt_f32 s8, v1, 2.5', 's_waitcnt lgkmcnt(0)', 's_endpgm'].join('\n');
+  const a = assemble(src);
+  const text = decodeBinary(a.binary).map(d => disassemble(d)).join('\n');
+  const b = assemble(text);
+  assert(a.errors.length === 0 && b.errors.length === 0 && same(Array.from(a.binary), Array.from(b.binary)), 'disassembly round-trips');
+  const xbox = decodeBinary(new Uint32Array([0xD5800000, 0x02010080, 0xDEADBEEF, ENDPGM]));
+  assert(xbox.length === 2 && xbox[0].size === 3 && xbox[0].literal === 0xDEADBEEF, 'Xbox VOP3 v_nop carries an extra data dword');
+}
+
+group('Regression: operand rules');
+{
+  assert(assemble('v_fma_f32 v0, 1.5, 2.5, v1').errors.length === 1, 'two different literals are rejected');
+  assert(assemble('v_fma_f32 v0, 1.5, 1.5, v1').errors.length === 0, 'one literal may be used twice');
+  assert(assemble('v_fma_f32 v0, s0, s1, s2').errors.length === 1, 'three SGPRs exceed the constant bus');
+  assert(assemble('v_fma_f32 v0, s0, s0, s1').errors.length === 0, 'two unique SGPRs are allowed');
+  assert(assemble('v_add_f32 v0, 0x1234, v1 row_shr:1').errors.length === 1, 'DPP needs a VGPR src0 (no literals)');
+  assert(assemble('s_load_dword s0, s[0:1], 0x0').errors.some(e => /not supported/.test(e.message)), 'memory instructions are rejected clearly');
+  assert(assemble('v_mov_b32 v256, v0').errors.length === 1, 'v256 does not exist');
+  assert(assemble('s_mov_b32 s106, 0').errors.length === 1, 's106 does not exist');
+  assert(assemble('s_mov_b64 s[1:2], 0').errors.some(e => /even/.test(e.message)), '64-bit SGPR pairs must be even-aligned');
+  assert(assemble('v_mov_b32 v0, v1 #').errors.length === 1, 'stray characters are reported');
+  assert(assemble('v_movrels_b32 v0, s1').errors.length === 1, 'v_movrels_b32 needs a VGPR source');
+  assert(assemble('v_cmp_gt_f32 vcc_lo, v0, v1 quad_perm:[1,0,3,2]').errors.some(e => /VOPC.*DPP/.test(e.message)), 'VOPC cannot use DPP16');
+  assert(assemble('v_cmpx_eq_u32 v0, v1 dpp8:[1,0,3,2,5,4,7,6]').errors.length === 1, 'VOPC cannot use DPP8');
+  assert(assemble('v_cmp_gt_u32_sdwa vcc_lo, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_1').errors.length === 0, 'VOPC may use SDWA');
+  assert(assemble('v_readfirstlane_b32 s0, v1 row_shr:1').errors.length === 1, 'v_readfirstlane_b32 cannot use DPP');
+  assert(assemble('v_swap_b32 v0, v1 src0_sel:WORD_1').errors.length === 1, 'v_swap_b32 cannot use SDWA');
+  assert(assemble('v_fmac_f32 v0, v1, v2 src0_sel:WORD_0').errors.some(e => /SDWA/.test(e.message)), 'v_fmac_f32 cannot use SDWA');
+  assert(assemble('v_fmac_f32 v0, v1, v2 row_shr:1').errors.length === 0, 'v_fmac_f32 may use DPP');
+}
+
+group('Regression: lane operations and LDS');
+{
+  const emu = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_add_nc_u32 v1, 1, v0', 'v_lshlrev_b32 v1, 2, v1', 'v_mov_b32 v2, 0x55',
+    's_mov_b32 exec_lo, 0xFFFF', 'ds_permute_b32 v2, v1, v0'].join('\n'));
+  assert(emu.state.readVGPR_u32(2, 0) === 0, 'ds_permute: a lane that receives nothing gets 0');
+  assert(emu.state.readVGPR_u32(2, 5) === 4, 'ds_permute: lane 4 sends to lane 5');
+  assert(emu.state.readVGPR_u32(2, 16) === 0x55, 'ds_permute: inactive lanes are not written');
+}
+{
+  const emu = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_lshlrev_b32 v1, 2, v0', 'v_mul_u32_u24 v2, 3, v0',
+    'ds_write_b32 v1, v2 offset:64', 'ds_read_b32 v3, v1 offset:64', 'v_mov_b32 v4, 0x10000', 'ds_read_b32 v5, v4'].join('\n'));
+  assert(emu.state.readVGPR_u32(3, 7) === 21, 'LDS: ds_write_b32 / ds_read_b32 round trip');
+  assert(emu.state.lds[(64 >> 2) + 7] === 21, 'LDS: data lands at byte address vaddr + offset');
+  assert(emu.state.readVGPR_u32(5, 0) === 0, 'LDS: reads past 64 KB return 0');
+  const rot = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', `ds_swizzle_b32 v1, v0 offset:0x${(0xC000 | (1 << 5)).toString(16)}`].join('\n'));
+  assert(rot.state.readVGPR_u32(1, 0) === 1 && rot.state.readVGPR_u32(1, 31) === 0, 'ds_swizzle rotate mode');
+}
+{
+  const first = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_add_nc_u32 v0, 10, v0', 's_mov_b32 exec_lo, 0', 'v_readfirstlane_b32 s0, v0',
+    's_mov_b32 exec_lo, 0xF0', 'v_readfirstlane_b32 s1, v0'].join('\n'));
+  assert(first.state.readSGPR(0) === 10, 'v_readfirstlane_b32 reads lane 0 when EXEC is 0');
+  assert(first.state.readSGPR(1) === 14, 'v_readfirstlane_b32 reads the first active lane');
+  const mb = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_mbcnt_hi_u32_b32 v1, -1, v0', 's_mov_b32 s0, 0xF0F0F0F0', 'v_mbcnt_lo_u32_b32 v2, s0, 100'].join('\n'));
+  assert(mb.state.readVGPR_u32(0, 13) === 13 && mb.state.readVGPR_u32(1, 13) === 13, 'v_mbcnt_lo/hi lane-index idiom (wave32)');
+  assert(mb.state.readVGPR_u32(2, 9) === 104, 'v_mbcnt_lo_u32_b32 counts mask bits below the lane');
+  const perm = run1(['v_mbcnt_lo_u32_b32 v0, -1, 0', 's_mov_b32 s0, 0x87654321', 's_mov_b32 s1, 0x0fedcba9',
+    'v_permlane16_b32 v1, v0, s0, s1', 'v_permlanex16_b32 v2, v0, s0, s1'].join('\n'));
+  assert(perm.state.readVGPR_u32(1, 0) === 1 && perm.state.readVGPR_u32(1, 15) === 0 && perm.state.readVGPR_u32(1, 16) === 17, 'v_permlane16_b32 rotates within rows');
+  assert(perm.state.readVGPR_u32(2, 0) === 17 && perm.state.readVGPR_u32(2, 16) === 1, 'v_permlanex16_b32 reads the other row');
+}
+
+group('Regression: arithmetic details');
+{
+  const mad = setup('v_mad_u64_u32 v[2:3], s6, v0, v1, v[4:5]\ns_endpgm');
+  for (const r of [0, 1, 4, 5]) mad.state.writeVGPR_u32(r, 0, 0xFFFFFFFF);
+  mad.state.exec = 1;
+  mad.run();
+  assert(mad.state.readVGPR_u32(2, 0) === 0 && mad.state.readVGPR_u32(3, 0) === 0xFFFFFFFE, 'v_mad_u64_u32: 64-bit result');
+  assert(mad.state.readSGPR(6) === 1, 'v_mad_u64_u32: carry-out to the SDST SGPR');
+  const fmas = setup('v_div_fmas_f32 v3, v0, v1, v2\ns_endpgm');
+  for (const lane of [0, 1]) {
+    fmas.state.writeVGPR(0, lane, 2.0);
+    fmas.state.writeVGPR(1, lane, 3.0);
+    fmas.state.writeVGPR(2, lane, 1.0);
+  }
+  fmas.state.vcc = 0b10;
+  fmas.run();
+  assert(fmas.state.readVGPR(3, 0) === 7 && fmas.state.readVGPR(3, 1) === 7 * 2 ** 32, 'v_div_fmas_f32 scales VCC lanes by 2^32');
+}
+{
+  const sat = run1('v_add_nc_u32 v2, v0, v1 clamp', e => { e.state.writeVGPR_u32(0, 0, 0xFFFFFFF0); e.state.writeVGPR_u32(1, 0, 0x100); });
+  assert(sat.state.readVGPR_u32(2, 0) === 0xFFFFFFFF, 'clamp saturates unsigned integer adds');
+  const ssat = run1('v_sub_nc_i32 v2, v0, v1 clamp', e => { e.state.writeVGPR_u32(0, 0, 0x80000000); e.state.writeVGPR_u32(1, 0, 1); });
+  assert(ssat.state.readVGPR_u32(2, 0) === 0x80000000, 'clamp saturates signed integer subtracts');
+  const sext = run1('v_mov_b32 v1, v0 dst_sel:BYTE_1 dst_unused:UNUSED_SEXT src0_sel:BYTE_0', e => e.state.writeVGPR_u32(0, 0, 0x80));
+  assert(sext.state.readVGPR_u32(1, 0) === 0xFFFF8000, 'SDWA UNUSED_SEXT sign-extends above the field and zeroes below');
+  const ldexp = run1('v_ldexp_f32 v1, 0, v0', e => e.state.writeVGPR_u32(0, 0, 2000));
+  assert(ldexp.state.readVGPR_u32(1, 0) === 0, 'v_ldexp_f32: 0 × 2^2000 = 0, not NaN');
+  const ldexpNeg = run1('v_ldexp_f32 v1, -v2, v0', e => { e.state.writeVGPR_u32(0, 0, 3); e.state.writeVGPR(2, 0, 1.5); });
+  assert(ldexpNeg.state.readVGPR(1, 0) === -12, 'v_ldexp_f32 accepts float source modifiers');
+}
+{
+  const unknown = new Emulator();
+  unknown.load(new Uint32Array([0x7DFE0100, ENDPGM]));
+  unknown.run();
+  assert(unknown.fault !== null && /Unknown instruction/.test(unknown.fault), 'unknown opcodes fault instead of crashing');
+  const past = run1('s_mov_b32 m0, 10\nv_movreld_b32 v250, v0');
+  assert(past.fault !== null && /past v255/.test(past.fault), 'v_movreld_b32 past v255 faults');
+}
+
+group('Regression: code review fixes');
+{
+  // v_nop has no VOP3, DPP or SDWA form; imported VOP3 v_nops (Xbox data dword) keep their layout
+  for (const text of ['v_nop_e64', 'v_nop clamp', 'v_nop mul:2', 'v_nop_sdwa', 'v_nop dst_sel:DWORD', 'v_nop quad_perm:[0,1,2,3]', 'v_nop dpp8:[0,1,2,3,4,5,6,7]']) {
+    assert(assemble(text).errors.length === 1, `${text} is rejected`);
+  }
+  const imported = decodeBinary(new Uint32Array([0xD5800000, 0x02010080, 0xDEADBEEF, 0x7E020285, ENDPGM]));
+  const text = imported.map(d => disassemble(d, lookupByOpcode)).join('\n');
+  const re = assemble(text);
+  assert(re.errors.length === 0 && re.binary.length === 5 && /0xdeadbeef/i.test(text), 'an imported VOP3 v_nop + data dword re-assembles at the same size');
+  const emu = new Emulator();
+  emu.load(re.binary);
+  emu.run();
+  assert(emu.state.readVGPR_u32(1, 0) === 5, 'the instruction after an imported VOP3 v_nop still runs');
+  const dppNop = decodeBinary(new Uint32Array([0x7E0000FA, 0xFF00E400, 0x7E020285, ENDPGM]));
+  const dppText = dppNop.map(d => disassemble(d, lookupByOpcode)).join('\n');
+  assert(assemble(dppText).binary.length === 4, 'imported 2-dword (DPP/SDWA/literal) v_nop forms keep their size too');
+}
+{
+  // v_movrel* honour DPP and SDWA
+  const dpp = run1('v_mbcnt_lo_u32_b32 v2, -1, 0\ns_mov_b32 m0, 1\nv_movrels_b32 v0, v1 quad_perm:[1,0,3,2]');
+  assert([0, 1, 2, 3, 17].every(l => dpp.state.readVGPR_u32(0, l) === (l ^ 1)), 'v_movrels_b32 applies DPP lane selection to the M0-indexed source');
+  const shr = run1('v_mbcnt_lo_u32_b32 v2, -1, 0\ns_mov_b32 m0, 1\nv_mov_b32 v0, 99\nv_movrels_b32 v0, v1 row_shr:1');
+  assert(shr.state.readVGPR_u32(0, 0) === 99 && shr.state.readVGPR_u32(0, 1) === 0 && shr.state.readVGPR_u32(0, 16) === 99, 'v_movrels_b32 row_shr leaves lanes without a source unwritten');
+  const sel = run1('s_mov_b32 m0, 1\nv_movrels_b32 v0, v1 src0_sel:BYTE_3', e => e.state.writeVGPR_u32(2, 0, 0x11223344));
+  assert(sel.state.readVGPR_u32(0, 0) === 0x11, 'v_movrels_b32 applies the SDWA source select');
+  const dst = run1('s_mov_b32 m0, 2\nv_movreld_b32 v0, v1 dst_sel:BYTE_1 dst_unused:UNUSED_PRESERVE',
+    e => { e.state.writeVGPR_u32(1, 0, 0xAB); e.state.writeVGPR_u32(2, 0, 0x11223344); });
+  assert(dst.state.readVGPR_u32(2, 0) === 0x1122AB44, 'v_movreld_b32 applies the SDWA destination select to the M0-indexed register');
+}
+{
+  // Inline constants in 16-bit instructions: f16 ops get the f16 value in the low half,
+  // integer ops the f32 bits, and integer constants are sign-extended
+  const pk = run1('v_mov_b32 v0, 0\nv_pk_add_u16 v1, v0, 1.0');
+  assert(pk.state.readVGPR_u32(1, 0) === 0x3F800000, 'packed integer ops receive inline float constants as f32 bits');
+  const pkInt = run1('v_mov_b32 v0, 0\nv_pk_add_u16 v1, v0, -1');
+  assert(pkInt.state.readVGPR_u32(1, 0) === 0xFFFFFFFF, 'negative integer constants fill both halves of a packed operand');
+  const pkF16 = run1('v_mov_b32 v0, 0\nv_pk_add_f16 v1, v0, 1.0');
+  assert(pkF16.state.readVGPR_u32(1, 0) === 0x00003C00, 'packed f16 ops receive inline float constants as f16 in the low half');
+  const u16 = run1('v_mov_b32 v0, 5\nv_add_nc_u16 v1, 1.0, v0');
+  assert((u16.state.readVGPR_u32(1, 0) & 0xFFFF) === 5, '16-bit integer ops use the low half of a float constant\'s f32 bits');
+  const cmp = run1('v_mov_b32 v0, 0\nv_cmp_eq_u16 vcc_lo, 0.5, v0');
+  assert(cmp.state.vcc === 0xFFFFFFFF, 'a float constant on a 16-bit integer compare reads as 0');
+  const lit = assemble('v_add_nc_u16 v5, 3.5, v2');
+  assert(lit.errors.length === 0 && lit.binary[2] === 0x40600000, 'a non-inline float on a 16-bit integer operand is its f32 bit pattern');
+  const back = assemble(decodeBinary(lit.binary).map(d => disassemble(d, lookupByOpcode)).join('\n'));
+  assert(back.errors.length === 0 && same(Array.from(back.binary), Array.from(lit.binary)), 'its disassembly re-assembles to the same words');
+  const negZero = assemble('v_add_nc_u16 v0, v1, -0.0');
+  const negZeroBack = assemble(decodeBinary(negZero.binary).map(d => disassemble(d, lookupByOpcode)).join('\n'));
+  assert(negZeroBack.errors.length === 0 && same(Array.from(negZeroBack.binary), Array.from(negZero.binary)), '-0.0 on a 16-bit integer operand round-trips');
+  const fmac = run1('v_mov_b32 v0, 0\nv_mov_b32 v1, 0x3c003c00\nv_pk_fmac_f16 v0, 1.5, v1');
+  assert(fmac.state.readVGPR_u32(0, 0) === 0x00003E00 && enc('v_pk_fmac_f16 v0, 1.5, v1')[1] === 0x3E00,
+    'v_pk_fmac_f16 encodes a float constant as packed f16 (value in the low half)');
+}
+{
+  // Constant bus: 64-bit shifts read one scalar value; the literal at two operand sizes counts twice
+  assert(assemble('v_lshlrev_b64 v[0:1], s0, s[2:3]').errors.some(e => /only one/.test(e.message)), '64-bit shifts may read only one scalar value');
+  assert(assemble('v_lshlrev_b64 v[0:1], 0x1234, s[2:3]').errors.length === 1, 'a literal counts against the 64-bit shift limit');
+  assert(assemble('v_lshrrev_b64 v[0:1], 4, s[2:3]').errors.length === 0, 'inline constants are free for 64-bit shifts');
+  assert(assemble('v_ashrrev_i64 v[0:1], s0, v[2:3]').errors.length === 0, 'one SGPR is fine for a 64-bit shift');
+  assert(assemble('v_mad_u64_u32 v[0:1], s4, s0, 0x12345, 0x12345').errors.length === 1, 'the literal used at two operand sizes counts twice');
+  assert(assemble('v_mad_u64_u32 v[0:1], s4, v0, 0x12345, 0x12345').errors.length === 0, 'two literal reads are within the limit');
+  assert(assemble('v_fma_f32 v0, s0, 0x12345, 0x12345').errors.length === 0, 'the same 32-bit literal twice counts once');
+}
+{
+  // Instructions without a VOP3 form or a clamp bit
+  for (const text of ['v_pk_fmac_f16_e64 v0, v1, v2', 'v_pk_fmac_f16 v0, -v1, v2 quad_perm:[1,0,3,2]', 'v_dot4c_i32_i8 v0, v1, v2 clamp',
+    'v_swap_b32_e64 v0, v1', 'v_mov_b32_e64 v0, v1 clamp', 'v_and_b32_e64 v0, v1, v2 clamp', 'v_lshl_add_u32 v0, v1, 2, v2 clamp',
+    'v_mbcnt_lo_u32_b32 v0, -1, 0 clamp', 'v_pk_lshlrev_b16 v0, 1, v1 clamp', 'v_mov_b32_sdwa v0, v1 clamp']) {
+    assert(assemble(text).errors.length === 1, `${text} is rejected`);
+  }
+  assert(assemble('v_pk_fmac_f16 v0, v1, v2 quad_perm:[1,0,3,2]').errors.length === 0, 'v_pk_fmac_f16 may still use DPP');
+}
+{
+  // clamp saturates integer arithmetic to the result type
+  const regs = (vals: number[]) => (e: Emulator) => vals.forEach((v, i) => e.state.writeVGPR_u32(i + 1, 0, v >>> 0));
+  const v0 = (src: string, vals: number[]) => run1(src, regs(vals)).state.readVGPR_u32(0, 0);
+  assert(v0('v_mul_u32_u24_e64 v0, v1, v2 clamp', [0xFFFFFF, 0xFFFFFF]) === 0xFFFFFFFF, 'v_mul_u32_u24 clamp saturates');
+  assert(v0('v_mul_u32_u24 v0, v1, v2', [0xFFFFFF, 0xFFFFFF]) === 0xFE000001, 'v_mul_u32_u24 without clamp keeps the low 32 bits');
+  assert(v0('v_mul_i32_i24_e64 v0, v1, v2 clamp', [0x7FFFFF, 0x800000]) === 0x80000000, 'v_mul_i32_i24 clamp saturates to INT_MIN');
+  assert(v0('v_mad_u32_u24 v0, v1, v2, v3 clamp', [0x10000, 0x10000, 5]) === 0xFFFFFFFF, 'v_mad_u32_u24 clamp saturates');
+  assert(v0('v_add3_u32 v0, v1, v2, v3 clamp', [0xFFFFFFFF, 1, 1]) === 0xFFFFFFFF, 'v_add3_u32 clamp saturates');
+  assert(v0('v_mul_lo_u32 v0, v1, v2 clamp', [0x10000, 0x10001]) === 0xFFFFFFFF, 'v_mul_lo_u32 clamp saturates');
+  assert(v0('v_sad_u8 v0, v1, v2, v3 clamp', [0xFFFFFFFF, 0, 0xFFFFFFFF]) === 0xFFFFFFFF, 'v_sad_u8 clamp saturates the accumulation');
+  assert(v0('v_pk_mul_lo_u16 v0, v1, v2 clamp', [0x01000100, 0x01000100]) === 0xFFFFFFFF, 'v_pk_mul_lo_u16 clamp saturates each half');
+  assert(v0('v_cvt_pkrtz_f16_f32_e64 v0, 2.0, -1.0 clamp', []) === 0x00003C00, 'v_cvt_pkrtz_f16_f32 clamp limits each half to [0, 1]');
+  assert(v0('v_pack_b32_f16 v0, v1, v2 clamp', [0x4200, 0x3800]) === 0x38003C00, 'v_pack_b32_f16 clamp limits each half to [0, 1]');
+  const qsad = (c: string) => run1(`v_qsad_pk_u16_u8 v[0:1], v[2:3], v4, v[6:7]${c}`, e => {
+    e.state.writeVGPR_u32(4, 0, 0xFFFFFFFF); e.state.writeVGPR_u32(6, 0, 0xFFFFFFFF); e.state.writeVGPR_u32(7, 0, 0xFFFFFFFF);
+  }).state.readVGPR_u32(0, 0);
+  assert(qsad(' clamp') === 0xFFFFFFFF && qsad('') === 0x03FB03FB, 'v_qsad_pk_u16_u8 saturates (clamp) or truncates each 16-bit sum');
+  const mad = run1('v_mad_u64_u32 v[0:1], s4, v2, v3, v[4:5] clamp', regs([0, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF]));
+  assert(mad.state.readVGPR_u32(0, 0) === 0xFFFFFFFF && mad.state.readVGPR_u32(1, 0) === 0xFFFFFFFF && (mad.state.readSGPR(4) & 1) === 1,
+    'v_mad_u64_u32 clamp saturates the 64-bit result and still reports the carry');
 }
 
 // ════════════════════════════════════════════
