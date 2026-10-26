@@ -1,8 +1,13 @@
 #!/bin/sh
 # Auto-increment patch version on each commit (0.5.X → 0.5.X+1)
+# Plain POSIX sh/awk (no grep -P) so it also works with BSD/macOS userlands.
 VERSION_FILE="src/version.ts"
 if [ -f "$VERSION_FILE" ]; then
-  CURRENT=$(grep -oP "[\d]+\.[\d]+\.[\d]+" "$VERSION_FILE")
+  CURRENT=$(awk 'match($0, /[0-9]+\.[0-9]+\.[0-9]+/) { print substr($0, RSTART, RLENGTH); exit }' "$VERSION_FILE")
+  if [ -z "$CURRENT" ]; then
+    echo "pre-commit: no X.Y.Z version found in $VERSION_FILE, skipping version bump" >&2
+    exit 0
+  fi
   MAJOR=$(echo "$CURRENT" | cut -d. -f1)
   MINOR=$(echo "$CURRENT" | cut -d. -f2)
   PATCH=$(echo "$CURRENT" | cut -d. -f3)

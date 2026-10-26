@@ -1,0 +1,62 @@
+rules_version = '2';
+
+// Firestore security rules for the online leaderboards written by
+// src/firebase/online-leaderboard.ts. Deploy with:
+//   firebase deploy --only firestore:rules --project human-compiler
+//
+// Scores are still reported by the client: these rules only enforce the
+// document shape, plausible value ranges and ownership. Fully trustworthy
+// scores would require re-verifying the submitted solution server-side.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /leaderboards/{puzzleId}/entries/{entryId} {
+      // Leaderboards are public.
+      allow read: if true;
+
+      // Signed-in (anonymous) players may add well-formed entries as themselves.
+      allow create: if isValidPuzzleId(puzzleId)
+                    && isValidNewEntry(request.resource.data);
+
+      // Entries are immutable; players may delete only their own.
+      allow update: if false;
+      allow delete: if request.auth != null
+                    && resource.data.uid == request.auth.uid;
+    }
+
+    // Puzzle ids are slugs such as 'signal-boost' (see src/puzzle/puzzles.ts).
+    function isValidPuzzleId(id) {
+      return id.matches('[A-Za-z0-9_-]{1,64}');
+    }
+
+    // Mirrors submitOnlineScore(). The name limit matches the UI's
+    // <input maxlength="20"> (trimmed, non-empty) in src/ui/leaderboard.ts;
+    // codeSize is in bytes (whole 32-bit dwords); timestamp is Date.now() in
+    // milliseconds, allowing up to a day of client clock skew.
+    function isValidNewEntry(data) {
+      let fields = ['uid', 'name', 'codeSize', 'vgprsUsed', 'cycles', 'timestamp'];
+      return request.auth != null
+        && data.keys().hasAll(fields)
+        && data.keys().hasOnly(fields)
+        && data.uid == request.auth.uid
+        && data.name is string
+        && data.name.size() <= 20
+        && data.name.trim().size() > 0
+        && data.codeSize is int
+        && data.codeSize >= 4
+        && data.codeSize <= 65536
+        && data.codeSize % 4 == 0
+        && data.vgprsUsed is int
+        && data.vgprsUsed >= 1
+        && data.vgprsUsed <= 256
+        && data.cycles is int
+        && data.cycles >= 1
+        && data.cycles <= 10000000
+        && data.timestamp is int
+        && data.timestamp > 0
+        && data.timestamp <= request.time.toMillis() + 24 * 60 * 60 * 1000;
+    }
+
+    // Everything else is denied: there are no other allow rules.
+  }
+}

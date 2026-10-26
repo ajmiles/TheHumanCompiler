@@ -1,0 +1,2 @@
+# Git hooks are executed by /bin/sh on every OS; CRLF line endings would break them.
+.githooks/* text eol=lf
