@@ -5,6 +5,8 @@ import { Emulator } from '../src/emulator/emulator';
 import { decodeBinary, disassemble } from '../src/isa/encoding';
 import { lookupByOpcode, lookupByMnemonic } from '../src/isa/opcodes';
 import { f16ToF32, f32ToF16 } from '../src/isa/float16';
+import { getPuzzleById } from '../src/puzzle/puzzles';
+import { validatePuzzle } from '../src/puzzle/validator';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -6191,6 +6193,35 @@ group('Regression: code review fixes');
   const mad = run1('v_mad_u64_u32 v[0:1], s4, v2, v3, v[4:5] clamp', regs([0, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF]));
   assert(mad.state.readVGPR_u32(0, 0) === 0xFFFFFFFF && mad.state.readVGPR_u32(1, 0) === 0xFFFFFFFF && (mad.state.readSGPR(4) & 1) === 1,
     'v_mad_u64_u32 clamp saturates the 64-bit result and still reports the carry');
+}
+
+group('Regression: player report — the 3.0 in a smoothstep had no effect');
+{
+  // A player's Smooth Clamp solution failed because 3.0 was encoded as the integer 3 (a tiny denormal)
+  const puzzle = getPuzzleById('smooth-clamp')!;
+  const solves = (lines: string[]): boolean => {
+    const r = assemble(lines.join('\n'));
+    assert(r.errors.length === 0, `assembles: ${r.errors.map(e => e.message).join('; ')}`);
+    const out: number[] = [];
+    for (let inv = 0; inv * 32 < puzzle.outputs[0].values.length; inv++) {
+      const emu = new Emulator();
+      emu.load(r.binary);
+      for (const input of puzzle.inputs) {
+        for (let lane = 0; lane < 32; lane++) emu.state.writeVGPR(input.register, lane, input.values[inv * 32 + lane] ?? 0);
+      }
+      emu.run();
+      for (let lane = 0; lane < 32; lane++) out[inv * 32 + lane] = emu.state.readVGPR(3, lane);
+    }
+    return validatePuzzle(puzzle, new Map([[3, out]])).pass;
+  };
+  const head = ['v_sub_f32 v2, v2, v0', 'v_sub_f32 v1, v1, v0', 'v_rcp_f32 v1, v1', 'v_mul_f32 v0, v1, v2',
+    'v_max_f32 v0, v0, 0.0', 'v_min_f32 v0, v0, 1.0', 'v_mul_f32 v1, v0, v0'];
+  const tail = ['v_mul_f32 v3, v0, v1', 's_endpgm'];
+  assert(solves([...head, 'v_mul_f32 v0, v0, -2.0', 'v_add_f32 v0, v0, 3.0', ...tail]), 'the reported solution (v_add_f32 v0, v0, 3.0) passes Smooth Clamp');
+  assert(solves([...head, 'v_mad_f32 v0, v0, -2.0, 3.0', ...tail]), 'v_mad_f32 v0, v0, -2.0, 3.0 passes Smooth Clamp');
+  assert(solves([...head, 'v_mul_f32 v0, v0, -2.0', 'v_mov_b32 v4, 3.0', 'v_add_f32 v0, v0, v4', ...tail]), 'v_mov_b32 v4, 3.0 then v_add_f32 passes Smooth Clamp');
+  const add = run1('v_add_f32 v1, v0, 3.0', e => e.state.writeVGPR(0, 0, -2));
+  assert(add.state.readVGPR(1, 0) === 1, 'a non-inline float as the second operand reads as an f32 literal (VOP3)');
 }
 
 // ════════════════════════════════════════════
