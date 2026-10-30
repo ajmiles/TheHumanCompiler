@@ -166,6 +166,9 @@ export type SemanticFn = (a: number, b?: number, c?: number) => number;
  */
 export type ValueType = 'f32' | 'f16' | 'b32' | 'u16' | 'i16' | 'b16';
 
+/** Element type of a packed dot-product source. */
+export type DotElement = 'f16' | 'i16' | 'u16' | 'i8' | 'u8' | 'i4' | 'u4';
+
 /** Bit width of a scalar operand (0 = not present). */
 export type ScalarWidth = 0 | 32 | 64;
 
@@ -214,6 +217,11 @@ export interface OpcodeInfo {
   carryIn?: boolean;
   /** Encoded with VOP3B (SDST field in place of ABS/OP_SEL). */
   vop3b?: boolean;
+  /**
+   * VOP3P dot product: the element type packed into src0 and src1. src2 and the result are 32-bit
+   * (f32 for 'f16', otherwise i32/u32). Only the 16-bit kinds take op_sel/op_sel_hi.
+   */
+  dot?: DotElement;
   /** Scalar ALU semantics (SOP1/SOP2/SOPC/SOPK). */
   salu?: SaluSemantics;
 }

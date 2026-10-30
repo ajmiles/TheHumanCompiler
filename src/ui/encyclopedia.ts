@@ -245,7 +245,7 @@ const FORMATS: FormatSpec[] = [
         { name: 'CLAMP', bits: 1, color: '#db6d28', description: 'Clamp output' },
         { name: 'OP_SEL_HI[2]', bits: 1, color: '#a371f7', description: 'Hi-half source selection for src2' },
         { name: 'OP_SEL', bits: 3, color: '#a371f7', description: 'Lo result: 1 = read the hi half of src0 / src1 / src2' },
-        { name: 'NEG_HI', bits: 3, color: '#f0883e', description: 'Negate the hi-half input: bit0=src0, bit1=src1, bit2=src2 (abs for v_fma_mix)' },
+        { name: 'NEG_HI', bits: 3, color: '#f0883e', description: 'Negate the hi-half input: bit0=src0, bit1=src1, bit2=src2 (abs for v_fma_mix* and for the f32 src2 of v_dot2_f32_f16)' },
         { name: 'VDST', bits: 8, color: '#39d353', description: 'Destination VGPR index' },
       ],
       [
@@ -256,7 +256,7 @@ const FORMATS: FormatSpec[] = [
         { name: 'SRC0', bits: 9, color: '#bc8cff', description: 'First source — full 9-bit encoding' },
       ],
     ],
-    description: 'Packed 16-bit operations — processes the lo and hi halves of each 32-bit register in parallel. Used for f16 math (v_pk_add_f16, v_pk_mul_f16) and u16/i16 integer ops (v_pk_add_u16, v_pk_lshlrev_b16). OP_SEL/OP_SEL_HI choose which half of each source feeds the lo and hi operations.',
+    description: 'Packed 16-bit operations — processes the lo and hi halves of each 32-bit register in parallel. Used for f16 math (v_pk_add_f16, v_pk_mul_f16), u16/i16 integer ops (v_pk_add_u16, v_pk_lshlrev_b16), mixed-precision FMA (v_fma_mix*) and dot products (v_dot2/v_dot4/v_dot8). OP_SEL/OP_SEL_HI choose which half of each source feeds the lo and hi operations.',
     operandRules: [
       'Each 32-bit register holds two packed 16-bit values: lo=[15:0], hi=[31:16]',
       'OP_SEL: selects which half each source reads for the lo operation',
@@ -265,6 +265,8 @@ const FORMATS: FormatSpec[] = [
       'Integer packed instructions receive a float constant as its f32 bit pattern (1.0 → lo 0x0000, hi 0x3F80)',
       'NEG/NEG_HI: negate lo/hi inputs independently',
       'v_fma_mix_*: OP_SEL_HI marks a source as f16 (OP_SEL picks its half); 0 means f32',
+      'v_fma_mixlo_f16 / v_fma_mixhi_f16 round the result to f16 and write the lo / hi half of vdst, keeping the other half',
+      'v_dot*: multiply the packed elements of src0 and src1 pairwise and add the products to the 32-bit src2. In v_dot2, OP_SEL picks the halves for the first product and OP_SEL_HI for the second; v_dot4 and v_dot8 read whole dwords and take no OP_SEL or NEG',
     ],
   },
   {

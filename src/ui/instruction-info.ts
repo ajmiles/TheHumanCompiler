@@ -8,7 +8,7 @@ import {
 } from '../isa/types';
 import { lookupByMnemonic } from '../isa/opcodes';
 import { decodeBinary, describeDppCtrl, encodeInstruction, scalarRegName, sourceFieldName } from '../isa/encoding';
-import { OperandRole, operandRegCount, valuSourceCount } from '../isa/operands';
+import { OperandRole, operandRegCount, valuSourceCount, hasPackedModifiers } from '../isa/operands';
 import { VCC_LO } from '../isa/constants';
 import { checkLine, editChoices, labelsIn, replaceSpan } from '../assembler/operand-edit';
 import { OperandPicker } from './operand-picker';
@@ -391,9 +391,11 @@ function modifierSummary(d: DecodedInstruction, info: OpcodeInfo): string {
     return `SDWA ${parts.join(' ')}`;
   }
   if (d.encoding === 'VOP3P' && !info.mnemonic.startsWith('v_fma_mix')) {
+    if (!hasPackedModifiers(info)) return '';
     const n = valuSourceCount(info);
     const list = (bits: number) => `[${Array.from({ length: n }, (_, i) => (bits >> i) & 1).join(',')}]`;
-    return `op_sel:${list(d.opSel ?? 0)} (lo result) op_sel_hi:${list(d.opSelHi ?? 7)} (hi result) — 1 reads a source's hi half`;
+    const [first, second] = info.dot ? ['first product', 'second product'] : ['lo result', 'hi result'];
+    return `op_sel:${list(d.opSel ?? 0)} (${first}) op_sel_hi:${list(d.opSelHi ?? 7)} (${second}) — 1 reads a source's hi half`;
   }
   return '';
 }

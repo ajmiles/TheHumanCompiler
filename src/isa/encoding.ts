@@ -30,7 +30,7 @@ import {
 } from './constants';
 import { lookupByMnemonic, lookupByOpcode } from './opcodes';
 import { f16ToF32, f32ToF16 } from './float16';
-import { ConstKind, valuConstKind, valuSourceCount, vopTypes, isFloatType, operandRegCount } from './operands';
+import { ConstKind, valuConstKind, valuSourceCount, vopTypes, isFloatType, operandRegCount, hasPackedModifiers } from './operands';
 
 /** An instruction that cannot be encoded (bad operand combination, constant out of range, …). */
 export class EncodingError extends Error {}
@@ -502,7 +502,8 @@ const NO_VOP3 = new Set(['v_swap_b32', 'v_pk_fmac_f16', 'v_dot4c_i32_i8', 'v_dot
 /** VALU instructions without a clamp bit on RDNA2 (bitwise, shifts, moves and lane operations). */
 const NO_CLAMP = new Set([
   'v_cndmask_b32', 'v_and_b32', 'v_or_b32', 'v_xor_b32', 'v_xnor_b32', 'v_not_b32', 'v_bfrev_b32', 'v_ffbl_b32',
-  'v_lshlrev_b32', 'v_lshrrev_b32', 'v_ashrrev_i32', 'v_lshrrev_b16', 'v_lshlrev_b64', 'v_lshrrev_b64', 'v_ashrrev_i64',
+  'v_lshlrev_b32', 'v_lshrrev_b32', 'v_ashrrev_i32', 'v_lshrrev_b16', 'v_lshlrev_b16', 'v_ashrrev_i16',
+  'v_lshlrev_b64', 'v_lshrrev_b64', 'v_ashrrev_i64',
   'v_pk_lshlrev_b16', 'v_pk_lshrrev_b16', 'v_pk_ashrrev_i16', 'v_add_lshl_u32', 'v_lshl_add_u32', 'v_lshl_or_b32',
   'v_and_or_b32', 'v_or3_b32', 'v_xor3_b32', 'v_bfi_b32', 'v_bfm_b32', 'v_perm_b32', 'v_alignbit_b32', 'v_alignbyte_b32',
   'v_bcnt_u32_b32', 'v_mbcnt_lo_u32_b32', 'v_mbcnt_hi_u32_b32', 'v_mov_b32', 'v_swap_b32', 'v_readfirstlane_b32',
@@ -554,8 +555,8 @@ function encodeVOP3P(info: OpcodeInfo, instr: ParsedInstruction): number[] {
   let negHi = instr.negHi ?? 0;
   srcs.forEach((s, i) => {
     if (!s) return;
-    if (isMix) {
-      // v_fma_mix: neg_lo negates, neg_hi takes the absolute value
+    if (isMix || (info.dot === 'f16' && i === 2)) {
+      // v_fma_mix sources and the f32 src2 of v_dot2_f32_f16: neg_lo negates, neg_hi takes the absolute value
       if (s.neg) negLo |= 1 << i;
       if (s.abs) negHi |= 1 << i;
     } else {
@@ -1216,14 +1217,17 @@ function disassembleVALU(d: DecodedInstruction, info: OpcodeInfo): string {
   // Modifiers
   const mods: string[] = [];
   if (isVOP3P) {
-    const allSources = (1 << nsrc) - 1;
-    if (d.opSel) mods.push(`op_sel:${bitList(d.opSel, nsrc)}`);
-    const hi = d.opSelHi ?? (isMix ? 0 : 7);
-    if (isMix ? (hi & allSources) !== 0 : (hi & allSources) !== allSources) mods.push(`op_sel_hi:${bitList(hi, nsrc)}`);
-    if (!isMix) {
-      const negLo = (d.src0Neg ? 1 : 0) | (d.src1Neg ? 2 : 0) | (d.src2Neg ? 4 : 0);
-      if (negLo) mods.push(`neg_lo:${bitList(negLo, nsrc)}`);
-      if (d.negHi) mods.push(`neg_hi:${bitList(d.negHi, nsrc)}`);
+    // The 8- and 4-bit dot products read whole dwords and take no op_sel or neg modifiers
+    if (hasPackedModifiers(info)) {
+      const allSources = (1 << nsrc) - 1;
+      if (d.opSel) mods.push(`op_sel:${bitList(d.opSel, nsrc)}`);
+      const hi = d.opSelHi ?? (isMix ? 0 : 7);
+      if (isMix ? (hi & allSources) !== 0 : (hi & allSources) !== allSources) mods.push(`op_sel_hi:${bitList(hi, nsrc)}`);
+      if (!isMix) {
+        const negLo = (d.src0Neg ? 1 : 0) | (d.src1Neg ? 2 : 0) | (d.src2Neg ? 4 : 0);
+        if (negLo) mods.push(`neg_lo:${bitList(negLo, nsrc)}`);
+        if (d.negHi) mods.push(`neg_hi:${bitList(d.negHi, nsrc)}`);
+      }
     }
   } else if (d.opSel) {
     if (m === 'v_permlane16_b32' || m === 'v_permlanex16_b32') {

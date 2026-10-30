@@ -2,7 +2,7 @@
 // Maps mnemonic → opcode info with encoding format and semantic function
 
 import { InstructionFormat, OpcodeInfo, SaluSemantics, SaluContext, ScalarWidth } from './types';
-import { f32ToF16 } from './float16';
+import { f16ToF32, f32ToF16 } from './float16';
 
 // IEEE 754 helper for bit-exact float operations
 const f32 = new Float32Array(1);
@@ -66,6 +66,40 @@ function satU16(a: number): number {
 function satI16(a: number): number {
   if (Number.isNaN(a)) return 0;
   return Math.max(-32768, Math.min(32767, Math.trunc(a))) & 0xFFFF;
+}
+
+/**
+ * Float → normalized 16-bit integer (raw 16-bit result): clamp to [-1, 1] (snorm) or [0, 1] (unorm),
+ * scale by 32767 or 65535 and round to nearest even. NaN converts to 0.
+ */
+function snorm16(a: number): number {
+  if (Number.isNaN(a)) return 0;
+  return rndne(Math.fround(Math.max(-1, Math.min(1, a)) * 32767)) & 0xFFFF;
+}
+function unorm16(a: number): number {
+  if (Number.isNaN(a)) return 0;
+  return rndne(Math.fround(Math.max(0, Math.min(1, a)) * 65535)) & 0xFFFF;
+}
+
+/** 32-bit integer → 16-bit integer with saturation (raw 16-bit result). */
+const satI32ToI16 = (v: number) => Math.max(-32768, Math.min(32767, v | 0)) & 0xFFFF;
+const satU32ToU16 = (v: number) => Math.min(65535, v >>> 0);
+
+/** Exact sum of the pairwise products of the `bits`-wide elements packed into a and b. */
+function dotProduct(a: number, b: number, bits: 4 | 8 | 16, signed: boolean): number {
+  const mask = (1 << bits) - 1;
+  const element = (v: number, i: number) => {
+    const x = (v >>> (i * bits)) & mask;
+    return signed && x > mask >> 1 ? x - mask - 1 : x;
+  };
+  let sum = 0;
+  for (let i = 0; i < 32 / bits; i++) sum += element(a, i) * element(b, i);
+  return sum;
+}
+
+/** Dot product of two packed f16 pairs plus an f32, computed exactly (the caller rounds to f32). */
+function dotF16(a: number, b: number, c: number): number {
+  return f16ToF32(a & 0xFFFF) * f16ToF32(b & 0xFFFF) + f16ToF32(a >>> 16) * f16ToF32(b >>> 16) + c;
 }
 
 /** Sum of absolute differences of the four unsigned bytes of a and b, plus acc. */
@@ -1306,12 +1340,8 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     format: InstructionFormat.VOP1,
     opcode: 0x63,
     operandCount: 2,
-    execute: (a) => {
-      if (Number.isNaN(a)) return 0;
-      const clamped = Math.max(-1.0, Math.min(1.0, a));
-      return Math.round(clamped * 32767) & 0xFFFF;
-    },
-    description: 'Convert f16 to a signed normalized 16-bit integer.\nvdst = (i16)(clamp(src0, -1, 1) × 32767)',
+    execute: (a) => snorm16(a),
+    description: 'Convert f16 to a signed normalized 16-bit integer, rounding to nearest even.\nvdst = (i16)(clamp(src0, -1, 1) × 32767)',
     syntax: 'v_cvt_norm_i16_f16 vdst, src0',
     types: { d: 'i16', s: ['f16'] },
   },
@@ -1320,12 +1350,8 @@ const VOP1_OPCODES: OpcodeInfo[] = [
     format: InstructionFormat.VOP1,
     opcode: 0x64,
     operandCount: 2,
-    execute: (a) => {
-      if (Number.isNaN(a)) return 0;
-      const clamped = Math.max(0.0, Math.min(1.0, a));
-      return Math.round(clamped * 65535) & 0xFFFF;
-    },
-    description: 'Convert f16 to an unsigned normalized 16-bit integer.\nvdst = (u16)(clamp(src0, 0, 1) × 65535)',
+    execute: (a) => unorm16(a),
+    description: 'Convert f16 to an unsigned normalized 16-bit integer, rounding to nearest even.\nvdst = (u16)(clamp(src0, 0, 1) × 65535)',
     syntax: 'v_cvt_norm_u16_f16 vdst, src0',
     types: { d: 'u16', s: ['f16'] },
   },
@@ -1642,6 +1668,266 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     types: { d: 'b16', s: ['b16', 'b16'] },
     opSel: true,
   },
+  {
+    mnemonic: 'v_lshlrev_b16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x314,
+    operandCount: 3,
+    execute: (a, b) => (((b ?? 0) << (a & 15)) & 0xFFFF),
+    description: 'Left shift of a 16-bit value (reversed operand order).\nvdst[15:0] = src1[15:0] << src0[3:0]',
+    syntax: 'v_lshlrev_b16 vdst, src0, src1',
+    types: { d: 'b16', s: ['b16', 'b16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_ashrrev_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x308,
+    operandCount: 3,
+    execute: (a, b) => (((b ?? 0) >> (a & 15)) & 0xFFFF),
+    description: 'Arithmetic right shift of a signed 16-bit value (reversed operand order); the sign bit fills in from the left.\nvdst[15:0] = src1[15:0] >> src0[3:0]',
+    syntax: 'v_ashrrev_i16 vdst, src0, src1',
+    types: { d: 'i16', s: ['b16', 'i16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_add_nc_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x30D,
+    operandCount: 3,
+    execute: (a, b) => ((a + (b ?? 0)) & 0xFFFF),
+    description: 'Add two signed 16-bit integers (no carry; the other half of vdst is preserved). The sum wraps; with clamp it saturates to [-32768, 32767].\nvdst = src0 + src1',
+    syntax: 'v_add_nc_i16 vdst, src0, src1',
+    types: { d: 'i16', s: ['i16', 'i16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_sub_nc_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x30E,
+    operandCount: 3,
+    execute: (a, b) => ((a - (b ?? 0)) & 0xFFFF),
+    description: 'Subtract two signed 16-bit integers (no borrow; the other half of vdst is preserved). The difference wraps; with clamp it saturates to [-32768, 32767].\nvdst = src0 - src1',
+    syntax: 'v_sub_nc_i16 vdst, src0, src1',
+    types: { d: 'i16', s: ['i16', 'i16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_mul_lo_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x305,
+    operandCount: 3,
+    execute: (a, b) => ((a * (b ?? 0)) & 0xFFFF),
+    description: 'Multiply two unsigned 16-bit integers, keeping the low 16 bits of the product (with clamp it saturates to 65535).\nvdst = (src0 × src1) & 0xFFFF',
+    syntax: 'v_mul_lo_u16 vdst, src0, src1',
+    types: { d: 'u16', s: ['u16', 'u16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_max_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x309,
+    operandCount: 3,
+    execute: (a, b) => Math.max(a, b ?? 0),
+    description: 'Maximum of two unsigned 16-bit integers.\nvdst = max(src0, src1)',
+    syntax: 'v_max_u16 vdst, src0, src1',
+    types: { d: 'u16', s: ['u16', 'u16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_max_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x30A,
+    operandCount: 3,
+    execute: (a, b) => Math.max(a, b ?? 0) & 0xFFFF,
+    description: 'Maximum of two signed 16-bit integers.\nvdst = max(src0, src1)',
+    syntax: 'v_max_i16 vdst, src0, src1',
+    types: { d: 'i16', s: ['i16', 'i16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_min_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x30B,
+    operandCount: 3,
+    execute: (a, b) => Math.min(a, b ?? 0),
+    description: 'Minimum of two unsigned 16-bit integers.\nvdst = min(src0, src1)',
+    syntax: 'v_min_u16 vdst, src0, src1',
+    types: { d: 'u16', s: ['u16', 'u16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_min_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x30C,
+    operandCount: 3,
+    execute: (a, b) => Math.min(a, b ?? 0) & 0xFFFF,
+    description: 'Minimum of two signed 16-bit integers.\nvdst = min(src0, src1)',
+    syntax: 'v_min_i16 vdst, src0, src1',
+    types: { d: 'i16', s: ['i16', 'i16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_mad_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x340,
+    operandCount: 4,
+    execute: (a, b, c) => ((a * (b ?? 0) + (c ?? 0)) & 0xFFFF),
+    description: 'Multiply-add of unsigned 16-bit integers, keeping the low 16 bits (with clamp it saturates to 65535).\nvdst = src0 × src1 + src2',
+    syntax: 'v_mad_u16 vdst, src0, src1, src2',
+    types: { d: 'u16', s: ['u16', 'u16', 'u16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_mad_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x35E,
+    operandCount: 4,
+    execute: (a, b, c) => ((a * (b ?? 0) + (c ?? 0)) & 0xFFFF),
+    description: 'Multiply-add of signed 16-bit integers, keeping the low 16 bits (with clamp it saturates to [-32768, 32767]).\nvdst = src0 × src1 + src2',
+    syntax: 'v_mad_i16 vdst, src0, src1, src2',
+    types: { d: 'i16', s: ['i16', 'i16', 'i16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_mad_u32_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x373,
+    operandCount: 4,
+    execute: (a, b, c) => ((a * (b ?? 0) + (c ?? 0)) >>> 0),
+    description: 'Multiply two unsigned 16-bit integers and add a 32-bit value (op_sel picks the halves of src0 and src1). The sum wraps; with clamp it saturates to 0xFFFFFFFF.\nvdst = src0[15:0] × src1[15:0] + src2',
+    syntax: 'v_mad_u32_u16 vdst, src0, src1, src2',
+    types: { d: 'b32', s: ['u16', 'u16', 'b32'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_mad_i32_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x375,
+    operandCount: 4,
+    execute: (a, b, c) => ((a * (b ?? 0) + ((c ?? 0) | 0)) >>> 0),
+    description: 'Multiply two signed 16-bit integers and add a signed 32-bit value (op_sel picks the halves of src0 and src1). The sum wraps; with clamp it saturates to the i32 range.\nvdst = src0[15:0] × src1[15:0] + src2',
+    syntax: 'v_mad_i32_i16 vdst, src0, src1, src2',
+    types: { d: 'b32', s: ['i16', 'i16', 'b32'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_min3_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x352,
+    operandCount: 4,
+    execute: (a, b, c) => Math.min(a, b ?? 0, c ?? 0) & 0xFFFF,
+    description: 'Minimum of three signed 16-bit integers.',
+    syntax: 'v_min3_i16 vdst, src0, src1, src2',
+    types: { d: 'i16', s: ['i16', 'i16', 'i16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_min3_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x353,
+    operandCount: 4,
+    execute: (a, b, c) => Math.min(a, b ?? 0, c ?? 0),
+    description: 'Minimum of three unsigned 16-bit integers.',
+    syntax: 'v_min3_u16 vdst, src0, src1, src2',
+    types: { d: 'u16', s: ['u16', 'u16', 'u16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_max3_i16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x355,
+    operandCount: 4,
+    execute: (a, b, c) => Math.max(a, b ?? 0, c ?? 0) & 0xFFFF,
+    description: 'Maximum of three signed 16-bit integers.',
+    syntax: 'v_max3_i16 vdst, src0, src1, src2',
+    types: { d: 'i16', s: ['i16', 'i16', 'i16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_max3_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x356,
+    operandCount: 4,
+    execute: (a, b, c) => Math.max(a, b ?? 0, c ?? 0),
+    description: 'Maximum of three unsigned 16-bit integers.',
+    syntax: 'v_max3_u16 vdst, src0, src1, src2',
+    types: { d: 'u16', s: ['u16', 'u16', 'u16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_med3_u16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x359,
+    operandCount: 4,
+    execute: (a, b, c) => [a, b ?? 0, c ?? 0].sort((x, y) => x - y)[1],
+    description: 'Median of three unsigned 16-bit integers.',
+    syntax: 'v_med3_u16 vdst, src0, src1, src2',
+    types: { d: 'u16', s: ['u16', 'u16', 'u16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_cvt_pk_i16_i32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x36B,
+    operandCount: 3,
+    execute: (a, b) => (satI32ToI16(a) | (satI32ToI16(b ?? 0) << 16)) >>> 0,
+    description: 'Pack two signed 32-bit integers into two signed 16-bit halves, saturating each to [-32768, 32767].\nvdst = {sat_i16(src1), sat_i16(src0)}',
+    syntax: 'v_cvt_pk_i16_i32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_cvt_pk_u16_u32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x36A,
+    operandCount: 3,
+    execute: (a, b) => (satU32ToU16(a) | (satU32ToU16(b ?? 0) << 16)) >>> 0,
+    description: 'Pack two unsigned 32-bit integers into two unsigned 16-bit halves, saturating each to 65535.\nvdst = {sat_u16(src1), sat_u16(src0)}',
+    syntax: 'v_cvt_pk_u16_u32 vdst, src0, src1',
+    isIntegerOp: true,
+  },
+  {
+    mnemonic: 'v_cvt_pknorm_i16_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x368,
+    operandCount: 3,
+    execute: (a, b) => (snorm16(a) | (snorm16(b ?? 0) << 16)) >>> 0,
+    description: 'Convert two f32 values to signed normalized 16-bit integers and pack them: each is clamped to [-1, 1], scaled by 32767 and rounded to nearest even (NaN gives 0).\nvdst = {snorm16(src1), snorm16(src0)}',
+    syntax: 'v_cvt_pknorm_i16_f32 vdst, src0, src1',
+    types: { d: 'b32', s: ['f32', 'f32'] },
+  },
+  {
+    mnemonic: 'v_cvt_pknorm_u16_f32',
+    format: InstructionFormat.VOP3,
+    opcode: 0x369,
+    operandCount: 3,
+    execute: (a, b) => (unorm16(a) | (unorm16(b ?? 0) << 16)) >>> 0,
+    description: 'Convert two f32 values to unsigned normalized 16-bit integers and pack them: each is clamped to [0, 1], scaled by 65535 and rounded to nearest even (NaN gives 0).\nvdst = {unorm16(src1), unorm16(src0)}',
+    syntax: 'v_cvt_pknorm_u16_f32 vdst, src0, src1',
+    types: { d: 'b32', s: ['f32', 'f32'] },
+  },
+  {
+    mnemonic: 'v_cvt_pknorm_i16_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x312,
+    operandCount: 3,
+    execute: (a, b) => (snorm16(a) | (snorm16(b ?? 0) << 16)) >>> 0,
+    description: 'Convert two f16 values (op_sel picks each source half) to signed normalized 16-bit integers and pack them: each is clamped to [-1, 1], scaled by 32767 and rounded to nearest even.\nvdst = {snorm16(src1), snorm16(src0)}',
+    syntax: 'v_cvt_pknorm_i16_f16 vdst, src0, src1',
+    types: { d: 'b32', s: ['f16', 'f16'] },
+    opSel: true,
+  },
+  {
+    mnemonic: 'v_cvt_pknorm_u16_f16',
+    format: InstructionFormat.VOP3,
+    opcode: 0x313,
+    operandCount: 3,
+    execute: (a, b) => (unorm16(a) | (unorm16(b ?? 0) << 16)) >>> 0,
+    description: 'Convert two f16 values (op_sel picks each source half) to unsigned normalized 16-bit integers and pack them: each is clamped to [0, 1], scaled by 65535 and rounded to nearest even.\nvdst = {unorm16(src1), unorm16(src0)}',
+    syntax: 'v_cvt_pknorm_u16_f16 vdst, src0, src1',
+    types: { d: 'b32', s: ['f16', 'f16'] },
+    opSel: true,
+  },
   // VOP3P packed instructions (bits [31:23] = 0x198)
   // Each operates on two packed 16-bit values per 32-bit register
   {
@@ -1837,6 +2123,111 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
     execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
     description: 'Mixed-precision fused multiply-add with an f32 result. Each source is f32 when its op_sel_hi bit is 0, or an f16 half (op_sel picks lo/hi) when it is 1; neg_hi acts as abs.\nvdst = src0 * src1 + src2',
     syntax: 'v_fma_mix_f32 vdst, src0, src1, src2 op_sel:[0,0,0] op_sel_hi:[0,0,0]',
+  },
+  {
+    mnemonic: 'v_fma_mixlo_f16',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x021,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
+    description: 'Mixed-precision fused multiply-add rounded to f16 and written to the low half of vdst (the high half is preserved). Sources are read as for v_fma_mix_f32: f32 when the op_sel_hi bit is 0, the f16 half picked by op_sel when it is 1.\nvdst[15:0] = src0 * src1 + src2',
+    syntax: 'v_fma_mixlo_f16 vdst, src0, src1, src2 op_sel:[0,0,0] op_sel_hi:[0,0,0]',
+  },
+  {
+    mnemonic: 'v_fma_mixhi_f16',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x022,
+    operandCount: 4,
+    execute: (a, b, c) => asFloat(a * (b ?? 0) + (c ?? 0)),
+    description: 'Mixed-precision fused multiply-add rounded to f16 and written to the high half of vdst (the low half is preserved). Sources are read as for v_fma_mix_f32: f32 when the op_sel_hi bit is 0, the f16 half picked by op_sel when it is 1.\nvdst[31:16] = src0 * src1 + src2',
+    syntax: 'v_fma_mixhi_f16 vdst, src0, src1, src2 op_sel:[0,0,0] op_sel_hi:[0,0,0]',
+  },
+  // Dot products: src0 and src1 hold packed elements, src2 and vdst are 32-bit
+  {
+    mnemonic: 'v_dot2_f32_f16',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x013,
+    operandCount: 4,
+    execute: (a, b, c) => dotF16(a, b ?? 0, c ?? 0),
+    description: 'Multiply the two f16 halves of src0 by the matching halves of src1 and add both products to the f32 src2. ' +
+      'op_sel picks the halves for the first product and op_sel_hi (default hi) those for the second; -src0/-src1 negate both halves, ' +
+      'and the f32 src2 takes -src2 and |src2|. With clamp the result is limited to [0.0, 1.0].\nvdst.f32 = src0.lo × src1.lo + src0.hi × src1.hi + src2' + PK_F16_CONST_NOTE,
+    syntax: 'v_dot2_f32_f16 vdst, src0, src1, src2',
+    dot: 'f16',
+  },
+  {
+    mnemonic: 'v_dot2_i32_i16',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x014,
+    operandCount: 4,
+    execute: (a, b, c) => dotProduct(a, b ?? 0, 16, true) + ((c ?? 0) | 0),
+    description: 'Multiply the two signed 16-bit halves of src0 by the matching halves of src1 and add both products to the signed 32-bit src2. ' +
+      'op_sel picks the halves for the first product and op_sel_hi (default hi) those for the second. The sum wraps; with clamp it saturates to the i32 range.' +
+      '\nvdst.i32 = src0.lo × src1.lo + src0.hi × src1.hi + src2' + PK_INT_CONST_NOTE,
+    syntax: 'v_dot2_i32_i16 vdst, src0, src1, src2',
+    isIntegerOp: true,
+    dot: 'i16',
+  },
+  {
+    mnemonic: 'v_dot2_u32_u16',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x015,
+    operandCount: 4,
+    execute: (a, b, c) => dotProduct(a, b ?? 0, 16, false) + ((c ?? 0) >>> 0),
+    description: 'Multiply the two unsigned 16-bit halves of src0 by the matching halves of src1 and add both products to the unsigned 32-bit src2. ' +
+      'op_sel picks the halves for the first product and op_sel_hi (default hi) those for the second. The sum wraps; with clamp it saturates to 0xFFFFFFFF.' +
+      '\nvdst.u32 = src0.lo × src1.lo + src0.hi × src1.hi + src2' + PK_INT_CONST_NOTE,
+    syntax: 'v_dot2_u32_u16 vdst, src0, src1, src2',
+    isIntegerOp: true,
+    dot: 'u16',
+  },
+  {
+    mnemonic: 'v_dot4_i32_i8',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x016,
+    operandCount: 4,
+    execute: (a, b, c) => dotProduct(a, b ?? 0, 8, true) + ((c ?? 0) | 0),
+    description: 'Multiply each of the four signed bytes of src0 by the matching byte of src1 and add the four products to the signed 32-bit src2. ' +
+      'The sum wraps; with clamp it saturates to the i32 range. No op_sel or neg modifiers.\nvdst.i32 = Σ src0.i8[k] × src1.i8[k] (k = 0..3) + src2',
+    syntax: 'v_dot4_i32_i8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+    dot: 'i8',
+  },
+  {
+    mnemonic: 'v_dot4_u32_u8',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x017,
+    operandCount: 4,
+    execute: (a, b, c) => dotProduct(a, b ?? 0, 8, false) + ((c ?? 0) >>> 0),
+    description: 'Multiply each of the four unsigned bytes of src0 by the matching byte of src1 and add the four products to the unsigned 32-bit src2. ' +
+      'The sum wraps; with clamp it saturates to 0xFFFFFFFF. No op_sel or neg modifiers.\nvdst.u32 = Σ src0.u8[k] × src1.u8[k] (k = 0..3) + src2',
+    syntax: 'v_dot4_u32_u8 vdst, src0, src1, src2',
+    isIntegerOp: true,
+    dot: 'u8',
+  },
+  {
+    mnemonic: 'v_dot8_i32_i4',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x018,
+    operandCount: 4,
+    execute: (a, b, c) => dotProduct(a, b ?? 0, 4, true) + ((c ?? 0) | 0),
+    description: 'Multiply each of the eight signed 4-bit values (nibbles, -8..7) of src0 by the matching nibble of src1 and add the eight products to the signed 32-bit src2. ' +
+      'The sum wraps; with clamp it saturates to the i32 range. No op_sel or neg modifiers.\nvdst.i32 = Σ src0.i4[k] × src1.i4[k] (k = 0..7) + src2',
+    syntax: 'v_dot8_i32_i4 vdst, src0, src1, src2',
+    isIntegerOp: true,
+    dot: 'i4',
+  },
+  {
+    mnemonic: 'v_dot8_u32_u4',
+    format: InstructionFormat.VOP3P,
+    opcode: 0x019,
+    operandCount: 4,
+    execute: (a, b, c) => dotProduct(a, b ?? 0, 4, false) + ((c ?? 0) >>> 0),
+    description: 'Multiply each of the eight unsigned 4-bit values (nibbles, 0..15) of src0 by the matching nibble of src1 and add the eight products to the unsigned 32-bit src2. ' +
+      'The sum wraps; with clamp it saturates to 0xFFFFFFFF. No op_sel or neg modifiers.\nvdst.u32 = Σ src0.u4[k] × src1.u4[k] (k = 0..7) + src2',
+    syntax: 'v_dot8_u32_u4 vdst, src0, src1, src2',
+    isIntegerOp: true,
+    dot: 'u4',
   },
   {
     mnemonic: 'v_perm_b32',

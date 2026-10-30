@@ -78,6 +78,15 @@ export function operandRegCount(info: OpcodeInfo, role: OperandRole): number {
   return MULTI_REG[info.mnemonic]?.[role] ?? 1;
 }
 
+/**
+ * VOP3P instructions that take op_sel, op_sel_hi, neg_lo and neg_hi: all but the 8- and 4-bit dot products,
+ * whose sources are whole dwords.
+ */
+export function hasPackedModifiers(info: OpcodeInfo): boolean {
+  if (info.format !== InstructionFormat.VOP3P) return false;
+  return info.dot === undefined || info.dot === 'f16' || info.dot === 'i16' || info.dot === 'u16';
+}
+
 /** How constants are converted for VALU source operand `index` (0..2). */
 export function valuConstKind(info: OpcodeInfo, index: number, opSelHi = 0): ConstKind {
   const multi = MULTI_REG[info.mnemonic];
@@ -85,6 +94,10 @@ export function valuConstKind(info: OpcodeInfo, index: number, opSelHi = 0): Con
   if (multi && (multi[role] ?? 1) > 1) return multi.signed ? 'i64' : 'u64';
   if (info.format === InstructionFormat.VOP3P) {
     if (info.mnemonic.startsWith('v_fma_mix')) return (opSelHi >> index) & 1 ? 'f16' : 'f32';
+    if (info.dot) {
+      if (index === 2) return info.dot === 'f16' ? 'f32' : 'b32';
+      return info.dot === 'f16' ? 'pkf16' : hasPackedModifiers(info) ? 'pki16' : 'b32';
+    }
     return info.isIntegerOp ? 'pki16' : 'pkf16';
   }
   // VOP2 packed f16 FMA: a constant src0 is a packed f16 pair (value in the low half)

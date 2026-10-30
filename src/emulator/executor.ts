@@ -202,6 +202,13 @@ const SATURATING: Record<string, (a: number, b: number, c: number) => number> = 
   v_sub_nc_i32: (a, b) => clampN((a | 0) - (b | 0), I32_MIN, I32_MAX),
   v_add_nc_u16: (a, b) => clampN(a + b, 0, 0xFFFF),
   v_sub_nc_u16: (a, b) => clampN(a - b, 0, 0xFFFF),
+  v_add_nc_i16: (a, b) => clampN(a + b, -0x8000, 0x7FFF),
+  v_sub_nc_i16: (a, b) => clampN(a - b, -0x8000, 0x7FFF),
+  v_mul_lo_u16: (a, b) => clampN(a * b, 0, 0xFFFF),
+  v_mad_u16: (a, b, c) => clampN(a * b + c, 0, 0xFFFF),
+  v_mad_i16: (a, b, c) => clampN(a * b + c, -0x8000, 0x7FFF),
+  v_mad_u32_u16: (a, b, c) => clampN(a * b + c, 0, U32_MAX),
+  v_mad_i32_i16: (a, b, c) => clampN(a * b + (c | 0), I32_MIN, I32_MAX),
   v_add3_u32: (a, b, c) => clampN(a + b + c, 0, U32_MAX),
   v_xad_u32: (a, b, c) => clampN(((a ^ b) >>> 0) + c, 0, U32_MAX),
   v_mul_u32_u24: (a, b) => clampN((a & 0xFFFFFF) * (b & 0xFFFFFF), 0, U32_MAX),
@@ -613,11 +620,43 @@ function executeVALU(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): 
   if (info.carry) state.writeSGPR(d.sdst ?? VCC_LO, carryMask >>> 0);
 }
 
+/**
+ * One lane of a dot product. Packed 16-bit sources are rearranged so their low half feeds the first
+ * product (half picked by op_sel) and their high half the second (op_sel_hi); f16 neg flips sign bits.
+ * The 8- and 4-bit dots read whole dwords. Integer sums wrap, or saturate to the result type with clamp.
+ */
+function dotResult(info: OpcodeInfo, d: DecodedInstruction, raw: number[], opSel: number, opSelHi: number,
+  negLo: number, negHi: number): number {
+  const kind = info.dot;
+  const f16 = kind === 'f16';
+  const arrange = (r: number, i: number): number => {
+    if (kind !== 'f16' && kind !== 'i16' && kind !== 'u16') return r >>> 0;
+    let lo = (opSel >> i) & 1 ? r >>> 16 : r & 0xFFFF;
+    let hi = (opSelHi >> i) & 1 ? r >>> 16 : r & 0xFFFF;
+    if (f16 && (negLo >> i) & 1) lo ^= 0x8000;
+    if (f16 && (negHi >> i) & 1) hi ^= 0x8000;
+    return ((hi << 16) | lo) >>> 0;
+  };
+  const a = arrange(raw[0], 0);
+  const b = arrange(raw[1], 1);
+  if (f16) {
+    // src2 is an f32: neg_lo negates it and neg_hi takes its absolute value
+    let c = bitsToFloat(raw[2]);
+    if (negHi & 4) c = Math.abs(c);
+    if (negLo & 4) c = -c;
+    return floatBits(outputModifiers(info.execute(a, b, c), d));
+  }
+  const exact = info.execute(a, b, raw[2]);
+  if (!d.clamp) return exact >>> 0;
+  return kind?.startsWith('i') ? clampN(exact, I32_MIN, I32_MAX) >>> 0 : clampN(exact, 0, U32_MAX);
+}
+
 function executeVOP3P(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): void {
   const m = info.mnemonic;
   const exec = state.exec;
   const nsrc = valuSourceCount(info);
   const isMix = m.startsWith('v_fma_mix');
+  const mixHalf = m === 'v_fma_mixlo_f16' ? 'lo' : m === 'v_fma_mixhi_f16' ? 'hi' : undefined;
   const isFloat = !info.isIntegerOp;
   const opSel = d.opSel ?? 0;
   const opSelHi = d.opSelHi ?? (isMix ? 0 : 7);
@@ -633,7 +672,7 @@ function executeVOP3P(state: GPUState, d: DecodedInstruction, info: OpcodeInfo):
     for (let i = 0; i < nsrc; i++) {
       // Inline float constants: f16 value in the low half for f16 operands (0 above it),
       // the f32 value for integer and f32 operands
-      const f16Source = isMix ? ((opSelHi >> i) & 1) === 1 : isFloat;
+      const f16Source = isMix ? ((opSelHi >> i) & 1) === 1 : info.dot ? info.dot === 'f16' && i < 2 : isFloat;
       raw[i] = readLane(state, enc[i], lane, d.literal, f16Source);
     }
 
@@ -644,7 +683,14 @@ function executeVOP3P(state: GPUState, d: DecodedInstruction, info: OpcodeInfo):
         if ((negHi >> i) & 1) v = Math.abs(v);
         return (negLo >> i) & 1 ? -v : v;
       });
-      writes.push([lane, floatBits(outputModifiers(info.execute(args[0], args[1], args[2]), d))]);
+      const result = outputModifiers(info.execute(args[0], args[1], args[2]), d);
+      if (mixHalf) writes.push([lane, writeHalf(state.readVGPR_u32(d.dst, lane), f32ToF16(result), mixHalf === 'hi')]);
+      else writes.push([lane, floatBits(result)]);
+      continue;
+    }
+
+    if (info.dot) {
+      writes.push([lane, dotResult(info, d, raw, opSel, opSelHi, negLo, negHi)]);
       continue;
     }
 

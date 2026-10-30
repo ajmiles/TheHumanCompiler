@@ -6528,6 +6528,169 @@ group('Instruction Info editing: operand spans and choices');
   assert([...labelsIn('a: s_nop 0\nb:\n  s_branch a')].join() === 'a,b', 'labelsIn: every label definition');
 }
 
+group('16-bit integer VOP3, dot products and pack conversions');
+{
+  // Encodings from LLVM's GFX10 MC tests; mix lo/hi come from its GFX9 tests with the VOP3P prefix changed to GFX10's
+  const llvm: Array<[string, number[]]> = [
+    ['v_mad_u32_u16 v5, v1, v2, v3 clamp', [0xD7738005, 0x040E0501]],
+    ['v_max3_i16 v5, v1, v2, v3 clamp', [0xD7558005, 0x040E0501]],
+    ['v_lshlrev_b16 v5, v1, v2 op_sel:[1,1,1]', [0xD7145805, 0x02020501]],
+    ['v_med3_u16 v5, v1, v2, v3 op_sel:[0,0,0,1]', [0xD7594005, 0x040E0501]],
+    ['v_min_i16 v5, 0.5, v2', [0xD70C0005, 0x020204F0]],
+    ['v_cvt_pk_i16_i32 v5, -1, v2', [0xD76B0005, 0x020204C1]],
+    ['v_cvt_pknorm_u16_f32 v5, |v1|, |v2|', [0xD7690305, 0x02020501]],
+    ['v_cvt_pknorm_i16_f16 v5, -v1, v2', [0xD7120005, 0x22020501]],
+    ['v_fma_mixlo_f16 v0, |v1|, -v2, |v3|', [0xCC210500, 0x440E0501]],
+    ['v_fma_mixhi_f16 v0, -v1, |v2|, -|v3|', [0xCC220600, 0xA40E0501]],
+  ];
+  for (const [src, words] of llvm) assert(same(enc(src), words), `encoding (LLVM): ${src}`);
+  ['v_dot2_f32_f16', 'v_dot2_i32_i16', 'v_dot2_u32_u16', 'v_dot4_i32_i8', 'v_dot4_u32_u8', 'v_dot8_i32_i4', 'v_dot8_u32_u4'].forEach((m, i) =>
+    assert(same(enc(`${m} v0, v1, v2, v3`), [(0xCC134000 + (i << 16)) >>> 0, 0x1C0E0501]), `encoding (LLVM): ${m} v0, v1, v2, v3`));
+  assert(same(enc('v_dot2_f32_f16 v0, v1, v2, -|v3|'), [0xCC134400, 0x9C0E0501]),
+    'v_dot2_f32_f16: -|src2| sets neg_lo[2] (negate) and neg_hi[2] (abs) of the f32 accumulator');
+
+  const src = ['v_mad_i32_i16 v5, v1, v2, v3 op_sel:[1,0,0,0] clamp', 'v_ashrrev_i16 v6, v1, v2 op_sel:[0,1,1]',
+    'v_cvt_pknorm_u16_f16 v7, |v1|, -v2 op_sel:[1,0,0]', 'v_dot2_f32_f16 v8, -v1, v2, -|v3| op_sel:[1,0,0] op_sel_hi:[0,1,1] clamp',
+    'v_dot2_u32_u16 v9, v1, v2, v3 op_sel_hi:[1,0,1]', 'v_dot8_i32_i4 v10, v1, 0x11111111, v3 clamp',
+    'v_fma_mixhi_f16 v11, v1, -v2, |v3| op_sel:[0,1,0] op_sel_hi:[0,1,0] clamp', 's_endpgm'].join('\n');
+  const a = assemble(src);
+  const b = assemble(decodeBinary(a.binary).map(d => disassemble(d)).join('\n'));
+  assert(a.errors.length === 0 && b.errors.length === 0 && same(Array.from(a.binary), Array.from(b.binary)), 'new instructions: disassembly round-trips');
+  assert(disassemble(decodeBinary(new Uint32Array(enc('v_dot4_u32_u8 v0, v1, v2, v3')))[0]) === 'v_dot4_u32_u8 v0, v1, v2, v3',
+    'v_dot4 disassembles without packed modifiers');
+}
+{
+  // 16-bit integer VOP3: v3 = op(v0, v1, v2); the destination's other half is kept
+  const r16 = (src: string, a: number, b: number, c = 0, d = 0xABCD0000) => run1(src, e => {
+    e.state.writeVGPR_u32(0, 0, a);
+    e.state.writeVGPR_u32(1, 0, b);
+    e.state.writeVGPR_u32(2, 0, c);
+    e.state.writeVGPR_u32(3, 0, d);
+  }).state.readVGPR_u32(3, 0);
+  assert(r16('v_add_nc_i16 v3, v0, v1', 0x7FFF, 1) === 0xABCD8000, 'v_add_nc_i16 wraps and keeps the high half');
+  assert(r16('v_add_nc_i16 v3, v0, v1 clamp', 0x7FFF, 1) === 0xABCD7FFF, 'v_add_nc_i16 clamp saturates at 32767');
+  assert(r16('v_add_nc_i16 v3, v0, v1 clamp', 0x8000, 0xFFFF) === 0xABCD8000, 'v_add_nc_i16 clamp saturates at -32768');
+  assert(r16('v_sub_nc_i16 v3, v0, v1', 0x8000, 1) === 0xABCD7FFF && r16('v_sub_nc_i16 v3, v0, v1 clamp', 0x8000, 1) === 0xABCD8000,
+    'v_sub_nc_i16 wraps, or saturates with clamp');
+  assert(r16('v_mul_lo_u16 v3, v0, v1', 300, 300) === 0xABCD5F90 && r16('v_mul_lo_u16 v3, v0, v1 clamp', 300, 300) === 0xABCDFFFF,
+    'v_mul_lo_u16 keeps the low 16 bits, or saturates with clamp');
+  assert(r16('v_mad_u16 v3, v0, v1, v2', 1000, 1000, 5) === 0xABCD4245 && r16('v_mad_u16 v3, v0, v1, v2 clamp', 1000, 1000, 5) === 0xABCDFFFF,
+    'v_mad_u16 wraps, or saturates with clamp');
+  assert(r16('v_mad_i16 v3, v0, v1, v2', 0xFF38, 200) === 0xABCD63C0 && r16('v_mad_i16 v3, v0, v1, v2 clamp', 0xFF38, 200) === 0xABCD8000,
+    'v_mad_i16: -200 × 200 wraps, or saturates with clamp');
+  assert(r16('v_max_i16 v3, v0, v1', 0xFFFF, 1) === 0xABCD0001 && r16('v_max_u16 v3, v0, v1', 0xFFFF, 1) === 0xABCDFFFF, 'v_max_i16 is signed, v_max_u16 unsigned');
+  assert(r16('v_min_i16 v3, v0, v1', 0xFFFF, 1) === 0xABCDFFFF && r16('v_min_u16 v3, v0, v1', 0xFFFF, 1) === 0xABCD0001, 'v_min_i16 is signed, v_min_u16 unsigned');
+  assert(r16('v_max3_i16 v3, v0, v1, v2', 0xFFFF, 0x8000, 5) === 0xABCD0005 && r16('v_min3_i16 v3, v0, v1, v2', 0xFFFF, 0x8000, 5) === 0xABCD8000,
+    'v_max3_i16 / v_min3_i16 compare signed');
+  assert(r16('v_max3_u16 v3, v0, v1, v2', 0xFFFF, 0x8000, 5) === 0xABCDFFFF && r16('v_min3_u16 v3, v0, v1, v2', 0xFFFF, 0x8000, 5) === 0xABCD0005,
+    'v_max3_u16 / v_min3_u16 compare unsigned');
+  assert(r16('v_med3_u16 v3, v0, v1, v2', 0xFFFF, 0x8000, 5) === 0xABCD8000 && r16('v_med3_i16 v3, v0, v1, v2', 0xFFFF, 0x8000, 5) === 0xABCDFFFF,
+    'v_med3_u16 is unsigned, v_med3_i16 signed');
+  assert(r16('v_lshlrev_b16 v3, v0, v1', 17, 0x8001) === 0xABCD0002, 'v_lshlrev_b16 shifts by src0[3:0]');
+  assert(r16('v_ashrrev_i16 v3, v0, v1', 15, 0x8000) === 0xABCDFFFF && r16('v_ashrrev_i16 v3, v0, v1', 4, 0x7FF0) === 0xABCD07FF,
+    'v_ashrrev_i16 fills with the sign bit');
+  assert(r16('v_ashrrev_i16 v3, v0, v1 op_sel:[0,1,1]', 4, 0x80000000, 0, 0xABCD) === 0xF800ABCD, 'v_ashrrev_i16 op_sel: high half in, high half out');
+  assert(r16('v_mad_u32_u16 v3, v0, v1, v2', 0xFFFF, 0xFFFF, 0xFFFFFFFF) === 0xFFFE0000 &&
+    r16('v_mad_u32_u16 v3, v0, v1, v2 clamp', 0xFFFF, 0xFFFF, 0xFFFFFFFF) === 0xFFFFFFFF, 'v_mad_u32_u16 wraps, or saturates with clamp');
+  assert(r16('v_mad_i32_i16 v3, v0, v1, v2 op_sel:[1,0,0,0]', 0xFFFD0000, 7, 100) === 79 &&
+    r16('v_mad_i32_i16 v3, v0, v1, v2 op_sel:[1,0,0,0]', 0xFFFD0000, 7, 0) === 0xFFFFFFEB, 'v_mad_i32_i16 multiplies the signed halves picked by op_sel');
+  assert(r16('v_mad_i32_i16 v3, v0, v1, v2', 1, 1, 0x7FFFFFFF) === 0x80000000 && r16('v_mad_i32_i16 v3, v0, v1, v2 clamp', 1, 1, 0x7FFFFFFF) === 0x7FFFFFFF,
+    'v_mad_i32_i16 wraps, or saturates with clamp');
+}
+{
+  // Pack conversions: v3 = {convert(v1), convert(v0)}
+  const pack = (src: string, a: number, b: number) => run1(src, e => {
+    e.state.writeVGPR_u32(0, 0, a);
+    e.state.writeVGPR_u32(1, 0, b);
+  }).state.readVGPR_u32(3, 0);
+  const fb = floatBits;
+  const h = (lo: number, hi: number) => ((f32ToF16(hi) << 16) | f32ToF16(lo)) >>> 0;
+  assert(pack('v_cvt_pk_i16_i32 v3, v0, v1', 70000, -70000 >>> 0) === 0x80007FFF, 'v_cvt_pk_i16_i32 saturates each half');
+  assert(pack('v_cvt_pk_i16_i32 v3, v0, v1', 5, -5 >>> 0) === 0xFFFB0005, 'v_cvt_pk_i16_i32 keeps values in range');
+  assert(pack('v_cvt_pk_u16_u32 v3, v0, v1', 70000, 3) === 0x0003FFFF, 'v_cvt_pk_u16_u32 saturates at 65535');
+  assert(pack('v_cvt_pk_u16_u32 v3, v0, v1', 0xFFFFFFFF, 0x10000) === 0xFFFFFFFF, 'v_cvt_pk_u16_u32 sources are unsigned');
+  assert(pack('v_cvt_pknorm_i16_f32 v3, v0, v1', fb(1), fb(-1)) === 0x80017FFF, 'v_cvt_pknorm_i16_f32: ±1.0 → ±32767');
+  assert(pack('v_cvt_pknorm_i16_f32 v3, v0, v1', fb(2), fb(-3)) === 0x80017FFF, 'v_cvt_pknorm_i16_f32 clamps to [-1, 1]');
+  assert(pack('v_cvt_pknorm_i16_f32 v3, v0, v1', fb(-0.5), fb(0.5)) === 0x4000C000, 'v_cvt_pknorm_i16_f32 rounds ties to even (±16383.5 → ±16384)');
+  assert(pack('v_cvt_pknorm_i16_f32 v3, v0, v1', fb(NaN), fb(-0)) === 0, 'v_cvt_pknorm_i16_f32: NaN and -0 convert to 0');
+  assert(pack('v_cvt_pknorm_u16_f32 v3, v0, v1', fb(0.5), fb(-1)) === 0x00008000, 'v_cvt_pknorm_u16_f32: 0.5 → 32768, negative → 0');
+  assert(pack('v_cvt_pknorm_u16_f32 v3, -v0, |v1|', fb(-0.25), fb(-1)) === 0xFFFF4000, 'v_cvt_pknorm_u16_f32 with -src0 and |src1|');
+  assert(pack('v_cvt_pknorm_i16_f16 v3, v0, v1 op_sel:[1,0,0]', h(0, 1), h(-0.5, 0)) === 0xC0007FFF, 'v_cvt_pknorm_i16_f16: op_sel picks the high half of src0');
+  assert(pack('v_cvt_pknorm_u16_f16 v3, 1.0, v1', 0, h(0.25, 9)) === 0x4000FFFF, 'v_cvt_pknorm_u16_f16: an inline 1.0 is f16; 0.25 → 16384');
+  assert((run1('v_cvt_norm_i16_f16 v1, v0', e => writeF16(e, 0, 0, -0.5)).state.readVGPR_u32(1, 0) & 0xFFFF) === 0xC000,
+    'v_cvt_norm_i16_f16 rounds ties to even: -0.5 × 32767 = -16383.5 → -16384');
+}
+{
+  // Dot products: v0 = dot(v1, v2) + v3
+  const dot = (src: string, a: number, b: number, c: number) => run1(src, e => {
+    e.state.writeVGPR_u32(1, 0, a);
+    e.state.writeVGPR_u32(2, 0, b);
+    e.state.writeVGPR_u32(3, 0, c);
+  }).state.readVGPR_u32(0, 0);
+  const pkh = (lo: number, hi: number) => ((f32ToF16(hi) << 16) | f32ToF16(lo)) >>> 0;
+  const f = (src: string, c = 10) => bitsToFloat(dot(src, pkh(1.5, 2.0), pkh(4.0, -0.5), floatBits(c)));
+  assert(f('v_dot2_f32_f16 v0, v1, v2, v3') === 15, 'v_dot2_f32_f16: 1.5×4 + 2×(-0.5) + 10');
+  assert(f('v_dot2_f32_f16 v0, v1, v2, v3 op_sel:[1,0,0] op_sel_hi:[0,1,1]') === 17.25,
+    'v_dot2_f32_f16: op_sel / op_sel_hi pick the halves of the first / second product (2×4 + 1.5×(-0.5) + 10)');
+  assert(f('v_dot2_f32_f16 v0, -v1, v2, v3') === 5, 'v_dot2_f32_f16: -src0 negates both halves');
+  assert(f('v_dot2_f32_f16 v0, v1, v2, v3 neg_lo:[1,0,0]') === 3, 'v_dot2_f32_f16: neg_lo negates the first product only');
+  assert(f('v_dot2_f32_f16 v0, v1, v2, -|v3|') === -5 && f('v_dot2_f32_f16 v0, v1, v2, |v3|', -10) === 15, 'v_dot2_f32_f16: -|src2| and |src2|');
+  assert(f('v_dot2_f32_f16 v0, v1, v2, v3 clamp') === 1, 'v_dot2_f32_f16: clamp limits the result to [0, 1]');
+  assert(f('v_dot2_f32_f16 v0, v1, 1.0, 0 op_sel_hi:[1,0]') === 3.5, 'v_dot2_f32_f16: op_sel_hi:[1,0] uses a constant in both products');
+  assert(f('v_dot2_f32_f16 v0, v1, v2, 0.1') === Math.fround(5 + Math.fround(0.1)), 'v_dot2_f32_f16: src2 is an f32 literal');
+
+  const i16 = (lo: number, hi: number) => (((hi & 0xFFFF) << 16) | (lo & 0xFFFF)) >>> 0;
+  const min = i16(-32768, -32768);
+  assert(dot('v_dot2_i32_i16 v0, v1, v2, v3', i16(-3, 1000), i16(7, -2), 100) === (-1921 >>> 0), 'v_dot2_i32_i16: -3×7 + 1000×(-2) + 100');
+  assert(dot('v_dot2_i32_i16 v0, v1, v2, v3', min, min, 0) === 0x80000000, 'v_dot2_i32_i16: 2^31 wraps without clamp');
+  assert(dot('v_dot2_i32_i16 v0, v1, v2, v3 clamp', min, min, 0) === 0x7FFFFFFF, 'v_dot2_i32_i16: clamp saturates to the i32 range');
+  assert(dot('v_dot2_i32_i16 v0, v1, 1, 0 op_sel_hi:[1,0]', i16(-3, 1000), 0, 0) === 997, 'v_dot2_i32_i16: op_sel_hi:[1,0] sums the halves of src0');
+  assert(dot('v_dot2_u32_u16 v0, v1, v2, v3', 0xFFFFFFFF, 0xFFFFFFFF, 5) === 0xFFFC0007, 'v_dot2_u32_u16: the sum wraps');
+  assert(dot('v_dot2_u32_u16 v0, v1, v2, v3 clamp', 0xFFFFFFFF, 0xFFFFFFFF, 5) === 0xFFFFFFFF, 'v_dot2_u32_u16: clamp saturates to 0xFFFFFFFF');
+  assert(dot('v_dot2_u32_u16 v0, v1, v2, v3 op_sel:[0,1,0] op_sel_hi:[1,0,1]', i16(2, 3), i16(5, 7), 0) === 2 * 7 + 3 * 5,
+    'v_dot2_u32_u16: op_sel / op_sel_hi cross the halves');
+
+  const bytes = (...b: number[]) => b.reduce((acc, x, i) => (acc | ((x & 0xFF) << (8 * i))) >>> 0, 0);
+  assert(dot('v_dot4_i32_i8 v0, v1, v2, v3', bytes(1, -2, 3, -4), bytes(5, 6, -7, 8), 1000) === 940, 'v_dot4_i32_i8: 5 - 12 - 21 - 32 + 1000');
+  assert(dot('v_dot4_u32_u8 v0, v1, v2, v3', bytes(1, -2, 3, -4), bytes(5, 6, -7, 8), 0) === 1 * 5 + 254 * 6 + 3 * 249 + 252 * 8,
+    'v_dot4_u32_u8: bytes are unsigned');
+  assert(dot('v_dot4_i32_i8 v0, v1, v2, v3', bytes(127), bytes(127), 0x7FFFFFFF) === 0x80003F00 &&
+    dot('v_dot4_i32_i8 v0, v1, v2, v3 clamp', bytes(127), bytes(127), 0x7FFFFFFF) === 0x7FFFFFFF, 'v_dot4_i32_i8 wraps, or saturates with clamp');
+  assert(dot('v_dot4_u32_u8 v0, v1, 0x01010101, 0', bytes(1, 2, 3, 4), 0, 0) === 10, 'v_dot4_u32_u8 with a 0x01010101 literal sums the bytes');
+  assert(dot('v_dot8_i32_i4 v0, v1, v2, v3', 0x89ABCDEF, 0x11111111, 0) === (-36 >>> 0), 'v_dot8_i32_i4: nibbles 0x8–0xF are -8 to -1');
+  assert(dot('v_dot8_u32_u4 v0, v1, v2, v3', 0x89ABCDEF, 0x11111111, 8) === 100, 'v_dot8_u32_u4: 15 + 14 + … + 8, plus 8');
+}
+{
+  // v_fma_mixlo_f16 / v_fma_mixhi_f16: v0 half = v1 × v2 + v3
+  const mix = (src: string) => run1(src, e => {
+    e.state.writeVGPR(1, 0, 1.5);
+    e.state.writeVGPR(2, 0, 2.0);
+    e.state.writeVGPR(3, 0, 0.25);
+    e.state.writeVGPR_u32(0, 0, 0xABCD1234);
+  }).state.readVGPR_u32(0, 0);
+  assert(mix('v_fma_mixlo_f16 v0, v1, v2, v3') === (0xABCD0000 | f32ToF16(3.25)) >>> 0, 'v_fma_mixlo_f16 writes the low half and keeps the high half');
+  assert(mix('v_fma_mixhi_f16 v0, v1, v2, v3') === ((f32ToF16(3.25) << 16) | 0x1234) >>> 0, 'v_fma_mixhi_f16 writes the high half and keeps the low half');
+  assert(mix('v_fma_mixlo_f16 v0, v1, v2, v3 clamp') === (0xABCD0000 | f32ToF16(1)) >>> 0, 'v_fma_mixlo_f16 clamp limits the result to [0, 1]');
+  assert(mix('v_fma_mixhi_f16 v0, -v1, v2, |v3|') === ((f32ToF16(-2.75) << 16) | 0x1234) >>> 0, 'v_fma_mixhi_f16 with -src0 and |src2|');
+  const halves = run1('v_fma_mixlo_f16 v0, v1, v1, v2 op_sel:[0,1,0] op_sel_hi:[1,1,0]', e => {
+    e.state.writeVGPR_u32(1, 0, (f32ToF16(3.0) << 16) | f32ToF16(0.5));
+    e.state.writeVGPR(2, 0, 100);
+  });
+  assert((halves.state.readVGPR_u32(0, 0) & 0xFFFF) === f32ToF16(101.5), 'v_fma_mixlo_f16 multiplies f16 halves (lo × hi) and adds an f32');
+}
+{
+  const rejects = (src: string) => assemble(src).errors.length > 0;
+  assert(rejects('v_dot4_i32_i8 v0, v1, v2, v3 op_sel:[1,0,0]') && rejects('v_dot8_u32_u4 v0, v1, v2, v3 op_sel_hi:[0,0,1]'),
+    'v_dot4 / v_dot8 take no op_sel or op_sel_hi (as in LLVM)');
+  assert(rejects('v_dot4_u32_u8 v0, -v1, v2, v3') && rejects('v_dot2_i32_i16 v0, v1, v2, v3 neg_lo:[1,0,0]') && rejects('v_dot2_u32_u16 v0, v1, -v2, v3'),
+    'integer dot products take no neg modifiers');
+  assert(rejects('v_dot2_f32_f16 v0, |v1|, v2, v3'), 'v_dot2_f32_f16: abs only applies to the f32 src2');
+  assert(rejects('v_lshlrev_b16 v0, v1, v2 clamp') && rejects('v_ashrrev_i16 v0, v1, v2 clamp'), '16-bit shifts have no clamp');
+  assert(rejects('v_cvt_pk_i16_i32 v0, v1, v2 op_sel:[1,0,0]') && rejects('v_cvt_pknorm_i16_f32 v0, v1, v2 op_sel:[1,0,0]'),
+    'pack conversions with 32-bit sources take no op_sel');
+  assert(rejects('v_cvt_pknorm_u16_f32 v0, v1, v2 mul:2'), 'pknorm results are integers: no output modifier');
+}
+
 // ════════════════════════════════════════════
 //  Summary
 // ════════════════════════════════════════════

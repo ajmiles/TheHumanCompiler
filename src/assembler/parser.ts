@@ -28,7 +28,7 @@ import {
   SRC_VCCZ,
   SRC_EXECZ,
 } from '../isa/constants';
-import { operandRegCount, valuSourceCount, vopTypes, OperandRole } from '../isa/operands';
+import { operandRegCount, valuSourceCount, vopTypes, OperandRole, hasPackedModifiers } from '../isa/operands';
 import { planEncoding } from '../isa/encoding';
 import { f32ToF16 } from '../isa/float16';
 import { unknownMnemonic, invalidLiteral } from './errors';
@@ -608,7 +608,7 @@ function parseVALU(
   // Which modifiers apply
   const allowed = ['clamp'];
   if (isVOP3P) {
-    allowed.push('op_sel', 'op_sel_hi', 'neg_lo', 'neg_hi');
+    if (hasPackedModifiers(info)) allowed.push('op_sel', 'op_sel_hi', 'neg_lo', 'neg_hi');
   } else {
     allowed.push('mul', 'div', 'op_sel');
     if (info.format !== InstructionFormat.VOP3) allowed.push(...DPP_MODS, ...SDWA_MODS);
