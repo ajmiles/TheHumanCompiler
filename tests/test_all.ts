@@ -6314,6 +6314,142 @@ group('Regression: every program must finish by executing s_endpgm');
   }
 }
 
+group('DPP and SDWA coverage');
+{
+  // DPP8 fi:1 uses the DPP8FI source marker (0xEA); the lane-selector dword is unchanged
+  assert(same(enc('v_mov_b32 v0, v1 dpp8:[7,6,5,4,3,2,1,0] fi:1'), [0x7E0002EA, 0x05397701]), 'DPP8 fi:1 encodes as source 0xEA');
+  // DPP8 has no bound_ctrl: an inactive source lane reads 0 unless fi:1 fetches it
+  const base = 'v_mbcnt_lo_u32_b32 v0, -1, 0\nv_mov_b32 v1, 0x77\ns_mov_b32 exec_lo, 0xFFFFFFFD\n';
+  const off = run1(base + 'v_mov_b32 v1, v0 dpp8:[1,0,3,2,5,4,7,6]');
+  assert(off.state.readVGPR_u32(1, 0) === 0, 'DPP8: an inactive source lane reads 0');
+  assert(off.state.readVGPR_u32(1, 1) === 0x77 && off.state.readVGPR_u32(1, 2) === 3, 'DPP8: inactive lanes are not written; active lanes read their selected lane');
+  const on = run1(base + 'v_mov_b32 v1, v0 dpp8:[1,0,3,2,5,4,7,6] fi:1');
+  assert(on.state.readVGPR_u32(1, 0) === 1, 'DPP8 fi:1 fetches the inactive lane');
+}
+{
+  // DPP16 source modifiers: neg/abs bits [20..23] of the DPP dword, applied to the value read from the other lane
+  const src = 'v_add_f32 v2, -v0, |v1| row_shr:1 bound_ctrl:1';
+  assert(enc(src)[1] === 0xFF991100, 'DPP16 neg/abs bits: src0 neg [20], src1 abs [23]');
+  const emu = run1('v_mbcnt_lo_u32_b32 v3, -1, 0\nv_cvt_f32_u32 v0, v3\nv_sub_f32 v1, 0, v0\n' + src);
+  assert([1, 5, 15, 17, 31].every(l => emu.state.readVGPR(2, l) === 1), 'DPP16 with -v0 and |v1|: lane n = -(n - 1) + |-n| = 1');
+  assert(emu.state.readVGPR(2, 0) === 0 && emu.state.readVGPR(2, 16) === 16, 'DPP16 with modifiers: bound_ctrl reads 0 at the start of each row');
+  assert(assemble('v_add_f32 v2, -v0, v1 dpp8:[0,1,2,3,4,5,6,7]').errors.length === 1, 'DPP8 has no abs/neg modifiers');
+}
+{
+  // bound_ctrl:0 encodes BC = 0, so lanes without a source are left unwritten (LLVM instead reads bound_ctrl:0 as BC = 1)
+  assert(((enc('v_mov_b32 v1, v0 row_shr:1 bound_ctrl:0')[1] >>> 19) & 1) === 0, 'bound_ctrl:0 encodes BC = 0');
+  assert(((enc('v_mov_b32 v1, v0 row_shr:1 bound_ctrl')[1] >>> 19) & 1) === 1, 'a bare bound_ctrl encodes BC = 1');
+  const emu = run1('v_mbcnt_lo_u32_b32 v0, -1, 0\nv_mov_b32 v1, 0x77\nv_mov_b32 v1, v0 row_shr:1 bound_ctrl:0');
+  assert(emu.state.readVGPR_u32(1, 0) === 0x77 && emu.state.readVGPR_u32(1, 1) === 0, 'bound_ctrl:0: lanes without a source keep their old value');
+}
+{
+  // The _dpp and _sdwa suffixes, and the sext() operand syntax
+  assert(same(enc('v_mov_b32_dpp v1, v0 quad_perm:[1,0,3,2]'), enc('v_mov_b32 v1, v0 quad_perm:[1,0,3,2]')), '_dpp suffix: same encoding as the plain mnemonic');
+  assert(same(enc('v_add_f32_dpp v2, v0, v1 dpp8:[1,0,3,2,5,4,7,6]'), enc('v_add_f32 v2, v0, v1 dpp8:[1,0,3,2,5,4,7,6]')), '_dpp suffix works with DPP8');
+  assert(assemble('v_mov_b32_dpp v1, v0').errors.some(e => /DPP lane control/.test(e.message)), '_dpp without a DPP control is an error');
+  assert(enc('v_mov_b32_sdwa v1, v0').length === 2 && same(enc('v_mov_b32_sdwa v1, v0'), enc('v_mov_b32 v1, v0 src0_sel:DWORD')),
+    '_sdwa without selectors uses the SDWA encoding with DWORD selects');
+  assert(same(enc('v_add_nc_u32 v2, sext(v0), v1 src0_sel:BYTE_0 src1_sel:BYTE_0'), enc('v_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src0_sext src1_sel:BYTE_0')),
+    'sext(src0) is src0_sext');
+  assert(same(enc('v_add_nc_u32_sdwa v2, v0, sext(v1) src0_sel:BYTE_0 src1_sel:BYTE_0'), enc('v_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_0 src1_sext')),
+    'sext(src1) is src1_sext');
+  assert(assemble('v_mov_b32 sext(v0), v1 src0_sel:BYTE_0').errors.some(e => /sext\(\)/.test(e.message)), 'sext() only applies to SDWA sources');
+}
+{
+  // src1_sext / sext() sign-extend the selected field before the operation
+  const regs = (e: Emulator) => { e.state.writeVGPR_u32(0, 0, 5); e.state.writeVGPR_u32(1, 0, 0xFE); };
+  assert(run1('v_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_0 src1_sext', regs).state.readVGPR_u32(2, 0) === 3, 'src1_sext: 5 + (-2) = 3');
+  assert(run1('v_add_nc_u32 v2, v0, sext(v1) src0_sel:BYTE_0 src1_sel:BYTE_0', regs).state.readVGPR_u32(2, 0) === 3, 'sext(v1): 5 + (-2) = 3');
+  assert(run1('v_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_0', regs).state.readVGPR_u32(2, 0) === 0x103, 'without sext the byte is zero-extended: 5 + 254');
+  const word = run1('v_add_nc_u32 v2, sext(v1), v0 src0_sel:WORD_0 src1_sel:BYTE_0',
+    e => { e.state.writeVGPR_u32(0, 0, 5); e.state.writeVGPR_u32(1, 0, 0xFFFE); });
+  assert(word.state.readVGPR_u32(2, 0) === 3, 'sext() on a word: -2 + 5 = 3');
+}
+{
+  // SDWA compares: per-lane compare of the selected bytes into VCC, an SGPR (the SD bit) or EXEC (v_cmpx)
+  // Byte 1 of v0 is the lane index (other bytes hold junk); byte 0 of v1 is 15
+  const bytes = 'v_mbcnt_lo_u32_b32 v2, -1, 0\nv_lshlrev_b32 v0, 8, v2\nv_or_b32 v0, 0xEE0000EE, v0\nv_mov_b32 v1, 0xAB00CD0F\n';
+  const cmp = 'v0, v1 src0_sel:BYTE_1 src1_sel:BYTE_0';
+  assert(run1(bytes + `v_cmp_gt_u32_sdwa vcc_lo, ${cmp}`).state.vcc === 0xFFFF0000, 'SDWA v_cmp compares the selected bytes into VCC');
+  const sgpr = run1(bytes + `s_mov_b32 vcc_lo, 0x12345678\nv_cmp_gt_u32_sdwa s6, ${cmp}`);
+  assert(sgpr.state.readSGPR(6) === 0xFFFF0000 && sgpr.state.vcc === 0x12345678, 'SDWA v_cmp into an SGPR leaves VCC alone');
+  const w = enc(`v_cmp_gt_u32_sdwa s6, ${cmp}`)[1];
+  assert(((w >>> 15) & 1) === 1 && ((w >>> 8) & 0x7F) === 6, 'SDWA v_cmp SGPR destination: SD bit [15] and SDST [14:8]');
+  assert(((enc(`v_cmp_gt_u32_sdwa vcc_lo, ${cmp}`)[1] >>> 15) & 1) === 0, 'SDWA v_cmp into VCC leaves SD clear');
+  const half = run1(bytes + `s_mov_b32 exec_lo, 0xFF00FF00\nv_cmp_gt_u32_sdwa s6, ${cmp}`);
+  assert(half.state.readSGPR(6) === 0xFF000000, 'SDWA v_cmp writes 0 for inactive lanes');
+  assert(run1(bytes + `v_cmpx_gt_u32_sdwa ${cmp}`).state.exec === 0xFFFF0000, 'SDWA v_cmpx writes the mask to EXEC');
+  assert(assemble(`v_cmpx_gt_u32_sdwa s6, ${cmp}`).errors.length > 0, 'SDWA v_cmpx cannot write an SGPR');
+}
+{
+  // SDWA with SGPR and inline-constant sources (the S0 [23] / S1 [31] bits)
+  const sgpr = run1('s_mov_b32 s0, 0x1200\ns_mov_b32 s1, 0x560000\nv_mov_b32 v1, 0x340000\nv_mov_b32 v0, 0x11\n' +
+    'v_add_nc_u32 v2, s0, v1 src0_sel:BYTE_1 src1_sel:WORD_1\nv_add_nc_u32 v3, v0, s1 src0_sel:BYTE_0 src1_sel:BYTE_2');
+  assert(sgpr.state.readVGPR_u32(2, 0) === 0x12 + 0x34 && sgpr.state.readVGPR_u32(3, 0) === 0x11 + 0x56, 'SDWA selects bytes and words of SGPR sources');
+  const w0 = enc('v_add_nc_u32 v2, s0, v1 src0_sel:BYTE_1 src1_sel:WORD_1');
+  assert(((w0[1] >>> 23) & 1) === 1 && (w0[1] & 0xFF) === 0, 'SDWA SGPR src0: S0 bit set, SRC0 = s0');
+  const w1 = enc('v_add_nc_u32 v3, v0, s1 src0_sel:BYTE_0 src1_sel:BYTE_2');
+  assert(((w1[1] >>> 31) & 1) === 1 && ((w1[0] >>> 9) & 0xFF) === 1, 'SDWA SGPR src1: S1 bit set, VSRC1 = s1');
+  const k = run1('v_mov_b32 v1, 0x0305\nv_add_nc_u32 v2, 7, v1 src0_sel:BYTE_0 src1_sel:BYTE_1');
+  assert(k.state.readVGPR_u32(2, 0) === 10, 'SDWA with an inline-constant src0: 7 + byte 1 of v1');
+  assert((enc('v_add_nc_u32 v2, 7, v1 src0_sel:BYTE_0 src1_sel:BYTE_1')[1] & 0x8000FF) === 0x800087, 'SDWA inline constant: S0 set, SRC0 = 135');
+  assert(run1('v_mov_b32 v1, 0.5\nv_add_f32 v2, 2.0, v1 src0_sel:DWORD src1_sel:DWORD').state.readVGPR(2, 0) === 2.5,
+    'SDWA with an inline float constant');
+  assert(assemble('v_add_nc_u32 v2, 0x1234, v1 src0_sel:BYTE_0').errors.some(e => /literal/.test(e.message)), 'SDWA cannot use a literal constant');
+}
+{
+  // SDWA output modifiers (clamp [13], omod [15:14]) and source abs/neg ([21]/[20] for src0, [29]/[28] for src1)
+  const regs = 'v_mov_b32 v0, 0.5\nv_mov_b32 v1, 0x3f400000\n'; // 0.5 and 0.75
+  assert(((enc('v_add_f32 v2, v0, v1 src0_sel:DWORD src1_sel:DWORD clamp')[1] >>> 13) & 1) === 1, 'SDWA clamp is bit 13');
+  assert(run1(regs + 'v_add_f32 v2, v0, v1 src0_sel:DWORD src1_sel:DWORD clamp').state.readVGPR(2, 0) === 1, 'SDWA clamp: 0.5 + 0.75 clamps to 1.0');
+  assert(((enc('v_add_f32 v2, v0, v1 src0_sel:DWORD mul:2')[1] >>> 14) & 3) === 1, 'SDWA mul:2 is omod 1 in bits [15:14]');
+  assert(run1(regs + 'v_add_f32 v2, v0, v1 src0_sel:DWORD src1_sel:DWORD mul:2').state.readVGPR(2, 0) === 2.5, 'SDWA mul:2 doubles the result');
+  const m = enc('v_add_f32 v2, -v0, |v1| src0_sel:DWORD src1_sel:DWORD')[1];
+  assert(((m >>> 20) & 1) === 1 && ((m >>> 21) & 1) === 0 && ((m >>> 28) & 1) === 0 && ((m >>> 29) & 1) === 1, 'SDWA neg/abs: src0 neg [20], src1 abs [29]');
+  const absneg = run1('v_mov_b32 v0, 0.75\nv_mov_b32 v1, -0.5\nv_add_f32 v2, -v0, |v1| src0_sel:DWORD src1_sel:DWORD');
+  assert(absneg.state.readVGPR(2, 0) === -0.25, 'SDWA source modifiers: -0.75 + |-0.5| = -0.25');
+}
+{
+  // row_ror rotates by any amount: lane n reads lane (n - k) mod 16 of its row
+  const r4 = setupDpp16('row_ror:4');
+  assert(r4.state.readVGPR_u32(1, 0) === 12 && r4.state.readVGPR_u32(1, 4) === 0 && r4.state.readVGPR_u32(1, 16) === 28, 'row_ror:4');
+  const r8 = setupDpp16('row_ror:8');
+  assert(r8.state.readVGPR_u32(1, 0) === 8 && r8.state.readVGPR_u32(1, 9) === 1 && r8.state.readVGPR_u32(1, 24) === 16, 'row_ror:8');
+  const r15 = setupDpp16('row_ror:15');
+  assert(r15.state.readVGPR_u32(1, 0) === 1 && r15.state.readVGPR_u32(1, 15) === 0 && r15.state.readVGPR_u32(1, 31) === 16, 'row_ror:15');
+  // The reductions the DPP tutorial teaches solve Quad Average and Wave Average
+  const quad = ['v_add_f32 v1, v0, v0 quad_perm:[1,0,3,2]', 'v_add_f32 v1, v1, v1 quad_perm:[2,3,0,1]'];
+  assert(runPuzzle(getPuzzleById('quad-average')!, [...quad, 'v_mul_f32 v1, 0.25, v1', 's_endpgm'].join('\n')).pass,
+    'Quad Average: quad_perm reduction');
+  const wave = getPuzzleById('wave-average')!;
+  assert(runPuzzle(wave, [...quad, 'v_add_f32 v1, v1, v1 row_ror:4', 'v_add_f32 v1, v1, v1 row_ror:8',
+    'ds_swizzle_b32 v2, v1 offset:0x401F', 'v_add_f32 v1, v1, v2', 'v_mul_f32 v1, 0.03125, v1', 's_endpgm'].join('\n')).pass,
+    'Wave Average: row_ror:4 and row_ror:8, then ds_swizzle across rows');
+  assert(runPuzzle(wave, [...quad, 'v_add_f32 v1, v1, v1 row_xmask:4', 'v_add_f32 v1, v1, v1 row_xmask:8',
+    'v_permlanex16_b32 v2, v1, 0, 0', 'v_add_f32 v1, v1, v2', 'v_mul_f32 v1, 0.03125, v1', 's_endpgm'].join('\n')).pass,
+    'Wave Average: row_xmask:4 and row_xmask:8, then v_permlanex16_b32 across rows');
+}
+{
+  // Every DPP control and SDWA form disassembles to text that re-assembles to the same words
+  const roundTrips = (src: string): boolean => {
+    const a = assemble(src);
+    if (a.errors.length > 0) return false;
+    const b = assemble(decodeBinary(a.binary).map(d => disassemble(d, lookupByOpcode)).join('\n'));
+    return b.errors.length === 0 && same(Array.from(a.binary), Array.from(b.binary));
+  };
+  const forms = [
+    'v_mov_b32 v1, v0 quad_perm:[3,2,1,0] row_mask:0x5 bank_mask:0xa', 'v_mov_b32 v1, v0 row_shl:15',
+    'v_mov_b32 v1, v0 row_shr:1 bound_ctrl:1 fi:1', 'v_mov_b32 v1, v0 row_ror:8', 'v_mov_b32 v1, v0 row_mirror',
+    'v_mov_b32 v1, v0 row_half_mirror', 'v_mov_b32 v1, v0 row_share:7', 'v_mov_b32 v1, v0 row_xmask:15',
+    'v_add_f32 v2, -v0, |v1| row_shr:1', 'v_mov_b32 v1, v0 dpp8:[7,6,5,4,3,2,1,0]', 'v_add_f32 v2, v0, v1 dpp8:[1,0,3,2,5,4,7,6] fi:1',
+    'v_mov_b32 v1, v0 dst_sel:BYTE_3 dst_unused:UNUSED_SEXT src0_sel:WORD_1 src0_sext',
+    'v_add_nc_u32 v2, s0, v1 src0_sel:BYTE_1 src1_sel:WORD_1', 'v_add_nc_u32 v3, v0, s1 src0_sel:BYTE_0 src1_sel:BYTE_2 src1_sext',
+    'v_add_nc_u32 v2, 7, v1 src0_sel:BYTE_0 src1_sel:BYTE_1', 'v_add_f32 v2, -v0, |v1| src0_sel:DWORD src1_sel:DWORD clamp mul:2',
+    'v_cmp_gt_u32_sdwa s6, v0, v1 src0_sel:BYTE_1 src1_sel:BYTE_0', 'v_cmpx_gt_u32_sdwa v0, v1 src0_sel:BYTE_1 src1_sel:BYTE_0',
+  ];
+  for (const f of forms) assert(roundTrips(f), `round-trips: ${f}`);
+}
+
 // ════════════════════════════════════════════
 //  Summary
 // ════════════════════════════════════════════
