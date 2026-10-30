@@ -42,6 +42,7 @@ const WELCOME_TO_GPU: Tutorial = {
         'Let\'s write your first instruction. The code below is already loaded in the editor:\n\n' +
         '<code>v_mov_b32 v1, 1.0</code>\n\n' +
         'This moves the float value 1.0 into <code>v1</code> for every active lane. Press <strong>Step</strong> to execute it and watch the register panel update.\n\n' +
+        'The second line, <code>s_endpgm</code>, ends the program. Every program must finish by executing it: a GPU that runs past the last instruction carries on into whatever memory follows, so here that counts as a crash and a puzzle solution without it is not valid.\n\n' +
         '<em>Note: v_mov_b32 copies raw 32-bit data. Using <code>1.0</code> (an inline float constant) stores the IEEE 754 bit pattern for 1.0.</em>',
       code: 'v_mov_b32 v1, 1.0\ns_endpgm',
     },
@@ -80,9 +81,10 @@ const WELCOME_TO_GPU: Tutorial = {
         'You now know the fundamentals:\n\n' +
         '• A wavefront runs 32 lanes in lockstep\n' +
         '• VGPRs are per-lane, SGPRs are shared\n' +
-        '• Instructions operate on all lanes simultaneously\n\n' +
+        '• Instructions operate on all lanes simultaneously\n' +
+        '• Every program finishes by executing <code>s_endpgm</code>\n\n' +
         'Close this tutorial and start with the first puzzle — <strong>Signal Boost</strong>. Just multiply each input value by 2!\n\n' +
-        'Hint: <code>v_mul_f32 v1, v0, 2.0</code> — one instruction is all you need.',
+        'Hint: <code>v_mul_f32 v1, v0, 2.0</code> followed by <code>s_endpgm</code> is all you need.',
     },
   ],
 };

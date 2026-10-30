@@ -41,7 +41,7 @@ const FORMATS: FormatSpec[] = [
       'No register operands — the instruction is fully encoded in 32 bits',
       'Branches: target = address of the next instruction + SIMM16 × 4 bytes; the assembler computes SIMM16 from a label',
       's_cbranch_scc0/scc1, vccz/vccnz and execz/execnz test SCC, VCC and EXEC',
-      's_endpgm: terminates the shader program',
+      's_endpgm: terminates the shader program. Every program must execute it; running past the last instruction is a crash',
     ],
   },
   {

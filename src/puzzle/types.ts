@@ -23,11 +23,20 @@ export interface PuzzleResult {
   invocations: InvocationResult[];
   totalExpected: number;
   totalCorrect: number;
+  /** The run crashed (e.g. ran off the end without s_endpgm): the solution is not valid. */
+  crash?: PuzzleCrash;
+}
+
+export interface PuzzleCrash {
+  /** Index of the invocation that crashed; later invocations never ran. */
+  invocation: number;
+  message: string;
 }
 
 export interface InvocationResult {
   index: number;
   pass: boolean;
+  crashed?: boolean;
   outputValues: number[];
   expectedValues: number[];
 }

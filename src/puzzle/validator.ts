@@ -2,7 +2,7 @@
 // Compares actual output from emulator against expected puzzle output
 
 import { WAVE_WIDTH } from '../isa/constants';
-import { Puzzle, PuzzleResult, InvocationResult } from './types';
+import { Puzzle, PuzzleCrash, PuzzleResult, InvocationResult } from './types';
 
 const EPSILON = 0.01; // Tolerance for float comparison (~2 decimal places of f32)
 
@@ -14,13 +14,18 @@ function floatEquals(a: number, b: number): boolean {
 
 /**
  * Validate collected output against puzzle expected values.
- * 
+ *
+ * A run that crashed — faulted, or ran off the end without executing s_endpgm — never passes:
+ * the crashed invocation and the ones after it count as wrong whatever their registers hold.
+ *
  * @param puzzle - The puzzle definition
  * @param collectedOutputs - Map of register index → collected output values across all invocations
+ * @param crash - Where and why the run crashed, if it did
  */
 export function validatePuzzle(
   puzzle: Puzzle,
   collectedOutputs: Map<number, number[]>,
+  crash?: PuzzleCrash,
 ): PuzzleResult {
   const invocations: InvocationResult[] = [];
   let totalExpected = 0;
@@ -31,7 +36,8 @@ export function validatePuzzle(
   const numInvocations = Math.ceil(streamLength / WAVE_WIDTH);
   
   for (let inv = 0; inv < numInvocations; inv++) {
-    let invPass = true;
+    const ran = !crash || inv < crash.invocation;
+    let invPass = ran;
     const invOutputValues: number[] = [];
     const invExpectedValues: number[] = [];
     
@@ -42,13 +48,13 @@ export function validatePuzzle(
       
       for (let i = startIdx; i < endIdx; i++) {
         const expected = output.values[i];
-        const actual = i < collected.length ? collected[i] : NaN;
+        const actual = ran && i < collected.length ? collected[i] : NaN;
         
         invExpectedValues.push(expected);
         invOutputValues.push(actual);
         totalExpected++;
         
-        if (floatEquals(actual, expected)) {
+        if (ran && floatEquals(actual, expected)) {
           totalCorrect++;
         } else {
           invPass = false;
@@ -59,15 +65,17 @@ export function validatePuzzle(
     invocations.push({
       index: inv,
       pass: invPass,
+      ...(crash?.invocation === inv ? { crashed: true } : {}),
       outputValues: invOutputValues,
       expectedValues: invExpectedValues,
     });
   }
   
   return {
-    pass: totalCorrect === totalExpected,
+    pass: !crash && totalCorrect === totalExpected,
     invocations,
     totalExpected,
     totalCorrect,
+    ...(crash ? { crash } : {}),
   };
 }

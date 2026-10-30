@@ -213,5 +213,7 @@ export interface AssemblyError {
 export interface AssemblyResult {
   binary: Uint32Array;
   errors: AssemblyError[];
+  /** Problems that do not stop the program assembling, such as a missing s_endpgm. */
+  warnings: AssemblyError[];
   instructions: ParsedInstruction[];
 }

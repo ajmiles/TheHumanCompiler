@@ -222,6 +222,24 @@
   color: var(--text-secondary);
 }
 
+/* Warnings (e.g. a missing s_endpgm) are yellow; the panel turns yellow when there are no errors */
+.error-list-item--warning .error-list-loc {
+  color: var(--accent-yellow);
+}
+
+.error-list-item--warning:hover {
+  background: rgba(210, 153, 34, 0.1);
+}
+
+.error-list-panel--warnings-only {
+  border-top-color: rgba(210, 153, 34, 0.3);
+  background: rgba(210, 153, 34, 0.03);
+}
+
+.error-list-panel--warnings-only .error-list-header {
+  color: var(--accent-yellow) !important;
+}
+
 .error-list {
   padding: 8px 12px;
   background: rgba(248, 81, 73, 0.05);

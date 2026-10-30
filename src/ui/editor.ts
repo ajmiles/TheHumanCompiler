@@ -349,12 +349,12 @@ export class AsmEditor {
     this.editor.focus();
   }
 
-  setErrors(errors: { line: number; column: number; message: string }[]): void {
+  setErrors(errors: { line: number; column: number; message: string; severity?: 'error' | 'warning' }[]): void {
     const model = this.editor.getModel();
     if (!model) return;
 
     const markers: monaco.editor.IMarkerData[] = errors.map(e => ({
-      severity: monaco.MarkerSeverity.Error,
+      severity: e.severity === 'warning' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error,
       message: e.message,
       startLineNumber: e.line,
       startColumn: e.column,

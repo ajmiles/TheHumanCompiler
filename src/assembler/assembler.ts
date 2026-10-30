@@ -2,6 +2,7 @@
 
 import { AssemblyError, AssemblyResult, ParsedInstruction } from '../isa/types';
 import { encodeInstruction, EncodingError } from '../isa/encoding';
+import { lookupByMnemonic } from '../isa/opcodes';
 import { tokenize } from './lexer';
 import { parse } from './parser';
 
@@ -15,10 +16,26 @@ function encodeOrReport(instr: ParsedInstruction, errors: AssemblyError[]): numb
   }
 }
 
+/** Every program must end by executing s_endpgm; without one, execution runs off the end and crashes. */
+function checkWarnings(instructions: ParsedInstruction[]): AssemblyError[] {
+  if (instructions.some(i => lookupByMnemonic(i.mnemonic)?.halts)) return [];
+  const last = instructions[instructions.length - 1];
+  if (!last) {
+    return [{ message: 'The program has no s_endpgm, so running it will crash. Every program must finish by executing s_endpgm.', line: 1, column: 1 }];
+  }
+  return [{
+    message: 'The program has no s_endpgm: execution will run off the end after this instruction and crash. ' +
+      'Every program must finish by executing s_endpgm.',
+    line: last.line,
+    column: last.column,
+  }];
+}
+
 export function assemble(source: string): AssemblyResult {
   const { instructions, errors, labels } = parse(tokenize(source));
+  const warnings = checkWarnings(instructions);
   if (errors.length > 0) {
-    return { binary: new Uint32Array(0), errors, instructions };
+    return { binary: new Uint32Array(0), errors, warnings, instructions };
   }
 
   // Dword address of every instruction (branch targets are dword offsets)
@@ -48,10 +65,10 @@ export function assemble(source: string): AssemblyResult {
   });
 
   if (errors.length > 0) {
-    return { binary: new Uint32Array(0), errors, instructions };
+    return { binary: new Uint32Array(0), errors, warnings, instructions };
   }
 
   const words: number[] = [];
   for (const instr of instructions) words.push(...encodeInstruction(instr));
-  return { binary: new Uint32Array(words), errors: [], instructions };
+  return { binary: new Uint32Array(words), errors: [], warnings, instructions };
 }

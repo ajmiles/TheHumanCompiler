@@ -40,7 +40,7 @@ const SIGNAL_BOOST: Puzzle = {
   ],
   hints: [
     'You can use inline float constants like 2.0 directly as an operand.',
-    'Only one instruction is needed!',
+    'Only one instruction is needed (plus the s_endpgm every program must end with)!',
   ],
   optimalInstructions: 1,
 };
@@ -348,7 +348,7 @@ const DOT_PRODUCT_3D: Puzzle = {
     'The dot product is: Ax*Bx + Ay*By + Az*Bz.',
     'v_fma_f32 computes a*b+c in one instruction — perfect for accumulating.',
     'Start with v_mul_f32 for the first pair, then v_fma_f32 to accumulate the rest.',
-    'Optimal solution: 3 instructions using v_fma_f32!',
+    'Optimal solution: 3 instructions using v_fma_f32, plus s_endpgm!',
   ],
   optimalInstructions: 3,
 };

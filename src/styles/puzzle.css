@@ -203,3 +203,16 @@
   background: var(--accent-red);
   border-color: var(--accent-red);
 }
+
+/* The invocation that crashed (e.g. ran off the end without s_endpgm): a red ring, same size as the others */
+.invocation-dot--crash {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-red);
+  box-shadow: 0 0 0 1px var(--accent-red), 0 0 4px var(--accent-red);
+}
+
+.invocation-bar__crash {
+  color: var(--accent-red);
+  font-weight: 600;
+  cursor: help;
+}

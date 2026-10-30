@@ -3030,7 +3030,7 @@ const SOPP_OPCODES: OpcodeInfo[] = [
     opcode: 0x01,
     operandCount: 0,
     execute: () => 0,
-    description: 'End the shader program. Execution stops at this instruction.',
+    description: 'End the shader program. Execution stops at this instruction.\nEvery program must finish by executing s_endpgm: running past the last instruction is a crash.',
     syntax: 's_endpgm',
     halts: true,
   },

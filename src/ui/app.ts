@@ -93,7 +93,7 @@ function buildLevelOrder(): LevelItem[] {
 const LEVEL_ORDER = buildLevelOrder();
 import { validatePuzzle } from '../puzzle/validator';
 import { WAVE_WIDTH } from '../isa/constants';
-import { AssemblyResult, Operand, OperandType } from '../isa/types';
+import { AssemblyError, AssemblyResult, Operand, OperandType } from '../isa/types';
 import { decodeBinary, disassemble } from '../isa/encoding';
 import { lookupByMnemonic, lookupByOpcode } from '../isa/opcodes';
 import { operandRegCount, OperandRole } from '../isa/operands';
@@ -426,18 +426,16 @@ export class App {
     this.assemblyResult = assemble(source);
     this.instructionInfo.setSource(source);
 
-    this.editor.setErrors(
-      this.assemblyResult.errors.map(e => ({
-        line: e.line,
-        column: e.column,
-        message: e.message,
-      })),
-    );
+    const { errors, warnings } = this.assemblyResult;
+    this.editor.setErrors([
+      ...errors.map(e => ({ line: e.line, column: e.column, message: e.message })),
+      ...warnings.map(w => ({ line: w.line, column: w.column, message: w.message, severity: 'warning' as const })),
+    ]);
 
-    this.controls.setAssembleStatus(this.assemblyResult.errors.length);
+    this.controls.setAssembleStatus(errors.length, warnings.length);
 
     // Update error list
-    this.renderErrorList(this.assemblyResult.errors);
+    this.renderErrorList(errors, warnings);
 
     if (this.assemblyResult.errors.length === 0 && this.assemblyResult.binary.length > 0) {
       this.binaryView.update(this.assemblyResult.binary, this.emulator.state.pc);
@@ -503,6 +501,8 @@ export class App {
   private primed = false;
 
   private doStep(): void {
+    // Once the program has finished (or crashed), Step starts it again from the beginning
+    if (this.emulator.isComplete()) this.doReset();
     if (!this.ensureLoaded()) return;
 
     // First step: just highlight the first instruction, don't execute
@@ -521,8 +521,8 @@ export class App {
   }
 
   private doRun(): void {
-    // Auto-reset if program already finished
-    if (this.emulator.isComplete() && this.emulator.state.pc > 0) {
+    // Auto-reset if the program already finished (or crashed)
+    if (this.emulator.isComplete()) {
       this.doReset();
     }
 
@@ -564,9 +564,8 @@ export class App {
       this.registers.setUsedVGPRs(this.computeMaxVGPR());
     }
 
-    // Always reload the binary from the current assembly result
-    if (this.assemblyResult && this.assemblyResult.errors.length === 0 &&
-        this.assemblyResult.binary.length > 0) {
+    // Always reload the binary from the current assembly result (an empty program loads, runs and crashes)
+    if (this.assemblyResult && this.assemblyResult.errors.length === 0) {
       this.emulator.load(this.assemblyResult.binary);
     } else {
       this.emulator.reset();
@@ -576,28 +575,20 @@ export class App {
       this.loadInputsForInvocation(this.currentPuzzle, this.currentInvocation);
     }
 
+    this.controls.updateCycle(this.emulator.getCycleCount());
     this.updateAllDisplays();
     this.statusBar.clear();
     this.editor.clearHighlight();
   }
 
   private ensureLoaded(): boolean {
-    // Re-assemble if needed
+    // Re-assemble if needed; a successful assemble (re)loads the program through doReset
     if (!this.assemblyResult || this.assemblyResult.errors.length > 0) {
       this.doAssemble();
     }
     if (!this.assemblyResult || this.assemblyResult.errors.length > 0) {
       this.statusBar.setStatus('Fix assembly errors first', 'error');
       return false;
-    }
-
-    // Load binary if PC is at 0 and program might need reloading
-    if (this.emulator.isComplete() && this.emulator.state.pc === 0) {
-      this.emulator.load(this.assemblyResult.binary);
-      // Restore puzzle inputs if active
-      if (this.currentPuzzle) {
-        this.loadInputsForInvocation(this.currentPuzzle, this.currentInvocation);
-      }
     }
 
     return true;
@@ -643,26 +634,34 @@ export class App {
     }
   }
 
-  private renderErrorList(errors: { message: string; line: number; column: number }[]): void {
-    if (errors.length === 0) {
+  private renderErrorList(errors: AssemblyError[], warnings: AssemblyError[] = []): void {
+    if (errors.length === 0 && warnings.length === 0) {
       this.errorListEl.style.display = 'none';
       return;
     }
 
     this.errorListEl.style.display = '';
     this.errorListEl.innerHTML = '';
+    this.errorListEl.classList.toggle('error-list-panel--warnings-only', errors.length === 0);
 
     const header = document.createElement('div');
     header.className = 'panel__header error-list-header';
-    header.textContent = `Errors (${errors.length})`;
+    const counts: string[] = [];
+    if (errors.length > 0) counts.push(`Errors (${errors.length})`);
+    if (warnings.length > 0) counts.push(`Warnings (${warnings.length})`);
+    header.textContent = counts.join(' · ');
     this.errorListEl.appendChild(header);
 
     const list = document.createElement('div');
     list.className = 'error-list-body';
 
-    for (const err of errors) {
+    const items = [
+      ...errors.map(e => ({ ...e, warning: false })),
+      ...warnings.map(w => ({ ...w, warning: true })),
+    ];
+    for (const err of items) {
       const row = document.createElement('div');
-      row.className = 'error-list-item';
+      row.className = err.warning ? 'error-list-item error-list-item--warning' : 'error-list-item';
       row.ondblclick = () => {
         this.editor.highlightLine(err.line);
         this.editor.revealLine(err.line);
@@ -674,7 +673,7 @@ export class App {
 
       const msg = document.createElement('span');
       msg.className = 'error-list-msg';
-      msg.textContent = err.message;
+      msg.textContent = err.warning ? `⚠ ${err.message}` : err.message;
 
       row.append(loc, msg);
       list.appendChild(row);
@@ -771,8 +770,7 @@ export class App {
     this.currentInvocation = invocationIndex;
 
     // Reset emulator state but try to keep program loaded
-    if (this.assemblyResult && this.assemblyResult.errors.length === 0 &&
-        this.assemblyResult.binary.length > 0) {
+    if (this.assemblyResult && this.assemblyResult.errors.length === 0) {
       this.emulator.load(this.assemblyResult.binary);
     } else {
       this.emulator.reset();
@@ -809,11 +807,17 @@ export class App {
   }
 
   private onProgramComplete(): void {
-    if (this.emulator.fault) {
+    const fault = this.emulator.fault;
+    if (fault) {
+      // A crash (including running off the end without s_endpgm) ends the run: the solution is not valid
       this.doStop();
+      if (this.currentPuzzle) {
+        this.ioPanel.showResult(validatePuzzle(this.currentPuzzle, this.collectedOutputs,
+          { invocation: this.currentInvocation, message: fault }));
+      }
       const where = this.currentPuzzle && this.totalInvocations > 1
-        ? ` (invocation ${this.currentInvocation + 1} / ${this.totalInvocations})` : '';
-      this.statusBar.setStatus(`✗ Fault${where}: ${this.emulator.fault}`, 'error');
+        ? ` in invocation ${this.currentInvocation + 1} / ${this.totalInvocations}` : '';
+      this.statusBar.setStatus(`✗ CRASHED${where}: ${fault}`, 'error');
       return;
     }
 

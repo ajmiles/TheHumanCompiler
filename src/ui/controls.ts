@@ -135,10 +135,14 @@ export class Controls {
     this.cycleEl.textContent = `Cycle: ${count}`;
   }
 
-  setAssembleStatus(errors: number): void {
+  setAssembleStatus(errors: number, warnings = 0): void {
+    const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`;
     if (errors > 0) {
-      this.statusEl.textContent = `${errors} error${errors > 1 ? 's' : ''}`;
+      this.statusEl.textContent = plural(errors, 'error') + (warnings > 0 ? `, ${plural(warnings, 'warning')}` : '');
       this.statusEl.style.color = 'var(--accent-red)';
+    } else if (warnings > 0) {
+      this.statusEl.textContent = `⚠ assembled, ${plural(warnings, 'warning')}`;
+      this.statusEl.style.color = 'var(--accent-yellow)';
     } else {
       this.statusEl.textContent = '✓ assembled';
       this.statusEl.style.color = 'var(--accent-green)';

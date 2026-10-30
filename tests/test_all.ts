@@ -5,8 +5,10 @@ import { Emulator } from '../src/emulator/emulator';
 import { decodeBinary, disassemble } from '../src/isa/encoding';
 import { lookupByOpcode, lookupByMnemonic } from '../src/isa/opcodes';
 import { f16ToF32, f32ToF16 } from '../src/isa/float16';
-import { getPuzzleById } from '../src/puzzle/puzzles';
+import { getPuzzleById, ALL_PUZZLES } from '../src/puzzle/puzzles';
 import { validatePuzzle } from '../src/puzzle/validator';
+import { ALL_TUTORIALS } from '../src/puzzle/tutorials';
+import { Puzzle, PuzzleResult } from '../src/puzzle/types';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -5852,7 +5854,8 @@ group('Regression: branches, labels and the program counter');
   const emu = new Emulator();
   emu.load(r.binary);
   emu.run();
-  assert(emu.isComplete() && emu.fault === null, 'branching to the end of the program completes it');
+  assert(emu.isComplete() && emu.fault !== null && /jumped to the end of the program/.test(emu.fault),
+    'branching to the end of the program (past the last instruction) crashes');
 }
 {
   const emu = run1(['v_add_f32 v0, v1, v2 clamp', 's_getpc_b64 s[0:1]'].join('\n'));
@@ -6195,25 +6198,46 @@ group('Regression: code review fixes');
     'v_mad_u64_u32 clamp saturates the 64-bit result and still reports the carry');
 }
 
+/**
+ * Run every invocation of a puzzle the way the app does. A crash (a fault, or running off the end
+ * without s_endpgm) stops the run, and the solution is then never valid.
+ */
+function runPuzzle(puzzle: Puzzle, source: string): PuzzleResult {
+  const r = assemble(source);
+  assert(r.errors.length === 0, `puzzle solution assembles: ${r.errors.map(e => e.message).join('; ')}`);
+  const outputs = new Map<number, number[]>(puzzle.outputs.map(o => [o.register, []]));
+  const invocations = Math.ceil(puzzle.outputs[0].values.length / 32);
+  for (let inv = 0; inv < invocations; inv++) {
+    const emu = new Emulator();
+    emu.load(r.binary);
+    for (const input of puzzle.inputs) {
+      if (input.isSGPR) {
+        emu.state.writeSGPR(input.register, (input.values[inv] ?? 0) >>> 0);
+        continue;
+      }
+      for (let lane = 0; lane < 32; lane++) {
+        const v = input.values[inv * 32 + lane] ?? 0;
+        if (input.isInteger) emu.state.writeVGPR_u32(input.register, lane, v >>> 0);
+        else emu.state.writeVGPR(input.register, lane, v);
+      }
+    }
+    emu.run();
+    if (emu.fault) return validatePuzzle(puzzle, outputs, { invocation: inv, message: emu.fault });
+    for (const o of puzzle.outputs) {
+      const out = outputs.get(o.register)!;
+      for (let lane = 0; lane < 32 && inv * 32 + lane < o.values.length; lane++) {
+        out[inv * 32 + lane] = o.isInteger ? emu.state.readVGPR_u32(o.register, lane) : emu.state.readVGPR(o.register, lane);
+      }
+    }
+  }
+  return validatePuzzle(puzzle, outputs);
+}
+
 group('Regression: player report — the 3.0 in a smoothstep had no effect');
 {
   // A player's Smooth Clamp solution failed because 3.0 was encoded as the integer 3 (a tiny denormal)
   const puzzle = getPuzzleById('smooth-clamp')!;
-  const solves = (lines: string[]): boolean => {
-    const r = assemble(lines.join('\n'));
-    assert(r.errors.length === 0, `assembles: ${r.errors.map(e => e.message).join('; ')}`);
-    const out: number[] = [];
-    for (let inv = 0; inv * 32 < puzzle.outputs[0].values.length; inv++) {
-      const emu = new Emulator();
-      emu.load(r.binary);
-      for (const input of puzzle.inputs) {
-        for (let lane = 0; lane < 32; lane++) emu.state.writeVGPR(input.register, lane, input.values[inv * 32 + lane] ?? 0);
-      }
-      emu.run();
-      for (let lane = 0; lane < 32; lane++) out[inv * 32 + lane] = emu.state.readVGPR(3, lane);
-    }
-    return validatePuzzle(puzzle, new Map([[3, out]])).pass;
-  };
+  const solves = (lines: string[]): boolean => runPuzzle(puzzle, lines.join('\n')).pass;
   const head = ['v_sub_f32 v2, v2, v0', 'v_sub_f32 v1, v1, v0', 'v_rcp_f32 v1, v1', 'v_mul_f32 v0, v1, v2',
     'v_max_f32 v0, v0, 0.0', 'v_min_f32 v0, v0, 1.0', 'v_mul_f32 v1, v0, v0'];
   const tail = ['v_mul_f32 v3, v0, v1', 's_endpgm'];
@@ -6222,6 +6246,72 @@ group('Regression: player report — the 3.0 in a smoothstep had no effect');
   assert(solves([...head, 'v_mul_f32 v0, v0, -2.0', 'v_mov_b32 v4, 3.0', 'v_add_f32 v0, v0, v4', ...tail]), 'v_mov_b32 v4, 3.0 then v_add_f32 passes Smooth Clamp');
   const add = run1('v_add_f32 v1, v0, 3.0', e => e.state.writeVGPR(0, 0, -2));
   assert(add.state.readVGPR(1, 0) === 1, 'a non-inline float as the second operand reads as an f32 literal (VOP3)');
+}
+
+group('Regression: every program must finish by executing s_endpgm');
+{
+  // Assembler: a program without s_endpgm still assembles, with a warning on its last instruction
+  const missing = assemble('; c\nv_mov_b32 v0, 1.0\nv_add_f32 v1, v0, v0\n; trailing comment');
+  assert(missing.errors.length === 0 && missing.binary.length === 2, 'a program without s_endpgm still assembles');
+  assert(missing.warnings.length === 1 && missing.warnings[0].line === 3 && /s_endpgm/.test(missing.warnings[0].message),
+    'a missing s_endpgm is a warning on the last instruction');
+  assert(assemble('v_mov_b32 v0, 1.0\ns_endpgm').warnings.length === 0, 'no warning when the program has an s_endpgm');
+  assert(assemble('s_endpgm\nv_nop').warnings.length === 0, 'an s_endpgm anywhere in the program satisfies the check');
+  const empty = assemble('; nothing yet');
+  assert(empty.warnings.length === 1 && empty.warnings[0].line === 1, 'an empty program gets the warning on line 1');
+  assert(assemble('v_bogus v0\nv_mov_b32 v0, 1.0').warnings.length === 1, 'the warning is reported alongside errors');
+}
+{
+  // Emulator: running past the last instruction is a crash
+  const fall = setup('v_mov_b32 v0, 1.0');
+  assert(fall.step() && fall.isComplete(), 'falling off the end stops execution after the last instruction');
+  assert(fall.fault !== null && /ran off the end of the program after v_mov_b32/.test(fall.fault) && /s_endpgm/.test(fall.fault),
+    'falling off the end is a crash that names the last instruction');
+  assert(fall.state.readVGPR(0, 0) === 1 && !fall.step(), 'the last instruction still runs, and nothing runs after the crash');
+  const notTaken = setup('loop:\ns_cmp_eq_u32 s0, 1\ns_cbranch_scc1 loop');
+  notTaken.run();
+  assert(notTaken.fault !== null && /after s_cbranch_scc1/.test(notTaken.fault), 'a conditional branch not taken at the end crashes');
+  const setpc = setup('s_getpc_b64 s[0:1]\ns_add_u32 s0, s0, 8\ns_setpc_b64 s[0:1]');
+  setpc.run();
+  assert(setpc.fault !== null && /s_setpc_b64 jumped to the end of the program/.test(setpc.fault), 's_setpc_b64 to the end of the program crashes');
+  const none = new Emulator();
+  none.load(new Uint32Array(0));
+  none.run();
+  assert(none.isComplete() && none.fault !== null && /no instructions/.test(none.fault), 'an empty program crashes');
+  const branched = run1('s_branch done\nv_mov_b32 v0, 1.0\ndone:');
+  assert(branched.fault === null && branched.state.readVGPR_u32(0, 0) === 0, 'branching to an s_endpgm finishes cleanly');
+}
+{
+  // Puzzles: a crash is never a valid solution, even when the output registers hold the right values
+  const boost = getPuzzleById('signal-boost')!;
+  assert(runPuzzle(boost, 'v_mul_f32 v1, v0, 2.0\ns_endpgm').pass, 'Signal Boost passes with s_endpgm');
+  const crashed = runPuzzle(boost, 'v_mul_f32 v1, v0, 2.0');
+  assert(!crashed.pass && crashed.crash?.invocation === 0 && /s_endpgm/.test(crashed.crash.message),
+    'without s_endpgm the solution crashes and is not valid');
+  assert(crashed.invocations[0].crashed === true && crashed.totalCorrect === 0, 'the crashed invocation counts as wrong');
+  const outputs = new Map([[1, boost.outputs[0].values.slice()]]);
+  assert(validatePuzzle(boost, outputs).pass, 'the correct outputs pass when nothing crashed');
+  const late = validatePuzzle(boost, outputs, { invocation: 1, message: 'crash' });
+  assert(!late.pass && late.invocations[0].pass && !late.invocations[1].pass && late.invocations[1].crashed === true &&
+    late.totalCorrect === 32, 'a crash in a later invocation still fails the solution, whatever the registers hold');
+  for (const puzzle of ALL_PUZZLES) {
+    const result = runPuzzle(puzzle, 'v_nop');
+    assert(!result.pass && result.crash !== undefined, `${puzzle.id}: a program without s_endpgm crashes`);
+  }
+}
+{
+  // Every tutorial snippet finishes with s_endpgm
+  for (const t of ALL_TUTORIALS) {
+    t.steps.forEach((s, i) => {
+      if (!s.code) return;
+      const r = assemble(s.code);
+      assert(r.errors.length === 0 && r.warnings.length === 0, `${t.id} step ${i + 1} assembles without warnings`);
+      const emu = new Emulator();
+      emu.load(r.binary);
+      emu.run();
+      assert(emu.fault === null, `${t.id} step ${i + 1} runs to s_endpgm`);
+    });
+  }
 }
 
 // ════════════════════════════════════════════

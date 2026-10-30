@@ -141,10 +141,16 @@ export class IOPanel {
   showResult(result: PuzzleResult): void {
     const dots = this.invocationBar.querySelectorAll('.invocation-dot');
     for (const inv of result.invocations) {
-      if (inv.index < dots.length) {
-        dots[inv.index].className = 'invocation-dot ' +
-          (inv.pass ? 'invocation-dot--done' : 'invocation-dot--fail');
-      }
+      if (inv.index >= dots.length) continue;
+      if (result.crash && inv.index > result.crash.invocation) continue; // never ran
+      const state = inv.crashed ? 'invocation-dot--crash' : inv.pass ? 'invocation-dot--done' : 'invocation-dot--fail';
+      dots[inv.index].className = `invocation-dot ${state}`;
+    }
+    const label = this.invocationBar.querySelector('span');
+    if (result.crash && label) {
+      label.textContent = `💥 Crashed in invocation ${result.crash.invocation + 1} / ${result.invocations.length}`;
+      label.className = 'invocation-bar__crash';
+      label.title = result.crash.message;
     }
   }
 
