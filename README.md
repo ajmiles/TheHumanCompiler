@@ -27,3 +27,14 @@ length, code size, VGPRs, cycles, timestamp), forbid edits, and let players
 delete only their own entries. Scores are still reported by the client, though:
 the rules bound the values and enforce ownership, but fully trustworthy scores
 would require re-verifying submitted solutions server-side.
+
+## Credits
+
+Background music ([`src/assets/music/beauty-flow.mp3`](src/assets/music/beauty-flow.mp3),
+re-encoded from the original release):
+
+"Beauty Flow" Kevin MacLeod (incompetech.com)  
+Licensed under Creative Commons: By Attribution 4.0  
+https://creativecommons.org/licenses/by/4.0/
+
+The game shows this credit under Settings → Credits, as the licence requires.

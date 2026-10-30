@@ -12,6 +12,7 @@ import { LeaderboardOverlay, SolutionStats } from './leaderboard';
 import { LeaderboardBrowser } from './leaderboard-browser';
 import { Encyclopedia } from './encyclopedia';
 import { SettingsOverlay, getLeaderboardPref } from './settings';
+import { MusicPlayer } from './music';
 
 import { assemble } from '../assembler/assembler';
 import { Emulator } from '../emulator/emulator';
@@ -118,6 +119,7 @@ export class App {
   private leaderboardBrowser!: LeaderboardBrowser;
   private encyclopedia!: Encyclopedia;
   private settings!: SettingsOverlay;
+  private music!: MusicPlayer;
   private tutorialPanel!: TutorialPanel;
   private errorListEl!: HTMLElement;
 
@@ -217,11 +219,13 @@ export class App {
     settingsBtn.textContent = '⚙️ Settings';
     settingsBtn.onclick = () => this.settings.show();
 
+    this.music = new MusicPlayer();
+
     const info = document.createElement('div');
     info.className = 'header__info';
     info.innerHTML = '<span class="header__badge">RDNA2</span>';
 
-    header.append(title, puzzleBtn, lbBrowseBtn, spacer, encyBtn, importBtn, feedbackBtn, settingsBtn, info);
+    header.append(title, puzzleBtn, lbBrowseBtn, spacer, encyBtn, importBtn, feedbackBtn, settingsBtn, this.music.element, info);
 
     // Main 3-column layout
     const main = document.createElement('div');

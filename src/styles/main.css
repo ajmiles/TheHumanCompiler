@@ -134,6 +134,77 @@ html, body {
   border: 1px solid var(--border-default);
 }
 
+/* ── Background music: mute button and volume slider ── */
+
+.music-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px 0 2px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  transition: border-color 0.15s;
+}
+
+.music-control:hover {
+  border-color: var(--text-secondary);
+}
+
+.music-control__mute {
+  padding: 0 4px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  font-size: 14px;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.music-control__mute:focus-visible,
+.music-control__volume:focus-visible {
+  outline: 1px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
+.music-control__volume {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 72px;
+  height: 4px;
+  margin: 0;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--accent-cyan) var(--fill, 40%), var(--border-default) var(--fill, 40%));
+  cursor: pointer;
+}
+
+.music-control--muted .music-control__volume {
+  background: linear-gradient(to right, var(--text-muted) var(--fill, 40%), var(--border-default) var(--fill, 40%));
+}
+
+.music-control__volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border: none;
+  border-radius: 50%;
+  background: var(--text-primary);
+}
+
+.music-control__volume::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: none;
+  border-radius: 50%;
+  background: var(--text-primary);
+}
+
+.music-control__volume::-moz-range-track {
+  background: transparent;
+}
+
 /* ── Main Layout ── */
 
 .main-layout {

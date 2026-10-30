@@ -3,6 +3,7 @@
 import { clearLeaderboard } from '../puzzle/leaderboard';
 import { deleteAllMyOnlineScores, isOnlineEnabled } from '../firebase/online-leaderboard';
 import { ALL_PUZZLES } from '../puzzle/puzzles';
+import { MUSIC_TRACK } from './music';
 
 export type LeaderboardPref = 'disabled' | 'view-only' | 'enabled';
 
@@ -91,6 +92,20 @@ export class SettingsOverlay {
       html += `</label>`;
     }
 
+    html += `</div>`;
+
+    // Credits (the music's Creative Commons licence requires this attribution)
+    const m = MUSIC_TRACK;
+    const link = (href: string, text: string) =>
+      `<a href="${href}" target="_blank" rel="noopener" style="color:var(--text-accent)">${text}</a>`;
+    html += `<div style="margin:24px 0 0;padding-top:16px;border-top:1px solid var(--border-default)">`;
+    html += `<div style="color:var(--text-primary);font-weight:600;margin-bottom:8px">Credits</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Music</div>`;
+    html += `<div style="font-size:12px;color:var(--text-secondary);line-height:1.6">`;
+    html += `"${m.title}" ${m.artist} (${link(m.siteUrl, m.site)})<br>`;
+    html += `Licensed under ${m.license}<br>`;
+    html += link(m.licenseUrl, m.licenseUrl);
+    html += `</div>`;
     html += `</div>`;
 
     // Danger zone
