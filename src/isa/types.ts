@@ -50,6 +50,19 @@ export interface Operand {
   regCount?: number;   // Number of registers named by a range such as v[0:1]
 }
 
+/** Where something was written on its source line: 1-based columns, `end` exclusive. */
+export interface SourceSpan {
+  start: number;
+  end: number;
+}
+
+/**
+ * Parts of an instruction that can be rewritten in place: the mnemonic (without an _e32/_e64/_dpp/_sdwa
+ * suffix), the operands (just the register or constant, inside any -, |…|, abs() or sext() wrapper),
+ * the implied constant K and the 16-bit immediate (or branch label, or s_waitcnt counters).
+ */
+export type OperandSlot = 'mnemonic' | 'dst' | 'sdst' | 'src0' | 'src1' | 'src2' | 'k' | 'simm';
+
 export interface ParsedInstruction {
   mnemonic: string;
   dst: Operand;
@@ -60,6 +73,7 @@ export interface ParsedInstruction {
   kLiteral?: number;   // Implied 32-bit literal K of v_madmk/v_madak/v_fmamk/v_fmaak (raw bits)
   line: number;
   column: number;
+  spans?: Partial<Record<OperandSlot, SourceSpan>>; // Source columns of the mnemonic and of each written operand
   omod?: number;       // Output modifier: 0=none, 1=×2, 2=×4, 3=÷2
   clamp?: boolean;     // Clamp output to [0.0, 1.0]
   offset?: number;     // Memory offset (DS: OFFSET1:OFFSET0)

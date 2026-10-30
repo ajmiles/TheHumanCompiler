@@ -276,6 +276,8 @@ function registerLanguage(): void {
 export class AsmEditor {
   private editor: monaco.editor.IStandaloneCodeEditor;
   private decorations: monaco.editor.IEditorDecorationsCollection;
+  private flashDecorations: monaco.editor.IEditorDecorationsCollection;
+  private flashTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(container: HTMLElement) {
     registerLanguage();
@@ -303,6 +305,7 @@ export class AsmEditor {
     });
 
     this.decorations = this.editor.createDecorationsCollection([]);
+    this.flashDecorations = this.editor.createDecorationsCollection([]);
   }
 
   getSource(): string {
@@ -311,6 +314,27 @@ export class AsmEditor {
 
   setSource(source: string): void {
     this.editor.setValue(source);
+  }
+
+  /**
+   * Replace columns [startColumn, endColumn) of a line as one undoable edit and briefly highlight the new text.
+   * Nothing changes (and false is returned) if the line no longer reads `expected`.
+   */
+  replaceInLine(line: number, startColumn: number, endColumn: number, text: string, expected: string): boolean {
+    const model = this.editor.getModel();
+    if (!model || line < 1 || line > model.getLineCount() || model.getLineContent(line) !== expected) return false;
+    this.editor.pushUndoStop();
+    this.editor.executeEdits('instruction-info', [{ range: new monaco.Range(line, startColumn, line, endColumn), text }]);
+    this.editor.pushUndoStop();
+
+    this.flashDecorations.set([{
+      range: new monaco.Range(line, startColumn, line, startColumn + text.length),
+      options: { inlineClassName: 'operand-edit-flash' },
+    }]);
+    if (this.flashTimer) clearTimeout(this.flashTimer);
+    this.flashTimer = setTimeout(() => this.flashDecorations.clear(), 1200);
+    this.editor.focus();
+    return true;
   }
 
   highlightLine(line: number): void {

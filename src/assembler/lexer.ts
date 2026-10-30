@@ -21,6 +21,8 @@ export interface Token {
   value: string;
   line: number;
   column: number;
+  /** Column just past the token's source text (1-based, exclusive). */
+  end: number;
 }
 
 const REGISTER_RE = /^(?:[vs]\d+|ttmp\d+)$/;
@@ -53,8 +55,9 @@ export function tokenize(source: string): Token[] {
     const lineText = lines[lineIdx];
     const lineNum = lineIdx + 1;
     let col = 0;
-    const push = (type: TokenType, value: string, start: number) =>
-      tokens.push({ type, value, line: lineNum, column: start + 1 });
+    // start and end are 0-based offsets into the line, end exclusive
+    const push = (type: TokenType, value: string, start: number, end: number) =>
+      tokens.push({ type, value, line: lineNum, column: start + 1, end: end + 1 });
 
     while (col < lineText.length) {
       const ch = lineText[col];
@@ -70,10 +73,10 @@ export function tokenize(source: string): Token[] {
         continue;
       }
 
-      if (ch === ',') { push(TokenType.COMMA, ',', col); col++; continue; }
-      if (ch === '(') { push(TokenType.LPAREN, '(', col); col++; continue; }
-      if (ch === ')') { push(TokenType.RPAREN, ')', col); col++; continue; }
-      if (ch === '|') { push(TokenType.PIPE, '|', col); col++; continue; }
+      if (ch === ',') { push(TokenType.COMMA, ',', col, col + 1); col++; continue; }
+      if (ch === '(') { push(TokenType.LPAREN, '(', col, col + 1); col++; continue; }
+      if (ch === ')') { push(TokenType.RPAREN, ')', col, col + 1); col++; continue; }
+      if (ch === '|') { push(TokenType.PIPE, '|', col, col + 1); col++; continue; }
       // '&' separates s_waitcnt counters: vmcnt(0) & lgkmcnt(0)
       if (ch === '&') { col++; continue; }
 
@@ -81,7 +84,7 @@ export function tokenize(source: string): Token[] {
       if (ch === '-' && col + 1 < lineText.length) {
         const nextCh = lineText[col + 1];
         if (isAlpha(nextCh) || nextCh === '|') {
-          push(TokenType.MODIFIER, 'neg', col);
+          push(TokenType.MODIFIER, 'neg', col, col + 1);
           col++;
           continue;
         }
@@ -107,7 +110,7 @@ export function tokenize(source: string): Token[] {
             while (col < lineText.length && isDigit(lineText[col])) col++;
           }
         }
-        push(TokenType.NUMBER, lineText.slice(start, col), start);
+        push(TokenType.NUMBER, lineText.slice(start, col), start, col);
         continue;
       }
 
@@ -123,7 +126,7 @@ export function tokenize(source: string): Token[] {
         if ((lower === 's' || lower === 'v' || lower === 'ttmp') && next === '[') {
           const close = lineText.indexOf(']', col);
           col = close < 0 ? lineText.length : close + 1;
-          push(TokenType.REGISTER, (lower + lineText.slice(start + lower.length, col)).toLowerCase().replace(/\s+/g, ''), start);
+          push(TokenType.REGISTER, (lower + lineText.slice(start + lower.length, col)).toLowerCase().replace(/\s+/g, ''), start, col);
           continue;
         }
 
@@ -137,14 +140,14 @@ export function tokenize(source: string): Token[] {
           } else {
             while (col < lineText.length && isDigit(lineText[col])) col++;
           }
-          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col)}`, start);
+          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col)}`, start, col);
           continue;
         }
         if (next === ':' && WORD_MODIFIERS.has(lower)) {
           col++;
           const vStart = col;
           while (col < lineText.length && isAlphaNum(lineText[col])) col++;
-          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col).toUpperCase()}`, start);
+          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col).toUpperCase()}`, start, col);
           continue;
         }
         if (next === ':' && LIST_MODIFIERS.has(lower)) {
@@ -152,33 +155,34 @@ export function tokenize(source: string): Token[] {
           const vStart = col;
           const close = lineText.indexOf(']', col);
           col = close < 0 ? lineText.length : close + 1;
-          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col).replace(/\s+/g, '')}`, start);
+          push(TokenType.MODIFIER, `${lower}:${lineText.slice(vStart, col).replace(/\s+/g, '')}`, start, col);
           continue;
         }
 
         if (REGISTER_RE.test(lower) || SPECIAL_REGS.has(lower)) {
-          push(TokenType.REGISTER, lower, start);
+          push(TokenType.REGISTER, lower, start, col);
         } else if (FLAG_MODIFIERS.has(lower) && next !== ':') {
-          push(TokenType.MODIFIER, lower, start);
+          push(TokenType.MODIFIER, lower, start, col);
         } else if (next === ':' && IDENT_RE.test(lower)) {
           col++; // skip ':'
-          push(TokenType.LABEL, lower, start);
+          push(TokenType.LABEL, lower, start, col);
         } else {
-          push(TokenType.MNEMONIC, lower, start);
+          push(TokenType.MNEMONIC, lower, start, col);
         }
         continue;
       }
 
-      push(TokenType.ERROR, ch, col);
+      push(TokenType.ERROR, ch, col, col + 1);
       col++;
     }
 
     if (lineIdx < lines.length - 1 || lineText.length > 0) {
-      tokens.push({ type: TokenType.NEWLINE, value: '\n', line: lineNum, column: lineText.length + 1 });
+      const at = lineText.length + 1;
+      tokens.push({ type: TokenType.NEWLINE, value: '\n', line: lineNum, column: at, end: at });
     }
   }
 
-  tokens.push({ type: TokenType.EOF, value: '', line: lines.length, column: 1 });
+  tokens.push({ type: TokenType.EOF, value: '', line: lines.length, column: 1, end: 1 });
   return tokens;
 }
 

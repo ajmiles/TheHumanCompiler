@@ -5,6 +5,7 @@ import {
   ParsedInstruction,
   Operand,
   OperandType,
+  OperandSlot,
   AssemblyError,
   InstructionFormat,
   OpcodeInfo,
@@ -47,6 +48,14 @@ class ParseError extends Error {
 
 function errorAt(message: string, token?: Token): never {
   throw new ParseError(message, token);
+}
+
+/** Fields every parsed instruction starts with. */
+type InstrBase = Pick<ParsedInstruction, 'mnemonic' | 'line' | 'column'> & Required<Pick<ParsedInstruction, 'spans'>>;
+
+/** Record where an operand was written (from the first token to the last). */
+function mark(instr: ParsedInstruction, slot: OperandSlot, first: Token | undefined, last = first): void {
+  if (first && last) (instr.spans ??= {})[slot] = { start: first.column, end: last.end };
 }
 
 export function parse(tokens: Token[]): ParseResult {
@@ -464,6 +473,10 @@ function bits(list: number[] | undefined): number | undefined {
 
 // ── Instruction parsing ──
 
+const VALU_FORMATS = new Set<InstructionFormat>([
+  InstructionFormat.VOP1, InstructionFormat.VOP2, InstructionFormat.VOPC, InstructionFormat.VOP3, InstructionFormat.VOP3P,
+]);
+
 function parseInstruction(mnemonicToken: Token, rest: Token[], errors: AssemblyError[]): ParsedInstruction | null {
   let name = mnemonicToken.value;
   let info = lookupByMnemonic(name);
@@ -481,7 +494,14 @@ function parseInstruction(mnemonicToken: Token, rest: Token[], errors: AssemblyE
     return null;
   }
 
-  const base = { mnemonic: info.mnemonic, line: mnemonicToken.line, column: mnemonicToken.column };
+  // The mnemonic's span leaves out an _e32/_e64/_dpp/_sdwa suffix, so a new mnemonic keeps it
+  const base: InstrBase = {
+    mnemonic: info.mnemonic, line: mnemonicToken.line, column: mnemonicToken.column,
+    spans: { mnemonic: { start: mnemonicToken.column, end: mnemonicToken.column + name.length } },
+  };
+  if (force && !VALU_FORMATS.has(info.format)) {
+    errorAt(`${info.mnemonic} has no _${force} form: encoding suffixes only apply to vector ALU instructions`, mnemonicToken);
+  }
   switch (info.format) {
     case InstructionFormat.VOP1:
     case InstructionFormat.VOP2:
@@ -575,7 +595,7 @@ function checkOperandKinds(info: OpcodeInfo, instr: ParsedInstruction, groups: O
 
 function parseVALU(
   info: OpcodeInfo, mnemonicToken: Token, rest: Token[],
-  base: { mnemonic: string; line: number; column: number },
+  base: InstrBase,
   force: 'e32' | 'e64' | 'dpp' | 'sdwa' | undefined,
 ): ParsedInstruction {
   const m = info.mnemonic;
@@ -609,6 +629,7 @@ function parseVALU(
   layout.forEach((slot, i) => {
     const g = groups[i];
     const role = slot as OperandRole;
+    mark(instr, slot === 'sdstScalar' ? 'dst' : slot, g.token);
     switch (slot) {
       case 'dst':
         instr.dst = vgprOperand(g, operandRegCount(info, 'dst'), 'the destination');
@@ -737,7 +758,7 @@ const SOP1_SPECIAL: Record<string, Array<['dst' | 'src', number]>> = {
   s_movreld_b64: [['dst', 2], ['src', 2]],
 };
 
-function parseSALU(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: { mnemonic: string; line: number; column: number }): ParsedInstruction {
+function parseSALU(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: InstrBase): ParsedInstruction {
   const m = info.mnemonic;
   const { groups, mods } = splitOperands(rest);
   if (mods.length) errorAt(`Modifier '${mods[0].value}' is not valid for ${m}`, mods[0]);
@@ -762,8 +783,10 @@ function parseSALU(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: 
   layout.forEach(([kind, regs], i) => {
     const g = groups[i];
     if (kind === 'dst') {
+      mark(instr, 'dst', g.token);
       instr.dst = scalarDestOperand(g, regs, 'the destination');
     } else {
+      mark(instr, srcs.length === 0 ? 'src0' : 'src1', g.token);
       const op = scalarSourceOperand(g, regs);
       if ((m === 's_movrels_b32' || m === 's_movrels_b64') && !(op.type === OperandType.SGPR || op.type === OperandType.SPECIAL)) {
         errorAt(`${m} needs a scalar register as its relative source`, g.token);
@@ -776,7 +799,7 @@ function parseSALU(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: 
   return instr;
 }
 
-function parseSOPK(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: { mnemonic: string; line: number; column: number }): ParsedInstruction {
+function parseSOPK(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: InstrBase): ParsedInstruction {
   const m = info.mnemonic;
   const { groups, mods } = splitOperands(rest);
   if (mods.length) errorAt(`Modifier '${mods[0].value}' is not valid for ${m}`, mods[0]);
@@ -797,22 +820,29 @@ function parseSOPK(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: 
 
   if (m === 's_setreg_imm32_b32') {
     if (groups.length !== 2) errorAt(`${m} expects 2 operands, got ${groups.length} (syntax: ${info.syntax})`, mnemonicToken);
+    mark(instr, 'simm', groups[0].token);
+    mark(instr, 'k', groups[1].token);
     instr.simm16 = imm(groups[0], 0, 0xFFFF, 'a 16-bit hardware register selector') & 0xFFFF;
     instr.kLiteral = imm(groups[1], -0x80000000, 0xFFFFFFFF, 'a 32-bit immediate') >>> 0;
     return instr;
   }
   if (m === 's_waitcnt_vscnt') {
     if (groups.length === 1) {
+      mark(instr, 'simm', groups[0].token);
       instr.dst = { type: OperandType.SPECIAL, value: NULL_REG, encoded: NULL_REG };
       instr.simm16 = imm(groups[0], 0, 0xFFFF, 'a 16-bit count');
       return instr;
     }
     if (groups.length !== 2) errorAt(`${m} expects 2 operands, got ${groups.length} (syntax: ${info.syntax})`, mnemonicToken);
+    mark(instr, 'dst', groups[0].token);
+    mark(instr, 'simm', groups[1].token);
     instr.dst = scalarDestOperand(groups[0], 1, 'the count register');
     instr.simm16 = imm(groups[1], 0, 0xFFFF, 'a 16-bit count');
     return instr;
   }
   if (groups.length !== 2) errorAt(`${m} expects 2 operands, got ${groups.length} (syntax: ${info.syntax})`, mnemonicToken);
+  mark(instr, 'dst', groups[0].token);
+  mark(instr, 'simm', groups[1].token);
   instr.dst = scalarDestOperand(groups[0], 1, 'the destination');
   instr.simm16 = imm(groups[1], -0x8000, 0xFFFF, 'a 16-bit immediate') & 0xFFFF;
   return instr;
@@ -856,10 +886,11 @@ function parseWaitcnt(rest: Token[]): number {
   return (((vmcnt >> 4) & 3) << 14) | (lgkmcnt << 8) | (expcnt << 4) | (vmcnt & 0xF);
 }
 
-function parseSOPP(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: { mnemonic: string; line: number; column: number }): ParsedInstruction {
+function parseSOPP(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: InstrBase): ParsedInstruction {
   const m = info.mnemonic;
   const instr: ParsedInstruction = { ...base, dst: NULL_OPERAND(), src0: NULL_OPERAND() };
   for (const t of rest) if (t.type === TokenType.ERROR) errorAt(`Unexpected character '${t.value}'`, t);
+  mark(instr, 'simm', rest[0], rest[rest.length - 1]);
 
   if (m === 's_waitcnt') {
     instr.simm16 = rest.length === 0 ? 0 : parseWaitcnt(rest);
@@ -892,7 +923,7 @@ function parseSOPP(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: 
   return instr;
 }
 
-function parseDS(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: { mnemonic: string; line: number; column: number }): ParsedInstruction {
+function parseDS(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: InstrBase): ParsedInstruction {
   const m = info.mnemonic;
   const { groups, mods: modTokens } = splitOperands(rest);
   const mods = parseModifiers(modTokens);
@@ -900,30 +931,31 @@ function parseDS(info: OpcodeInfo, mnemonicToken: Token, rest: Token[], base: { 
   rejectModifiers(mods, twoOffsets ? ['offset0', 'offset1'] : ['offset'], m);
 
   const instr: ParsedInstruction = { ...base, dst: NULL_OPERAND(), src0: NULL_OPERAND() };
-  const expect = (n: number) => {
-    if (groups.length !== n) errorAt(`${m} expects ${n} operands, got ${groups.length} (syntax: ${info.syntax})`, mnemonicToken);
+  const expect = (...slots: OperandSlot[]) => {
+    if (groups.length !== slots.length) errorAt(`${m} expects ${slots.length} operands, got ${groups.length} (syntax: ${info.syntax})`, mnemonicToken);
+    slots.forEach((slot, i) => mark(instr, slot, groups[i].token));
   };
   switch (m) {
     case 'ds_write_b32':
-      expect(2);
+      expect('src0', 'src1');
       instr.src0 = vgprOperand(groups[0], 1, 'the address');
       instr.src1 = vgprOperand(groups[1], 1, 'the data');
       break;
     case 'ds_write2st64_b32':
-      expect(3);
+      expect('src0', 'src1', 'src2');
       instr.src0 = vgprOperand(groups[0], 1, 'the address');
       instr.src1 = vgprOperand(groups[1], 1, 'the first data operand');
       instr.src2 = vgprOperand(groups[2], 1, 'the second data operand');
       break;
     case 'ds_permute_b32':
     case 'ds_bpermute_b32':
-      expect(3);
+      expect('dst', 'src0', 'src1');
       instr.dst = vgprOperand(groups[0], 1, 'the destination');
       instr.src0 = vgprOperand(groups[1], 1, 'the address');
       instr.src1 = vgprOperand(groups[2], 1, 'the data');
       break;
     default:
-      expect(2);
+      expect('dst', 'src0');
       instr.dst = vgprOperand(groups[0], operandRegCount(info, 'dst'), 'the destination');
       instr.src0 = vgprOperand(groups[1], 1, m === 'ds_swizzle_b32' ? 'the source' : 'the address');
   }

@@ -9,6 +9,8 @@ import { getPuzzleById, ALL_PUZZLES } from '../src/puzzle/puzzles';
 import { validatePuzzle } from '../src/puzzle/validator';
 import { ALL_TUTORIALS } from '../src/puzzle/tutorials';
 import { Puzzle, PuzzleResult } from '../src/puzzle/types';
+import { OperandSlot } from '../src/isa/types';
+import { checkLine, EditChoice, editChoices, labelsIn } from '../src/assembler/operand-edit';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -6448,6 +6450,82 @@ group('DPP and SDWA coverage');
     'v_cmp_gt_u32_sdwa s6, v0, v1 src0_sel:BYTE_1 src1_sel:BYTE_0', 'v_cmpx_gt_u32_sdwa v0, v1 src0_sel:BYTE_1 src1_sel:BYTE_0',
   ];
   for (const f of forms) assert(roundTrips(f), `round-trips: ${f}`);
+}
+
+group('Instruction Info editing: operand spans and choices');
+{
+  // Each operand records where it was written: just the register or constant, inside -, |…|, abs() and sext()
+  const written = (src: string, slot: OperandSlot): string | undefined => {
+    const span = assemble(src).instructions[0]?.spans?.[slot];
+    return span ? src.split('\n')[0].slice(span.start - 1, span.end - 1) : undefined;
+  };
+  const line = 'v_add_f32 v2, -|v0|, abs(v1) ; comment';
+  assert(written(line, 'mnemonic') === 'v_add_f32' && written(line, 'dst') === 'v2' &&
+    written(line, 'src0') === 'v0' && written(line, 'src1') === 'v1', 'spans: mnemonic, destination and sources inside -|…| and abs()');
+  assert(written('v_add_f32_e64 v[3:3], v0, 1.0', 'mnemonic') === 'v_add_f32', 'spans: the mnemonic leaves out an _e64 suffix');
+  assert(written('v_add_f32_e64 v[3:3], v0, 1.0', 'dst') === 'v[3:3]', 'spans: a register range');
+  assert(written('v_add_nc_u32 v2, sext(v0), v1 src0_sel:BYTE_0', 'src0') === 'v0', 'spans: inside sext()');
+  assert(written('top: s_add_u32 s0, s1, 0x1234', 'mnemonic') === 's_add_u32' &&
+    written('top: s_add_u32 s0, s1, 0x1234', 'src1') === '0x1234', 'spans: a scalar instruction after a label');
+  assert(written('v_cmp_lt_f32 s4, v0, v1', 'sdst') === 's4', "spans: a compare's SGPR result");
+  assert(written('v_readlane_b32 s7, v0, 3', 'dst') === 's7', 'spans: the scalar destination of v_readlane_b32');
+  assert(written('v_madmk_f32 v0, v1, 2.5, v2', 'k') === '2.5' && written('v_madmk_f32 v0, v1, 2.5, v2', 'src1') === 'v2',
+    'spans: the constant K and the source after it');
+  assert(written('s_movk_i32 s3, 0x7fff', 'simm') === '0x7fff', 'spans: a SOPK immediate');
+  assert(written('s_branch done\ndone: s_endpgm', 'simm') === 'done', 'spans: a branch label');
+  assert(written('s_waitcnt vmcnt(0) & lgkmcnt(0)', 'simm') === 'vmcnt(0) & lgkmcnt(0)', 'spans: s_waitcnt counters');
+  assert(written('ds_write2st64_b32 v0, v1, v2 offset1:1', 'src2') === 'v2', 'spans: the second data operand of an LDS write');
+  assert(written('v_add_f32 v0, v1, v2', 'src2') === undefined && written('s_endpgm', 'simm') === undefined,
+    'spans: operands that are not written have none');
+
+  // Encoding suffixes only exist on vector ALU instructions
+  assert(/has no _e64 form/.test(assemble('s_add_u32_e64 s0, s1, s2').errors[0]?.message ?? ''), 'suffixes: rejected on scalar ALU instructions');
+  assert(assemble('ds_swizzle_b32_e32 v1, v0').errors.length === 1 && assemble('s_endpgm_sdwa').errors.length === 1,
+    'suffixes: rejected on LDS and program-control instructions');
+}
+{
+  const choices = (line: string, slot: OperandSlot, labels?: Set<string>) => editChoices(line, slot, labels);
+  const find = (list: EditChoice[], text: string) => list.find(c => c.text === text);
+
+  // VSRC1 must be a VGPR: SGPRs and constants are offered, but need the 8-byte VOP3 encoding
+  const src1 = choices('v_add_f32 v0, v1, v2', 'src1');
+  assert(find(src1, 'v7')?.bytes === 4 && find(src1, 's7')?.bytes === 8 && find(src1, '1.0')?.bytes === 8,
+    'choices: SGPRs and constants as VSRC1 promote the instruction to VOP3');
+  assert(src1.filter(c => c.current).map(c => c.text).join() === 'v2' && find(src1, 'v7')?.line === 'v_add_f32 v0, v1, v7',
+    'choices: the current value is marked and each choice carries its line');
+  assert(['v9', 's9', 'vcc_lo', 'm0', '64', '-16', '0.5', '-4.0'].every(t => find(choices('v_add_f32 v0, v1, v2', 'src0'), t)?.bytes === 4),
+    'choices: SRC0 takes VGPRs, SGPRs, special registers and inline constants in 4 bytes');
+  const dst = choices('v_add_f32 v0, v1, v2', 'dst');
+  assert(dst.length === 256 && dst.every(c => c.group === 'VGPR'), 'choices: a VALU destination is any VGPR');
+  assert(choices('v_add_f32 v2, v0, v1 row_shr:1', 'src0').every(c => c.group === 'VGPR'), 'choices: a DPP source is a VGPR');
+  assert(find(choices('v_lshlrev_b64 v[0:1], 1, v[2:3]', 'src1'), 'v[4:5]')?.bytes === 8, 'choices: 64-bit sources are register pairs');
+  const pairs = choices('s_mov_b64 s[0:1], s[2:3]', 'dst');
+  assert(!!find(pairs, 's[4:5]') && !find(pairs, 's[1:2]') && !!find(pairs, 'vcc') && !find(pairs, 'v[0:1]'),
+    'choices: 64-bit scalar destinations are even SGPR pairs, vcc or exec');
+
+  // Mnemonics: only those that take the same operands, the instruction's own format first
+  const ops = choices('v_add_f32 v0, v1, v2', 'mnemonic');
+  assert(ops[0].group === 'VOP2' && find(ops, 'v_sub_f32')?.bytes === 4 && find(ops, 'v_mul_lo_u32')?.bytes === 8 &&
+    find(ops, 'v_pk_add_f16')?.group === 'VOP3P', 'choices: mnemonics with the same operands, in any format');
+  assert(!find(ops, 'v_fma_f32') && !find(ops, 'v_mov_b32') && !find(ops, 's_add_u32') && !find(ops, 'v_cmp_eq_f32'),
+    'choices: mnemonics that need other operands are left out');
+  assert(find(choices('v_add_f32_e64 v0, v1, v2', 'mnemonic'), 'v_sub_f32')?.line === 'v_sub_f32_e64 v0, v1, v2',
+    'choices: a new mnemonic keeps the _e64 suffix');
+
+  // Branch targets, modifiers and comments, literals
+  assert(choices('s_cbranch_scc1 done', 'simm', new Set(['top', 'done'])).map(c => c.text + (c.current ? '*' : '')).join() === 'done*,top',
+    'choices: a branch can target any label');
+  assert(choices('s_waitcnt lgkmcnt(0)', 'simm').length === 0 && choices('v_madmk_f32 v0, v1, 2.5, v2', 'k').length === 0,
+    'choices: immediates and K are typed, not listed');
+  assert(find(choices('v_add_f32 v2, -|v0|, v1 ; note', 'src0'), 'v7')?.line === 'v_add_f32 v2, -|v7|, v1 ; note',
+    'choices: modifiers and comments are kept');
+  const literal = choices('v_mul_f32 v3, v0, 3.14159', 'src1').find(c => c.current);
+  assert(literal?.text === '3.14159' && literal.group === 'Constant' && literal.bytes === 12, 'choices: a literal is listed as the current value');
+
+  assert(checkLine('v_add_f32 v0, 3.14159, v1').words?.length === 2, 'checkLine: assembles one line');
+  assert(checkLine('s_branch nowhere', new Set(['done'])).error === "Undefined label 'nowhere'", 'checkLine: an unknown branch target');
+  assert(checkLine('v_add_f32 v0, s0, v1 row_shr:1').error !== undefined, 'checkLine: reports what is wrong');
+  assert([...labelsIn('a: s_nop 0\nb:\n  s_branch a')].join() === 'a,b', 'labelsIn: every label definition');
 }
 
 // ════════════════════════════════════════════

@@ -85,6 +85,17 @@
   border-radius: 1px;
 }
 
+/* Text just changed from the Instruction Info panel */
+.operand-edit-flash {
+  border-radius: 2px;
+  animation: operand-edit-flash 1.2s ease-out forwards;
+}
+
+@keyframes operand-edit-flash {
+  from { background: rgba(88, 166, 255, 0.45); }
+  to { background: rgba(88, 166, 255, 0); }
+}
+
 /* ── Binary View ── */
 
 .binary-panel {

@@ -3,12 +3,15 @@
 // (taken from the real encoding), a formula with the actual operands, and opcode metadata.
 
 import {
-  AssemblyResult, DecodedInstruction, InstructionFormat, OpcodeInfo, Operand, OperandType, ParsedInstruction,
+  AssemblyResult, DecodedInstruction, InstructionFormat, OpcodeInfo, Operand, OperandSlot, OperandType, ParsedInstruction,
+  SourceSpan,
 } from '../isa/types';
 import { lookupByMnemonic } from '../isa/opcodes';
 import { decodeBinary, describeDppCtrl, encodeInstruction, scalarRegName, sourceFieldName } from '../isa/encoding';
 import { OperandRole, operandRegCount, valuSourceCount } from '../isa/operands';
 import { VCC_LO } from '../isa/constants';
+import { checkLine, editChoices, labelsIn, replaceSpan } from '../assembler/operand-edit';
+import { OperandPicker } from './operand-picker';
 
 // ── Bit-field layouts ──
 
@@ -20,6 +23,8 @@ interface BitField {
   color: string;
   /** Display text for the field's value; `words` is the whole encoded instruction. */
   show: (value: number, words: number[]) => string;
+  /** The part of the source the field encodes, which clicking the field changes. */
+  slot?: OperandSlot;
 }
 
 interface DwordLayout {
@@ -55,15 +60,18 @@ function hexVal(v: number, pad = 2): string {
   return '0x' + (v >>> 0).toString(16).padStart(pad, '0').toUpperCase();
 }
 
-function field(name: string, hi: number, lo: number, color: string, show: BitField['show'] = v => String(v)): BitField {
-  return { name, hi, lo, color, show };
+function field(
+  name: string, hi: number, lo: number, color: string, show: BitField['show'] = v => String(v), slot?: OperandSlot,
+): BitField {
+  return { name, hi, lo, color, show, slot };
 }
 
 /** Fixed encoding bits that identify the format. */
 const fixed = (hi: number, lo: number): BitField => field('ENC', hi, lo, COLOR.encoding, v => hexVal(v, 1));
 const reserved = (hi: number, lo: number): BitField => field('', hi, lo, COLOR.reserved, () => '—');
 const binary = (n: number) => (v: number) => v.toString(2).padStart(n, '0');
-const opField = (hi: number, lo: number, ctx: LayoutContext): BitField => field('OP', hi, lo, COLOR.op, () => ctx.info.mnemonic);
+const opField = (hi: number, lo: number, ctx: LayoutContext): BitField =>
+  field('OP', hi, lo, COLOR.op, () => ctx.info.mnemonic, 'mnemonic');
 
 function vgprName(v: number, count = 1): string {
   return count > 1 ? `v[${v}:${v + count - 1}]` : `v${v}`;
@@ -107,15 +115,18 @@ function vsrc1(ctx: LayoutContext): BitField['show'] {
 }
 
 function e32Fields(ctx: LayoutContext): BitField[] {
-  const src0 = field('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0));
+  // With DPP or SDWA, SRC0 holds a marker and the real source is in the extra dword
+  const extra = ctx.decoded.extra;
+  const src0Slot = extra === 'DPP16' || extra === 'DPP8' || extra === 'SDWA' ? undefined : 'src0';
+  const src0 = field('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0), src0Slot);
   switch (ctx.decoded.encoding) {
     case 'VOP1':
-      return [fixed(31, 25), field('VDST', 24, 17, COLOR.dst, vdst(ctx)), opField(16, 9, ctx), src0];
+      return [fixed(31, 25), field('VDST', 24, 17, COLOR.dst, vdst(ctx), 'dst'), opField(16, 9, ctx), src0];
     case 'VOP2':
-      return [fixed(31, 31), opField(30, 25, ctx), field('VDST', 24, 17, COLOR.dst, vdst(ctx)),
-        field('VSRC1', 16, 9, COLOR.src1, vsrc1(ctx)), src0];
+      return [fixed(31, 31), opField(30, 25, ctx), field('VDST', 24, 17, COLOR.dst, vdst(ctx), 'dst'),
+        field('VSRC1', 16, 9, COLOR.src1, vsrc1(ctx), 'src1'), src0];
     default: // VOPC
-      return [fixed(31, 25), opField(24, 17, ctx), field('VSRC1', 16, 9, COLOR.src1, vsrc1(ctx)), src0];
+      return [fixed(31, 25), opField(24, 17, ctx), field('VSRC1', 16, 9, COLOR.src1, vsrc1(ctx), 'src1'), src0];
   }
 }
 
@@ -123,9 +134,9 @@ function vop3SourceFields(ctx: LayoutContext, vop3p: boolean): BitField[] {
   return [
     field('NEG', 31, 29, COLOR.neg, binary(3)),
     vop3p ? field('OP_SEL_HI', 28, 27, COLOR.select, binary(2)) : field('OMOD', 28, 27, COLOR.modifier, v => OMOD[v]),
-    field('SRC2', 26, 18, COLOR.src2, valuSource(ctx, 2)),
-    field('SRC1', 17, 9, COLOR.src1, valuSource(ctx, 1)),
-    field('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0)),
+    field('SRC2', 26, 18, COLOR.src2, valuSource(ctx, 2), 'src2'),
+    field('SRC1', 17, 9, COLOR.src1, valuSource(ctx, 1), 'src1'),
+    field('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0), 'src0'),
   ];
 }
 
@@ -138,14 +149,14 @@ function dpp16Fields(): BitField[] {
     field('BC', 19, 19, COLOR.modifier), field('FI', 18, 18, COLOR.modifier),
     reserved(17, 17),
     field('DPP_CTRL', 16, 8, COLOR.select, v => describeDppCtrl(v)),
-    field('SRC0', 7, 0, COLOR.src0, v => vgprName(v)),
+    field('SRC0', 7, 0, COLOR.src0, v => vgprName(v), 'src0'),
   ];
 }
 
 function dpp8Fields(): BitField[] {
   const fields: BitField[] = [];
   for (let lane = 7; lane >= 0; lane--) fields.push(field(`SEL${lane}`, 10 + lane * 3, 8 + lane * 3, COLOR.select));
-  fields.push(field('SRC0', 7, 0, COLOR.src0, v => vgprName(v)));
+  fields.push(field('SRC0', 7, 0, COLOR.src0, v => vgprName(v), 'src0'));
   return fields;
 }
 
@@ -165,7 +176,7 @@ function sdwaFields(ctx: LayoutContext): BitField[] {
   if (format === InstructionFormat.VOPC) {
     fields.push(
       field('SD', 15, 15, COLOR.dst),
-      field('SDST', 14, 8, COLOR.dst, (v, w) => ((w[1] >>> 15) & 1 ? scalarRegName(v) : 'vcc_lo')),
+      field('SDST', 14, 8, COLOR.dst, (v, w) => ((w[1] >>> 15) & 1 ? scalarRegName(v) : 'vcc_lo'), 'sdst'),
     );
   } else {
     fields.push(
@@ -175,7 +186,7 @@ function sdwaFields(ctx: LayoutContext): BitField[] {
       field('DST_SEL', 10, 8, COLOR.select, sel),
     );
   }
-  fields.push(field('SRC0', 7, 0, COLOR.src0, (v, w) => ((w[1] >>> 23) & 1 ? sourceFieldName(v) : vgprName(v))));
+  fields.push(field('SRC0', 7, 0, COLOR.src0, (v, w) => ((w[1] >>> 23) & 1 ? sourceFieldName(v) : vgprName(v)), 'src0'));
   return fields;
 }
 
@@ -193,10 +204,10 @@ function dsFields(ctx: LayoutContext): DwordLayout[] {
       field('OFFSET1', 15, 8, COLOR.src1), field('OFFSET0', 7, 0, COLOR.src1),
     ] },
     { label: 'DS', fields: [
-      field('VDST', 31, 24, COLOR.dst, instr.dst.type === OperandType.VGPR ? v => vgprName(v, regWidth(ctx, 'dst')) : unused),
-      field('DATA1', 23, 16, COLOR.src2, instr.src2 ? v => vgprName(v) : unused),
-      field('DATA0', 15, 8, COLOR.neg, instr.src1 ? v => vgprName(v) : unused),
-      field('ADDR', 7, 0, COLOR.src0, v => vgprName(v)),
+      field('VDST', 31, 24, COLOR.dst, instr.dst.type === OperandType.VGPR ? v => vgprName(v, regWidth(ctx, 'dst')) : unused, 'dst'),
+      field('DATA1', 23, 16, COLOR.src2, instr.src2 ? v => vgprName(v) : unused, 'src2'),
+      field('DATA0', 15, 8, COLOR.neg, instr.src1 ? v => vgprName(v) : unused, 'src1'),
+      field('ADDR', 7, 0, COLOR.src0, v => vgprName(v), 'src0'),
     ] },
   ];
 }
@@ -206,28 +217,29 @@ function layoutFor(ctx: LayoutContext, words: number[]): DwordLayout[] {
   const d = ctx.decoded;
   const dwords: DwordLayout[] = [];
   const push = (label: string, fields: BitField[]) => dwords.push({ label, fields });
-  const sdst = field('SDST', 22, 16, COLOR.dst, scalarDst(ctx));
-  const ssrc0 = field('SSRC0', 7, 0, COLOR.src0, scalarSrc(ctx, 'src0'));
-  const ssrc1 = field('SSRC1', 15, 8, COLOR.src1, scalarSrc(ctx, 'src1'));
+  const sdst = field('SDST', 22, 16, COLOR.dst, scalarDst(ctx), 'dst');
+  const ssrc0 = field('SSRC0', 7, 0, COLOR.src0, scalarSrc(ctx, 'src0'), 'src0');
+  const ssrc1 = field('SSRC1', 15, 8, COLOR.src1, scalarSrc(ctx, 'src1'), 'src1');
+  // VOP3 compares write their lane mask through VDST
+  const vop3Vdst = field('VDST', 7, 0, COLOR.dst, vdst(ctx), ctx.info.format === InstructionFormat.VOPC ? 'sdst' : 'dst');
   switch (d.encoding) {
     case 'VOP1': case 'VOP2': case 'VOPC':
       push(d.encoding, e32Fields(ctx));
       break;
     case 'VOP3A':
       push('VOP3A', [fixed(31, 26), opField(25, 16, ctx), field('CLAMP', 15, 15, COLOR.modifier),
-        field('OP_SEL', 14, 11, COLOR.select, binary(4)), field('ABS', 10, 8, COLOR.abs, binary(3)),
-        field('VDST', 7, 0, COLOR.dst, vdst(ctx))]);
+        field('OP_SEL', 14, 11, COLOR.select, binary(4)), field('ABS', 10, 8, COLOR.abs, binary(3)), vop3Vdst]);
       push('VOP3A', vop3SourceFields(ctx, false));
       break;
     case 'VOP3B':
       push('VOP3B', [fixed(31, 26), opField(25, 16, ctx), field('CLAMP', 15, 15, COLOR.modifier),
-        field('SDST', 14, 8, COLOR.dst, v => scalarRegName(v)), field('VDST', 7, 0, COLOR.dst, vdst(ctx))]);
+        field('SDST', 14, 8, COLOR.dst, v => scalarRegName(v), 'sdst'), vop3Vdst]);
       push('VOP3B', vop3SourceFields(ctx, false));
       break;
     case 'VOP3P':
       push('VOP3P', [fixed(31, 23), opField(22, 16, ctx), field('CLAMP', 15, 15, COLOR.modifier),
         field('OP_SEL_HI[2]', 14, 14, COLOR.select), field('OP_SEL', 13, 11, COLOR.select, binary(3)),
-        field('NEG_HI', 10, 8, COLOR.neg, binary(3)), field('VDST', 7, 0, COLOR.dst, vdst(ctx))]);
+        field('NEG_HI', 10, 8, COLOR.neg, binary(3)), vop3Vdst]);
       push('VOP3P', vop3SourceFields(ctx, true));
       break;
     case 'SOP1':
@@ -240,10 +252,10 @@ function layoutFor(ctx: LayoutContext, words: number[]): DwordLayout[] {
       push('SOPC', [fixed(31, 23), opField(22, 16, ctx), ssrc1, ssrc0]);
       break;
     case 'SOPK':
-      push('SOPK', [fixed(31, 28), opField(27, 23, ctx), sdst, field('SIMM16', 15, 0, COLOR.src0, v => hexVal(v, 4))]);
+      push('SOPK', [fixed(31, 28), opField(27, 23, ctx), sdst, field('SIMM16', 15, 0, COLOR.src0, v => hexVal(v, 4), 'simm')]);
       break;
     case 'SOPP':
-      push('SOPP', [fixed(31, 23), opField(22, 16, ctx), field('SIMM16', 15, 0, COLOR.src0, sopp16(ctx))]);
+      push('SOPP', [fixed(31, 23), opField(22, 16, ctx), field('SIMM16', 15, 0, COLOR.src0, sopp16(ctx), 'simm')]);
       break;
     case 'DS':
       dwords.push(...dsFields(ctx));
@@ -254,9 +266,13 @@ function layoutFor(ctx: LayoutContext, words: number[]): DwordLayout[] {
   if (d.extra === 'DPP16') push('DPP16', dpp16Fields());
   else if (d.extra === 'DPP8') push('DPP8', dpp8Fields());
   else if (d.extra === 'SDWA') push('SDWA', sdwaFields(ctx));
+  // The trailing constant: K of v_madmk & co. or s_setreg_imm32_b32, else the first literal source
+  const { instr } = ctx;
+  const literalSlot: OperandSlot | undefined = instr.spans?.k ? 'k'
+    : (['src0', 'src1', 'src2'] as const).find(s => instr[s]?.type === OperandType.LITERAL);
   while (dwords.length < words.length) {
     const name = ctx.info.kLiteral ? 'K' : 'LITERAL';
-    push(name === 'K' ? 'K constant' : 'Literal', [field(name, 31, 0, COLOR.src1, v => hexVal(v, 8))]);
+    push(name === 'K' ? 'K constant' : 'Literal', [field(name, 31, 0, COLOR.src1, v => hexVal(v, 8), literalSlot)]);
   }
   return dwords;
 }
@@ -390,6 +406,23 @@ function escapeHtml(s: string): string {
 
 const PLACEHOLDER = '<div class="instr-info-placeholder">Move cursor to an instruction to see details</div>';
 
+/** A request from the panel to replace part of a source line. */
+export interface OperandEdit {
+  line: number;
+  span: SourceSpan;
+  text: string;
+  /** The line as the panel saw it: the edit only applies while the line still reads this. */
+  lineText: string;
+}
+
+/** The instruction on show, which its editable fields change. */
+interface ShownInstruction {
+  line: number;
+  lineText: string;
+  instr: ParsedInstruction;
+  bytes: number;
+}
+
 export class InstructionInfo {
   private container: HTMLElement;
   private scrollable: HTMLElement;
@@ -397,6 +430,10 @@ export class InstructionInfo {
   private toggleBtn: HTMLButtonElement;
   private collapsed = false;
   private lastSource = '';
+  private lastHtml = '';
+  private shown: ShownInstruction | null = null;
+  private picker = new OperandPicker();
+  private editHandler: ((edit: OperandEdit) => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -423,6 +460,17 @@ export class InstructionInfo {
     this.bodyEl = document.createElement('div');
     this.bodyEl.className = 'instr-info-body';
     this.bodyEl.innerHTML = PLACEHOLDER;
+    this.bodyEl.addEventListener('click', e => {
+      const cell = (e.target as HTMLElement).closest<HTMLElement>('.instr-info-bit--editable');
+      if (cell) this.openField(cell);
+    });
+    this.bodyEl.addEventListener('keydown', e => {
+      const cell = e.target as HTMLElement;
+      if ((e.key === 'Enter' || e.key === ' ') && cell.classList.contains('instr-info-bit--editable')) {
+        e.preventDefault();
+        this.openField(cell);
+      }
+    });
 
     this.scrollable = document.createElement('div');
     this.scrollable.className = 'panel__content';
@@ -438,6 +486,7 @@ export class InstructionInfo {
   }
 
   private applyCollapsed(): void {
+    if (this.collapsed) this.picker.close();
     this.scrollable.style.display = this.collapsed ? 'none' : '';
     this.toggleBtn.textContent = this.collapsed ? '▶' : '▼';
     this.toggleBtn.title = this.collapsed ? 'Expand instruction info' : 'Collapse instruction info';
@@ -448,25 +497,76 @@ export class InstructionInfo {
     this.applyCollapsed();
   }
 
+  /** Makes the operand fields editable: picking a new value asks `handler` to change the source. */
+  onEdit(handler: (edit: OperandEdit) => void): void {
+    this.editHandler = handler;
+  }
+
+  /**
+   * Replace the panel's content. Identical content is left alone, so the fields stay in place
+   * (the app refreshes the panel on every mouseup, which would otherwise swallow clicks on them).
+   */
+  private setBody(html: string): void {
+    if (html === this.lastHtml) return;
+    this.picker.close();
+    this.bodyEl.innerHTML = html;
+    this.lastHtml = html;
+  }
+
+  /** Open the picker on an editable field (or close it if it is already open there). */
+  private openField(cell: HTMLElement): void {
+    const shown = this.shown;
+    const handler = this.editHandler;
+    if (!shown || !handler) return;
+    if (this.picker.anchor === cell) {
+      this.picker.close();
+      return;
+    }
+    const slot = cell.dataset.slot as OperandSlot;
+    const span = shown.instr.spans?.[slot];
+    if (!span) return;
+
+    const { line, lineText } = shown;
+    const labels = labelsIn(this.lastSource);
+    cell.classList.add('instr-info-bit--active');
+    this.picker.open({
+      anchor: cell,
+      title: cell.dataset.name ?? slot,
+      color: cell.dataset.color ?? COLOR.op,
+      current: lineText.slice(span.start - 1, span.end - 1),
+      bytes: shown.bytes,
+      choices: editChoices(lineText, slot, labels),
+      layout: slot === 'mnemonic' ? 'list' : 'grid',
+      check: text => {
+        const changed = replaceSpan(lineText, span, text);
+        const result = checkLine(changed, labels);
+        return result.words ? { line: changed, bytes: result.words.length * 4 } : { error: result.error };
+      },
+      apply: text => handler({ line, span, text, lineText }),
+      onClose: () => cell.classList.remove('instr-info-bit--active'),
+    });
+  }
+
   update(assemblyResult: AssemblyResult | null, cursorLine: number): void {
+    this.shown = null;
     if (!assemblyResult) {
-      this.bodyEl.innerHTML = PLACEHOLDER;
+      this.setBody(PLACEHOLDER);
       return;
     }
 
+    const lines = this.lastSource.split('\n');
     const instr = assemblyResult.instructions.find(i => i.line === cursorLine);
     if (instr) {
       const info = lookupByMnemonic(instr.mnemonic);
       if (!info) {
-        this.bodyEl.innerHTML = '<div class="instr-info-placeholder">Unknown instruction</div>';
+        this.setBody('<div class="instr-info-placeholder">Unknown instruction</div>');
         return;
       }
-      this.renderFull(instr, info);
+      this.renderFull(instr, info, cursorLine, (lines[cursorLine - 1] ?? '').replace(/\r$/, ''));
       return;
     }
 
     // No assembled instruction on this line (e.g. it has an error): show what we know about the mnemonic
-    const lines = this.lastSource.split('\n');
     if (cursorLine >= 1 && cursorLine <= lines.length) {
       const match = lines[cursorLine - 1].trim().match(/^([a-z_][a-z0-9_]*)/i);
       const info = match ? lookupByMnemonic(match[1].toLowerCase().replace(/_(e32|e64|dpp|sdwa)$/, '')) : undefined;
@@ -476,14 +576,14 @@ export class InstructionInfo {
       }
     }
 
-    this.bodyEl.innerHTML = PLACEHOLDER;
+    this.setBody(PLACEHOLDER);
   }
 
   setSource(source: string): void {
     this.lastSource = source;
   }
 
-  private renderFull(instr: ParsedInstruction, info: OpcodeInfo): void {
+  private renderFull(instr: ParsedInstruction, info: OpcodeInfo, line: number, lineText: string): void {
     let words: number[] = [];
     let encodeError = '';
     try {
@@ -493,6 +593,9 @@ export class InstructionInfo {
     }
     const decoded = words.length ? decodeBinary(Uint32Array.from(words))[0] : undefined;
     const layout = decoded ? layoutFor({ info, instr, decoded }, words) : [];
+    // Fields are editable while the line still holds the instruction as assembled
+    const editable = !!this.editHandler && words.length > 0 && checkLine(lineText).words !== undefined;
+    if (editable) this.shown = { line, lineText, instr, bytes: words.length * 4 };
 
     let opcodeText = `opcode: ${hexVal(info.opcode)}`;
     if (decoded && (decoded.encoding === 'VOP3A' || decoded.encoding === 'VOP3B') && info.format !== InstructionFormat.VOP3) {
@@ -503,6 +606,7 @@ export class InstructionInfo {
     html += this.descriptionHtml(info, buildFormula(info, instr));
     if (encodeError) html += `<div class="instr-info-desc" style="color:#f85149">Cannot encode: ${escapeHtml(encodeError)}</div>`;
 
+    let anyEditable = false;
     layout.forEach((dword, i) => {
       const word = words[i] >>> 0;
       html += `<div class="instr-info-diagram">`;
@@ -517,12 +621,21 @@ export class InstructionInfo {
         const width = f.hi - f.lo + 1;
         const value = width === 32 ? word : (word >>> f.lo) & ((1 << width) - 1);
         const text = f.show(value, words);
-        const tip = `${f.name || 'reserved'} [${f.hi}:${f.lo}] = ${hexVal(value, 1)}`;
-        html += `<div class="instr-info-bit" style="flex:${width};background:${f.color}15;border-color:${f.color}" title="${escapeHtml(tip)}">`;
+        const canEdit = editable && !!f.slot && !!instr.spans?.[f.slot];
+        anyEditable ||= canEdit;
+        const tip = `${f.name || 'reserved'} [${f.hi}:${f.lo}] = ${hexVal(value, 1)}${canEdit ? ' — click to change' : ''}`;
+        const style = `flex:${width};--field-color:${f.color};--field-bg:${f.color}15;--field-hover:${f.color}38;border-color:${f.color}`;
+        html += canEdit
+          ? `<div class="instr-info-bit instr-info-bit--editable" style="${style}" data-slot="${f.slot}" ` +
+            `data-name="${escapeHtml(f.name)}" data-color="${f.color}" title="${escapeHtml(tip)}" ` +
+            `tabindex="0" role="button" aria-haspopup="dialog">`
+          : `<div class="instr-info-bit" style="${style}" title="${escapeHtml(tip)}">`;
         if (f.name && f.name !== text) {
           html += `<span class="instr-info-field-name" style="color:${f.color}80">${escapeHtml(f.name)}</span>`;
         }
-        html += `<span class="instr-info-field-value" style="color:${f.color}">${escapeHtml(text)}</span></div>`;
+        html += `<span class="instr-info-field-value" style="color:${f.color}">${escapeHtml(text)}</span>`;
+        if (canEdit) html += `<span class="instr-info-edit-mark" aria-hidden="true">▾</span>`;
+        html += `</div>`;
       }
       html += `</div></div></div>`;
     });
@@ -536,17 +649,19 @@ export class InstructionInfo {
 
     if (words.length) {
       const hexStr = words.map(w => (w >>> 0).toString(16).padStart(8, '0')).join(' ');
-      html += `<div class="instr-info-hex">Binary: <span>${hexStr}</span></div>`;
+      html += `<div class="instr-info-hex">Binary: <span>${hexStr}</span>`;
+      if (anyEditable) html += `<em class="instr-info-edit-hint">Click a field marked ▾ to change it</em>`;
+      html += `</div>`;
     }
 
-    this.bodyEl.innerHTML = html;
+    this.setBody(html);
   }
 
   private renderMetaOnly(info: OpcodeInfo): void {
     let html = this.metaHtml(info.format, `opcode: ${hexVal(info.opcode)}`, info);
     html += this.descriptionHtml(info, '');
     html += `<div class="instr-info-formula">${escapeHtml(info.syntax)}</div>`;
-    this.bodyEl.innerHTML = html;
+    this.setBody(html);
   }
 
   private metaHtml(format: string, opcodeText: string, info: OpcodeInfo): string {

@@ -352,6 +352,18 @@ export class App {
       }
     });
 
+    // Fields of the instruction info panel rewrite the instruction's source text
+    this.instructionInfo.onEdit(({ line, span, text, lineText }) => {
+      // If the line has changed since it was last assembled, the edit is dropped and the panel catches up
+      this.editor.replaceInLine(line, span.start, span.end, text, lineText);
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = null;
+      }
+      this.doAssemble();
+      this.saveSolution();
+    });
+
     // Controls
     this.controls.onStep(() => this.doStep());
     this.controls.onRun(() => this.doRun());
