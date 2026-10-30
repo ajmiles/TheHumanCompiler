@@ -3,7 +3,9 @@
 import { clearLeaderboard } from '../puzzle/leaderboard';
 import { deleteAllMyOnlineScores, isOnlineEnabled } from '../firebase/online-leaderboard';
 import { ALL_PUZZLES } from '../puzzle/puzzles';
-import { MUSIC_TRACK } from './music';
+import { MusicPlayer } from './music';
+
+const LAST_TRACK_TIP = 'At least one track stays in the playlist: use the 🔇 button in the header to turn the music off';
 
 export type LeaderboardPref = 'disabled' | 'view-only' | 'enabled';
 
@@ -38,8 +40,12 @@ export function setLeaderboardPref(pref: LeaderboardPref): void {
 export class SettingsOverlay {
   private overlay: HTMLElement;
   private content: HTMLElement;
+  private music: MusicPlayer;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, music: MusicPlayer) {
+    this.music = music;
+    // Keep the music credits' switches and "playing" marks current while Settings is open
+    music.onChange(() => this.updateTracks());
     this.overlay = document.createElement('div');
     this.overlay.className = 'puzzle-overlay puzzle-overlay--hidden';
     this.overlay.addEventListener('click', (e) => {
@@ -65,6 +71,23 @@ export class SettingsOverlay {
 
   hide(): void {
     this.overlay.classList.add('puzzle-overlay--hidden');
+  }
+
+  /** Show each music track's switch and whether it is playing (in place, so nothing else re-renders). */
+  private updateTracks(): void {
+    const states = this.music.tracks();
+    const enabledCount = states.filter(s => s.enabled).length;
+    for (const { track, enabled, playing } of states) {
+      const row = this.content.querySelector<HTMLElement>(`.settings-track[data-track="${track.id}"]`);
+      if (!row) continue;
+      const box = row.querySelector<HTMLInputElement>('input')!;
+      const last = enabled && enabledCount === 1;
+      box.checked = enabled;
+      box.disabled = last;
+      row.title = last ? LAST_TRACK_TIP : '';
+      row.classList.toggle('settings-track--on', enabled);
+      row.querySelector<HTMLElement>('.settings-track__playing')!.hidden = !playing;
+    }
   }
 
   private render(): void {
@@ -94,18 +117,24 @@ export class SettingsOverlay {
 
     html += `</div>`;
 
-    // Credits (the music's Creative Commons licence requires this attribution)
-    const m = MUSIC_TRACK;
+    // Credits (the music's Creative Commons licence requires this attribution), each with a switch
+    // that puts the track in the playlist or takes it out
     const link = (href: string, text: string) =>
       `<a href="${href}" target="_blank" rel="noopener" style="color:var(--text-accent)">${text}</a>`;
     html += `<div style="margin:24px 0 0;padding-top:16px;border-top:1px solid var(--border-default)">`;
     html += `<div style="color:var(--text-primary);font-weight:600;margin-bottom:8px">Credits</div>`;
-    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Music</div>`;
-    html += `<div style="font-size:12px;color:var(--text-secondary);line-height:1.6">`;
-    html += `"${m.title}" ${m.artist} (${link(m.siteUrl, m.site)})<br>`;
-    html += `Licensed under ${m.license}<br>`;
-    html += link(m.licenseUrl, m.licenseUrl);
-    html += `</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Music: ticked tracks play in turn</div>`;
+    for (const { track: t } of this.music.tracks()) {
+      html += `<label class="settings-radio settings-track" data-track="${t.id}">`;
+      html += `<input type="checkbox" name="music-track" value="${t.id}">`;
+      html += `<div style="flex:1;font-size:12px;color:var(--text-secondary);line-height:1.6">`;
+      html += `<span class="settings-track__playing" hidden>♪ playing</span>`;
+      html += `<div style="color:var(--text-primary)">"${t.title}" ${t.artist} (${link(t.siteUrl, t.site)})</div>`;
+      html += `Licensed under ${t.license}<br>`;
+      html += link(t.licenseUrl, t.licenseUrl);
+      html += `</div>`;
+      html += `</label>`;
+    }
     html += `</div>`;
 
     // Danger zone
@@ -159,6 +188,15 @@ export class SettingsOverlay {
         this.render();
       });
     });
+
+    // Music tracks in or out of the playlist
+    this.content.querySelectorAll<HTMLInputElement>('input[name="music-track"]').forEach(input => {
+      input.addEventListener('change', () => {
+        this.music.setTrackEnabled(input.value, input.checked);
+        this.updateTracks();
+      });
+    });
+    this.updateTracks();
 
     const closeBtn = this.content.querySelector('#settings-close-btn');
     closeBtn?.addEventListener('click', () => this.hide());

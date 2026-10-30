@@ -326,7 +326,7 @@ export class App {
     // Settings overlay
     const settingsHost = document.createElement('div');
     root.appendChild(settingsHost);
-    this.settings = new SettingsOverlay(settingsHost);
+    this.settings = new SettingsOverlay(settingsHost, this.music);
 
     // Initial register display
     this.registers.update(this.emulator.state, 0);

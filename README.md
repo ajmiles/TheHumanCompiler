@@ -30,11 +30,15 @@ would require re-verifying submitted solutions server-side.
 
 ## Credits
 
-Background music ([`src/assets/music/beauty-flow.mp3`](src/assets/music/beauty-flow.mp3),
-re-encoded from the original release):
+Background music ([`src/assets/music/`](src/assets/music/), re-encoded from the original
+releases, with "Half Mystery" raised 7.2 dB to match the loudness of "Beauty Flow"):
 
 "Beauty Flow" Kevin MacLeod (incompetech.com)  
 Licensed under Creative Commons: By Attribution 4.0  
 https://creativecommons.org/licenses/by/4.0/
 
-The game shows this credit under Settings → Credits, as the licence requires.
+"Half Mystery" Kevin MacLeod (incompetech.com)  
+Licensed under Creative Commons: By Attribution 4.0  
+https://creativecommons.org/licenses/by/4.0/
+
+The game shows these credits under Settings → Credits, as the licence requires.

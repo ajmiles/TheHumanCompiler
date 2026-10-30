@@ -162,6 +162,27 @@ html, body {
   cursor: pointer;
 }
 
+.music-control__skip {
+  display: flex;
+  align-items: center;
+  padding: 3px 2px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.music-control__skip:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.music-control__skip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.music-control__skip:focus-visible,
 .music-control__mute:focus-visible,
 .music-control__volume:focus-visible {
   outline: 1px solid var(--accent-cyan);
@@ -778,9 +799,28 @@ html, body {
   border-color: var(--accent-cyan);
   background: rgba(0, 200, 255, 0.03);
 }
-.settings-radio input[type=radio] {
+.settings-radio input[type=radio],
+.settings-radio input[type=checkbox] {
   margin-top: 3px;
   accent-color: var(--accent-cyan);
+}
+
+/* Music tracks under Settings → Credits: the checkbox puts the track in the playlist */
+.settings-track--on {
+  border-color: var(--accent-cyan);
+  background: rgba(0, 200, 255, 0.05);
+}
+
+.settings-track:has(input:disabled) {
+  cursor: default;
+}
+
+.settings-track__playing {
+  float: right;
+  margin-left: 8px;
+  color: var(--accent-green);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* ── Sandbox Row ── */
