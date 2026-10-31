@@ -20,11 +20,6 @@ export function vopTypes(info: OpcodeInfo): VopTypes {
     while (s.length < 3) s.push(s.length > 0 ? s[s.length - 1] : info.types.d);
     return { d: info.types.d, s };
   }
-  if (info.format === InstructionFormat.VOPC) {
-    if (/_[iu]16$/.test(info.mnemonic)) return { d: 'b32', s: ['b16', 'b16', 'b16'] };
-    if (/_[iu]32$/.test(info.mnemonic)) return B32_TYPES;
-    return F32_TYPES;
-  }
   if (info.isIntegerOp) return B32_TYPES;
   if (info.integerInput) return { d: 'f32', s: ['b32', 'b32', 'b32'] };
   if (info.integerOutput) return { d: 'b32', s: ['f32', 'f32', 'f32'] };
@@ -32,11 +27,16 @@ export function vopTypes(info: OpcodeInfo): VopTypes {
 }
 
 export function isFloatType(t: ValueType): boolean {
-  return t === 'f32' || t === 'f16';
+  return t === 'f32' || t === 'f16' || t === 'f64';
 }
 
 export function is16BitType(t: ValueType): boolean {
   return t === 'f16' || t === 'u16' || t === 'i16' || t === 'b16';
+}
+
+/** 64-bit operands occupy a register pair. */
+export function is64BitType(t: ValueType): boolean {
+  return t === 'f64' || t === 'i64' || t === 'u64';
 }
 
 /**
@@ -50,6 +50,7 @@ export type ConstKind =
   | 'b32'    // 32-bit integer (float constants become f32 bit patterns)
   | 'u64'    // 64-bit unsigned: 32-bit literal is zero-extended by the hardware
   | 'i64'    // 64-bit signed: 32-bit literal is sign-extended by the hardware
+  | 'f64'    // 64-bit float: a 32-bit literal is the high half of the double (the low half is 0)
   | 'pkf16'  // packed 2×f16 (VOP3P)
   | 'pki16'; // packed 2×16-bit integer (VOP3P)
 
@@ -75,7 +76,11 @@ export function operandRegCount(info: OpcodeInfo, role: OperandRole): number {
     const w = role === 'dst' ? s.d : role === 'src0' ? s.s0 : role === 'src1' ? s.s1 : 0;
     return w === 64 ? 2 : 1;
   }
-  return MULTI_REG[info.mnemonic]?.[role] ?? 1;
+  const multi = MULTI_REG[info.mnemonic]?.[role];
+  if (multi !== undefined) return multi;
+  // Typed 64-bit sources (the f64/i64/u64 compares) are register pairs
+  if (role !== 'dst' && info.types && is64BitType(vopTypes(info).s[Number(role.slice(3))])) return 2;
+  return 1;
 }
 
 /**
@@ -106,6 +111,9 @@ export function valuConstKind(info: OpcodeInfo, index: number, opSelHi = 0): Con
   switch (t) {
     case 'f32': return 'f32';
     case 'f16': return 'f16';
+    case 'f64': return 'f64';
+    case 'i64': return 'i64';
+    case 'u64': return 'u64';
     case 'u16': case 'i16': case 'b16': return 'i16';
     default: return 'b32';
   }

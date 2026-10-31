@@ -18,8 +18,8 @@ import {
   NUM_VGPRS,
 } from '../isa/constants';
 import { f16ToF32, f32ToF16 } from '../isa/float16';
-import { sadU8, msadU8 } from '../isa/opcodes';
-import { vopTypes, valuSourceCount, isFloatType, is16BitType } from '../isa/operands';
+import { sadU8, msadU8, compareHolds, compareOrder, floatClass } from '../isa/opcodes';
+import { vopTypes, valuSourceCount, isFloatType, is16BitType, is64BitType } from '../isa/operands';
 import { GPUState, LDS_SIZE_BYTES } from './state';
 import { ResolvedInstruction } from './decoder';
 
@@ -63,6 +63,11 @@ function f64Bits(v: number): bigint {
   return u64a[0];
 }
 
+function bitsToF64(bits: bigint): number {
+  u64a[0] = BigInt.asUintN(64, bits);
+  return f64a[0];
+}
+
 const M64 = 0xFFFFFFFFFFFFFFFFn;
 const sx16 = (v: number) => (v << 16) >> 16;
 const clampN = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -102,15 +107,23 @@ function readScalar32(state: GPUState, enc: number, literal: number | undefined,
   }
 }
 
-/** Read a 64-bit scalar operand. Inline floats are f64 values; literals are zero- or sign-extended. */
-function readScalar64(state: GPUState, enc: number, literal: number | undefined, signedLiteral = false): bigint {
+/** How a 32-bit literal fills a 64-bit operand: zero-extended, sign-extended, or as the high half of a double. */
+type Literal64 = 'u64' | 'i64' | 'f64';
+
+function literal64(literal: number, ext: Literal64): bigint {
+  if (ext === 'f64') return BigInt(literal >>> 0) << 32n;
+  return ext === 'i64' ? BigInt.asUintN(64, BigInt(literal | 0)) : BigInt(literal >>> 0);
+}
+
+/** Read a 64-bit scalar operand. Inline floats are f64 values; a literal is extended as `ext` says. */
+function readScalar64(state: GPUState, enc: number, literal: number | undefined, ext: Literal64 = 'u64'): bigint {
   if (enc <= 127) return state.readSGPR64(enc);
   const i = inlineInt(enc);
   if (i !== undefined) return BigInt.asUintN(64, BigInt(i));
   if (enc >= 240 && enc <= 248) return f64Bits(enc === 248 ? 1 / (2 * Math.PI) : INLINE_FLOAT_MAP[enc]);
   if (enc === LITERAL_CONST) {
     if (literal === undefined) fault('The instruction is missing its literal constant');
-    return signedLiteral ? BigInt.asUintN(64, BigInt(literal | 0)) : BigInt(literal >>> 0);
+    return literal64(literal, ext);
   }
   return BigInt(readScalar32(state, enc, literal));
 }
@@ -121,12 +134,12 @@ function readLane(state: GPUState, enc: number, lane: number, literal: number | 
 }
 
 /** Read a 64-bit VALU source (VGPR pair, SGPR pair or constant) for one lane. */
-function readLane64(state: GPUState, enc: number, lane: number, literal: number | undefined, signedLiteral = false): bigint {
+function readLane64(state: GPUState, enc: number, lane: number, literal: number | undefined, ext: Literal64 = 'u64'): bigint {
   if (enc >= VGPR_SRC_MIN) {
     const r = enc - VGPR_SRC_MIN;
     return BigInt(state.readVGPR_u32(r, lane)) | (BigInt(state.readVGPR_u32(r + 1, lane)) << 32n);
   }
-  return readScalar64(state, enc, literal, signedLiteral);
+  return readScalar64(state, enc, literal, ext);
 }
 
 function writeLane64(state: GPUState, reg: number, lane: number, value: bigint): void {
@@ -381,7 +394,7 @@ function perLane64(state: GPUState, d: DecodedInstruction, fn: (lane: number) =>
 function shift64(state: GPUState, d: DecodedInstruction, op: (v: bigint, n: bigint) => bigint, signed: boolean): void {
   perLane64(state, d, (lane) => {
     const n = BigInt(readLane(state, d.src0Encoded, lane, d.literal) & 63);
-    return op(readLane64(state, d.src1 ?? 0, lane, d.literal, signed), n) & M64;
+    return op(readLane64(state, d.src1 ?? 0, lane, d.literal, signed ? 'i64' : 'u64'), n) & M64;
   });
 }
 
@@ -391,7 +404,7 @@ function mad64(state: GPUState, d: DecodedInstruction, signed: boolean): void {
   perLane64(state, d, (lane) => {
     const a = readLane(state, d.src0Encoded, lane, d.literal);
     const b = readLane(state, d.src1 ?? 0, lane, d.literal);
-    const c = readLane64(state, d.src2 ?? 0, lane, d.literal, signed);
+    const c = readLane64(state, d.src2 ?? 0, lane, d.literal, signed ? 'i64' : 'u64');
     const exact = signed
       ? BigInt(a | 0) * BigInt(b | 0) + BigInt.asIntN(64, c)
       : BigInt(a >>> 0) * BigInt(b >>> 0) + c;
@@ -514,13 +527,40 @@ const VALU_SPECIAL: Record<string, ValuHandler> = {
   },
 };
 
+/** One lane of a compare with 64-bit sources (f64, i64 or u64 register pairs), or of v_cmp*_class_f64. */
+function compare64(state: GPUState, d: DecodedInstruction, info: OpcodeInfo, lane: number): boolean {
+  const { type, op } = info.compare!;
+  const ext: Literal64 = type === 'f64' ? 'f64' : type === 'i64' ? 'i64' : 'u64';
+  const a = readLane64(state, d.src0Encoded, lane, d.literal, ext);
+  if (op === 'class') {
+    let bits = a;
+    if (d.src0Abs) bits &= ~(1n << 63n);
+    if (d.src0Neg) bits ^= 1n << 63n;
+    return ((readLane(state, d.src1 ?? 0, lane, d.literal) >>> floatClass(bits, 'f64')) & 1) === 1;
+  }
+  const b = readLane64(state, d.src1 ?? 0, lane, d.literal, ext);
+  if (type === 'f64') {
+    const x = applyModifiers(bitsToF64(a), 'f64', !!d.src0Abs, !!d.src0Neg);
+    const y = applyModifiers(bitsToF64(b), 'f64', !!d.src1Abs, !!d.src1Neg);
+    return compareHolds(op, compareOrder(x, y));
+  }
+  const [x, y] = type === 'i64' ? [BigInt.asIntN(64, a), BigInt.asIntN(64, b)] : [a, b];
+  return compareHolds(op, x < y ? 0 : x === y ? 1 : 2);
+}
+
 function executeVOPC(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): void {
   const types = vopTypes(info);
   const exec = state.exec;
   const isSdwa = d.extra === 'SDWA';
+  const wide = is64BitType(types.s[0]);
+  const classTest = info.compare?.op === 'class';
   let mask = 0;
   for (let lane = 0; lane < WAVE_WIDTH; lane++) {
     if (!isActive(exec, lane)) continue;
+    if (wide) {
+      if (compare64(state, d, info, lane)) mask |= 1 << lane;
+      continue;
+    }
     const l0 = src0Lane(d, exec, lane);
     if (l0 === LANE_DISABLED) continue;
     let r0 = l0 === READ_ZERO ? 0 : readLane(state, d.src0Encoded, l0, d.literal, types.s[0] === 'f16');
@@ -529,9 +569,20 @@ function executeVOPC(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): 
       r0 = sdwaSelect(r0, d.sdwaSrc0Sel ?? 6, !!d.sdwaSrc0Sext);
       r1 = sdwaSelect(r1, d.sdwaSrc1Sel ?? 6, !!d.sdwaSrc1Sext);
     }
-    const a = applyModifiers(typed(r0, types.s[0], false), types.s[0], !!d.src0Abs, !!d.src0Neg);
-    const b = applyModifiers(typed(r1, types.s[1], false), types.s[1], !!d.src1Abs, !!d.src1Neg);
-    if (info.execute(a, b)) mask |= 1 << lane;
+    let hit: number;
+    if (classTest) {
+      // The class test reads src0's bit pattern; abs and neg act on its sign bit
+      const sign = types.s[0] === 'f16' ? 0x8000 : 0x80000000;
+      let bits = types.s[0] === 'f16' ? r0 & 0xFFFF : r0 >>> 0;
+      if (d.src0Abs) bits = (bits & ~sign) >>> 0;
+      if (d.src0Neg) bits = (bits ^ sign) >>> 0;
+      hit = info.execute(bits, r1);
+    } else {
+      const a = applyModifiers(typed(r0, types.s[0], false), types.s[0], !!d.src0Abs, !!d.src0Neg);
+      const b = applyModifiers(typed(r1, types.s[1], false), types.s[1], !!d.src1Abs, !!d.src1Neg);
+      hit = info.execute(a, b);
+    }
+    if (hit) mask |= 1 << lane;
   }
   // Inactive lanes write 0; v_cmpx writes EXEC only
   if (info.mnemonic.startsWith('v_cmpx_')) state.writeSGPR(EXEC_LO, mask >>> 0);
@@ -893,7 +944,7 @@ function executeSALU(state: GPUState, d: DecodedInstruction, info: OpcodeInfo, c
   if (!s) return executeScalarSpecial(state, d, info, ctx);
   const signedSrc0 = /_i64$/.test(info.mnemonic);
   const read = (enc: number, width: number, signed = false): bigint =>
-    width === 64 ? readScalar64(state, enc, d.literal, signed) : BigInt(readScalar32(state, enc, d.literal));
+    width === 64 ? readScalar64(state, enc, d.literal, signed ? 'i64' : 'u64') : BigInt(readScalar32(state, enc, d.literal));
 
   let s0: bigint;
   let s1: bigint;

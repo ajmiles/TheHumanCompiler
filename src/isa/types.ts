@@ -162,9 +162,22 @@ export type SemanticFn = (a: number, b?: number, c?: number) => number;
  *  - f32/f16: floating point; the semantic function receives and returns JS numbers.
  *  - b32: raw 32-bit pattern (unsigned number).
  *  - u16/i16/b16: low (or op_sel-selected) 16 bits, zero- or sign-extended.
+ *  - f64/i64/u64: a 64-bit value in a register pair (VOPC compares), read exactly by the executor.
  * 16-bit destinations write only their half of the VGPR and preserve the other half (GFX10).
  */
-export type ValueType = 'f32' | 'f16' | 'b32' | 'u16' | 'i16' | 'b16';
+export type ValueType = 'f32' | 'f16' | 'b32' | 'u16' | 'i16' | 'b16' | 'f64' | 'i64' | 'u64';
+
+/** Source type of a VOPC compare. */
+export type CompareType = 'f16' | 'f32' | 'f64' | 'i16' | 'u16' | 'i32' | 'u32' | 'i64' | 'u64';
+
+/**
+ * Condition of a VOPC compare. The float conditions f…tru and the integer conditions f…t are listed in
+ * opcode order, where each one's position is its truth table (see COMPARE_TRUTH in opcodes.ts);
+ * 'class' tests the floating-point class of src0 against the mask in src1.
+ */
+export type CompareOp =
+  | 'f' | 'lt' | 'eq' | 'le' | 'gt' | 'lg' | 'ge' | 'o' | 'u' | 'nge' | 'nlg' | 'ngt' | 'nle' | 'neq' | 'nlt' | 'tru'
+  | 'ne' | 't' | 'class';
 
 /** Element type of a packed dot-product source. */
 export type DotElement = 'f16' | 'i16' | 'u16' | 'i8' | 'u8' | 'i4' | 'u4';
@@ -222,6 +235,8 @@ export interface OpcodeInfo {
    * (f32 for 'f16', otherwise i32/u32). Only the 16-bit kinds take op_sel/op_sel_hi.
    */
   dot?: DotElement;
+  /** VOPC compare: its source type and condition. */
+  compare?: { type: CompareType; op: CompareOp };
   /** Scalar ALU semantics (SOP1/SOP2/SOPC/SOPK). */
   salu?: SaluSemantics;
 }

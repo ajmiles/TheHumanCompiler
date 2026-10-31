@@ -3,13 +3,13 @@
 import { assemble } from '../src/assembler/assembler';
 import { Emulator } from '../src/emulator/emulator';
 import { decodeBinary, disassemble } from '../src/isa/encoding';
-import { lookupByOpcode, lookupByMnemonic } from '../src/isa/opcodes';
+import { getAllOpcodes, lookupByOpcode, lookupByMnemonic } from '../src/isa/opcodes';
 import { f16ToF32, f32ToF16 } from '../src/isa/float16';
 import { getPuzzleById, ALL_PUZZLES } from '../src/puzzle/puzzles';
 import { validatePuzzle } from '../src/puzzle/validator';
 import { ALL_TUTORIALS } from '../src/puzzle/tutorials';
 import { Puzzle, PuzzleResult } from '../src/puzzle/types';
-import { OperandSlot } from '../src/isa/types';
+import { InstructionFormat, OperandSlot } from '../src/isa/types';
 import { checkLine, EditChoice, editChoices, labelsIn } from '../src/assembler/operand-edit';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
@@ -6097,7 +6097,7 @@ group('Regression: arithmetic details');
 }
 {
   const unknown = new Emulator();
-  unknown.load(new Uint32Array([0x7DFE0100, ENDPGM]));
+  unknown.load(new Uint32Array([0x7C800100, ENDPGM])); // VOPC opcode 0x40: unassigned on GFX10
   unknown.run();
   assert(unknown.fault !== null && /Unknown instruction/.test(unknown.fault), 'unknown opcodes fault instead of crashing');
   const past = run1('s_mov_b32 m0, 10\nv_movreld_b32 v250, v0');
@@ -6689,6 +6689,192 @@ group('16-bit integer VOP3, dot products and pack conversions');
   assert(rejects('v_cvt_pk_i16_i32 v0, v1, v2 op_sel:[1,0,0]') && rejects('v_cvt_pknorm_i16_f32 v0, v1, v2 op_sel:[1,0,0]'),
     'pack conversions with 32-bit sources take no op_sel');
   assert(rejects('v_cvt_pknorm_u16_f32 v0, v1, v2 mul:2'), 'pknorm results are integers: no output modifier');
+}
+
+group('VOPC: every GFX10 compare');
+const f64ToBits = (v: number): bigint => new BigUint64Array(new Float64Array([v]).buffer)[0];
+function write64(e: Emulator, reg: number, lane: number, bits: bigint): void {
+  e.state.writeVGPR_u32(reg, lane, Number(BigInt.asUintN(64, bits) & 0xFFFFFFFFn));
+  e.state.writeVGPR_u32(reg + 1, lane, Number(BigInt.asUintN(64, bits) >> 32n));
+}
+{
+  const vopc = getAllOpcodes().filter(o => o.format === InstructionFormat.VOPC);
+  assert(vopc.length === 190 && new Set(vopc.map(o => o.opcode)).size === 190, 'all 190 GFX10 compares exist, each with its own opcode');
+  assert(lookupByOpcode(InstructionFormat.VOPC, 0x40) === undefined, 'VOPC opcodes 0x40-0x7F stay unassigned');
+
+  // Encodings from LLVM's GFX10 MC tests (little-endian bytes)
+  const words = (...b: number[]) =>
+    Array.from({ length: b.length / 4 }, (_, i) => (b[4 * i] | (b[4 * i + 1] << 8) | (b[4 * i + 2] << 16) | (b[4 * i + 3] << 24)) >>> 0);
+  const llvm: Array<[string, number[]]> = [
+    ['v_cmp_lt_f64 vcc_lo, 0xaf123456, v[2:3]', words(0xff, 0x04, 0x42, 0x7c, 0x56, 0x34, 0x12, 0xaf)],
+    ['v_cmp_eq_f64 vcc_lo, 0.5, v[2:3]', words(0xf0, 0x04, 0x44, 0x7c)],
+    ['v_cmp_lt_u64 vcc_lo, s[2:3], v[2:3]', words(0x02, 0x04, 0xc2, 0x7d)],
+    ['v_cmp_class_f64 vcc_lo, v[1:2], v2', words(0x01, 0x05, 0x50, 0x7d)],
+    ['v_cmp_eq_f16 vcc_lo, 0x3456, v2', words(0xff, 0x04, 0x94, 0x7d, 0x56, 0x34, 0x00, 0x00)],
+    ['v_cmp_nlg_f16 vcc_lo, v1, v2', words(0x01, 0x05, 0xd4, 0x7d)],
+    ['v_cmp_lt_f64_e64 s10, -v[1:2], v[2:3]', words(0x0a, 0x00, 0x21, 0xd4, 0x01, 0x05, 0x02, 0x22)],
+    ['v_cmp_lt_f64_e64 s10, v[1:2], v[2:3] clamp', words(0x0a, 0x80, 0x21, 0xd4, 0x01, 0x05, 0x02, 0x02)],
+    ['v_cmp_ne_i64_e64 s10, exec, v[2:3]', words(0x0a, 0x00, 0xa5, 0xd4, 0x7e, 0x04, 0x02, 0x02)],
+    ['v_cmp_class_f64_e64 s10, -v[1:2], v2', words(0x0a, 0x00, 0xa8, 0xd4, 0x01, 0x05, 0x02, 0x22)],
+    ['v_cmp_tru_f16_e64 s10, v1, v2', words(0x0a, 0x00, 0xef, 0xd4, 0x01, 0x05, 0x02, 0x02)],
+    ['v_cmp_nge_f16_sdwa s6, -v1, v2 src0_sel:DWORD src1_sel:DWORD', words(0xf9, 0x04, 0xd2, 0x7d, 0x01, 0x86, 0x16, 0x06)],
+    ['v_cmp_eq_i16_sdwa s6, v1, sext(v2) src0_sel:DWORD src1_sel:DWORD', words(0xf9, 0x04, 0x14, 0x7d, 0x01, 0x86, 0x06, 0x0e)],
+    ['v_cmpx_lt_u64_e64 v[1:2], v[2:3]', words(0x7e, 0x00, 0xf1, 0xd4, 0x01, 0x05, 0x02, 0x02)],
+    ['v_cmpx_o_f32_sdwa v1, v2 src0_sel:WORD_1 src1_sel:DWORD', words(0xf9, 0x04, 0x2e, 0x7c, 0x01, 0x00, 0x05, 0x06)],
+    ['v_cmpx_ne_u16 v1, v2', words(0x01, 0x05, 0x7a, 0x7d)],
+  ];
+  for (const [src, w] of llvm) assert(same(enc(src), w), `encoding (LLVM): ${src}`);
+
+  const dis = (src: string) => disassemble(decodeBinary(new Uint32Array(enc(src)))[0]);
+  assert(dis('v_cmp_lt_f64 vcc_lo, 2.5, v[0:1]') === 'v_cmp_lt_f64 vcc_lo, 2.5, v[0:1]', 'an f64 literal with a short value disassembles as a float');
+  assert(dis('v_cmp_lt_f64 vcc_lo, 0xaf123456, v[0:1]') === 'v_cmp_lt_f64 vcc_lo, 0xaf123456, v[0:1]', 'other f64 literals disassemble in hex');
+  const prog = ['v_cmp_lt_f64 vcc_lo, 2.5, v[0:1]', 'v_cmp_eq_i64_e64 s4, 0xffffffff, v[0:1]', 'v_cmp_class_f64_e64 s6, -|v[0:1]|, 0x3ff',
+    'v_cmp_class_f16_sdwa vcc_lo, v1, v2 src0_sel:WORD_1 src1_sel:DWORD', 'v_cmpx_nlt_f64_e64 -|v[0:1]|, s[2:3]', 'v_cmp_t_u64 vcc_lo, -1, v[4:5]',
+    'v_cmp_ge_u16_e64 s8, v1, 0x1234', 's_endpgm'].join('\n');
+  const a = assemble(prog);
+  const b = assemble(decodeBinary(a.binary).map(d => disassemble(d)).join('\n'));
+  assert(a.errors.length === 0 && b.errors.length === 0 && same(Array.from(a.binary), Array.from(b.binary)), 'compares: disassembly round-trips');
+}
+{
+  // Float conditions: lanes 0-3 hold src0 less than, equal to, greater than and unordered with src1, so with
+  // EXEC = 0xF a compare's mask is its truth table (the condition's position in opcode order)
+  const FLOAT_CONDS = ['f', 'lt', 'eq', 'le', 'gt', 'lg', 'ge', 'o', 'u', 'nge', 'nlg', 'ngt', 'nle', 'neq', 'nlt', 'tru'];
+  const pairs: Array<[number, number]> = [[-1.5, 2], [-0, 0], [3, -0], [NaN, 2]];
+  const setF = (e: Emulator, t: string, reg: number, lane: number, v: number) => {
+    if (t === 'f16') e.state.writeVGPR_u32(reg, lane, (0xABCD0000 | f32ToF16(v)) >>> 0); // the high half is ignored
+    else if (t === 'f32') e.state.writeVGPR(reg, lane, v);
+    else write64(e, reg, lane, f64ToBits(v));
+  };
+  for (const t of ['f16', 'f32', 'f64']) {
+    const srcs = t === 'f64' ? 'v[0:1], v[2:3]' : 'v0, v2';
+    FLOAT_CONDS.forEach((c, truth) => {
+      const init = (e: Emulator) => {
+        e.state.exec = 0xF;
+        e.state.vcc = 0x5A5A;
+        pairs.forEach(([x, y], lane) => { setF(e, t, 0, lane, x); setF(e, t, 2, lane, y); });
+      };
+      assert(run1(`v_cmp_${c}_${t} vcc_lo, ${srcs}`, init).state.vcc === truth,
+        `v_cmp_${c}_${t}: less/equal/greater/unordered lanes give ${truth.toString(2).padStart(4, '0')}`);
+      const x = run1(`v_cmpx_${c}_${t} ${srcs}`, init).state;
+      assert(x.exec === truth && x.vcc === 0x5A5A, `v_cmpx_${c}_${t} writes its mask to EXEC and leaves VCC alone`);
+    });
+  }
+}
+{
+  // Integer conditions: lanes 0-2 hold less, equal and greater pairs in the compare's own signedness. The other
+  // signedness orders lanes 0 and 2 the other way round, and the 64-bit lane 2 values are equal as doubles.
+  const INT_CONDS = ['f', 'lt', 'eq', 'le', 'gt', 'ne', 'ge', 't'];
+  const cases: Array<[string, bigint[][]]> = [
+    ['i16', [[-2n, 1n], [-2n, -2n], [1n, -2n]]],
+    ['u16', [[1n, 0xFFFFn], [0xFFFFn, 0xFFFFn], [0xFFFFn, 1n]]],
+    ['i32', [[-2n, 1n], [-2n, -2n], [1n, -2n]]],
+    ['u32', [[1n, 0xFFFFFFFFn], [0xFFFFFFFFn, 0xFFFFFFFFn], [0xFFFFFFFFn, 1n]]],
+    ['i64', [[-2n, 1n], [0x123456789ABCDEFn, 0x123456789ABCDEFn], [0x7FFFFFFFFFFFFFFFn, 0x7FFFFFFFFFFFFFFEn]]],
+    ['u64', [[1n, 0xFFFFFFFFFFFFFFFFn], [0x8000000000000001n, 0x8000000000000001n], [0xFFFFFFFFFFFFFFFFn, 0xFFFFFFFFFFFFFFFEn]]],
+  ];
+  for (const [t, lanes] of cases) {
+    const bits = Number(t.slice(1));
+    const conds = bits === 16 ? INT_CONDS.slice(1, 7) : INT_CONDS;
+    const init = (e: Emulator) => {
+      e.state.exec = 0x7;
+      lanes.forEach(([x, y], lane) => {
+        if (bits === 64) {
+          write64(e, 0, lane, x);
+          write64(e, 2, lane, y);
+        } else {
+          const hi = bits === 16 ? 0x5A5A0000 : 0; // 16-bit compares ignore the high half
+          e.state.writeVGPR_u32(0, lane, (hi | Number(BigInt.asUintN(bits, x))) >>> 0);
+          e.state.writeVGPR_u32(2, lane, (hi | Number(BigInt.asUintN(bits, y))) >>> 0);
+        }
+      });
+    };
+    const srcs = bits === 64 ? 'v[0:1], v[2:3]' : 'v0, v2';
+    for (const c of conds) {
+      const truth = INT_CONDS.indexOf(c);
+      assert(run1(`v_cmp_${c}_${t} vcc_lo, ${srcs}`, init).state.vcc === truth,
+        `v_cmp_${c}_${t}: less/equal/greater lanes give ${truth.toString(2).padStart(3, '0')}`);
+    }
+    const gt = run1(`v_cmpx_gt_${t} ${srcs}`, init).state;
+    assert(gt.exec === 0b100, `v_cmpx_gt_${t} keeps only the greater lane`);
+  }
+}
+{
+  // Class tests: lane k holds a value of class k (0 signaling NaN, 1 quiet NaN, 2 -inf, 3 -normal, 4 -denormal,
+  // 5 -0, 6 +0, 7 +denormal, 8 +normal, 9 +inf); src1 holds each lane's mask
+  const CLASS_VALUES: Record<string, bigint[]> = {
+    f16: [0x7C01n, 0x7E00n, 0xFC00n, 0xBC00n, 0x8001n, 0x8000n, 0n, 1n, 0x3C00n, 0x7C00n],
+    f32: [0x7F800001n, 0x7FC00000n, 0xFF800000n, 0xBF800000n, 0x80000001n, 0x80000000n, 0n, 1n, 0x3F800000n, 0x7F800000n],
+    f64: [0x7FF0000000000001n, 0x7FF8000000000000n, 0xFFF0000000000000n, 0xBFF0000000000000n, 0x8000000000000001n,
+      0x8000000000000000n, 0n, 1n, 0x3FF0000000000000n, 0x7FF0000000000000n],
+  };
+  const negated = (k: number) => (k < 2 ? k : 11 - k); // -x flips the sign; NaNs stay NaNs
+  const absolute = (k: number) => (k >= 2 && k <= 5 ? 11 - k : k);
+  for (const [t, values] of Object.entries(CLASS_VALUES)) {
+    const s0 = t === 'f64' ? 'v[0:1]' : 'v0';
+    const run = (src: string, mask: (k: number) => number) => run1(src, e => {
+      e.state.exec = 0x3FF;
+      values.forEach((v, k) => {
+        if (t === 'f64') write64(e, 0, k, v);
+        else e.state.writeVGPR_u32(0, k, (Number(v) | (t === 'f16' ? 0x5A5A0000 : 0)) >>> 0);
+        e.state.writeVGPR_u32(2, k, mask(k));
+      });
+    }).state;
+    assert(run(`v_cmp_class_${t} vcc_lo, ${s0}, v2`, k => 1 << k).vcc === 0x3FF, `v_cmp_class_${t}: every lane matches its own class bit`);
+    assert(run(`v_cmp_class_${t} vcc_lo, ${s0}, v2`, k => 0x3FF & ~(1 << k)).vcc === 0, `v_cmp_class_${t}: no lane matches another class bit`);
+    assert(run(`v_cmp_class_${t}_e64 s4, -${s0}, v2`, k => 1 << negated(k)).readSGPR(4) === 0x3FF, `v_cmp_class_${t}: -src0 flips the sign of the class`);
+    assert(run(`v_cmp_class_${t}_e64 s4, |${s0}|, v2`, k => 1 << absolute(k)).readSGPR(4) === 0x3FF, `v_cmp_class_${t}: |src0| makes the class positive`);
+    assert(run(`v_cmpx_class_${t} ${s0}, v2`, k => (k % 2 ? 1 << k : 0)).exec === 0x2AA, `v_cmpx_class_${t} writes EXEC`);
+  }
+  const sdwa = run1('v_cmp_class_f16_sdwa vcc_lo, v0, v2 src0_sel:WORD_1 src1_sel:DWORD', e => {
+    e.state.exec = 0x3FF;
+    CLASS_VALUES.f16.forEach((v, k) => {
+      e.state.writeVGPR_u32(0, k, ((Number(v) << 16) | 0x7E00) >>> 0);
+      e.state.writeVGPR_u32(2, k, 1 << k);
+    });
+  });
+  assert(sdwa.state.vcc === 0x3FF, 'v_cmp_class_f16 with src0_sel:WORD_1 tests the high half');
+  assert((run1('v_cmp_class_f16 vcc_lo, 1.0, v2', e => e.state.writeVGPR_u32(2, 0, 1 << 8)).state.vcc & 1) === 1 &&
+    (run1('v_cmp_class_f32 vcc_lo, -4.0, v2', e => e.state.writeVGPR_u32(2, 0, 1 << 3)).state.vcc & 1) === 1,
+    'class tests of inline constants: 1.0 is +normal, -4.0 is -normal');
+}
+{
+  // 64-bit sources: f64 literals are the high half of a double, integer literals are zero- or sign-extended
+  const all = (bits: bigint, reg = 0) => (e: Emulator) => { for (let l = 0; l < 32; l++) write64(e, reg, l, bits); };
+  assert(run1('v_cmp_eq_f64_e64 s4, 0x40490000, v[0:1]', all(f64ToBits(50))).state.readSGPR(4) === 0xFFFFFFFF,
+    'an f64 literal is the high half of the double: 0x40490000 is 50.0');
+  const exact = assemble('v_cmp_lt_f64 vcc_lo, 2.5, v[0:1]\ns_endpgm');
+  assert(exact.warnings.length === 0 && exact.binary[1] === 0x40040000, 'a float that fits in the high half (2.5) is an exact f64 literal');
+  const tenthSrc = 'v_cmp_lt_f64 vcc_lo, 0.1, v[0:1]';
+  const tenth = assemble(tenthSrc + '\ns_endpgm');
+  assert(tenth.errors.length === 0 && tenth.warnings.length === 1 && /high 32 bits/.test(tenth.warnings[0].message) &&
+    tenth.warnings[0].column === tenthSrc.indexOf('0.1') + 1, 'an f64 float literal that loses its low 32 bits warns at the literal');
+  assert(run1(tenthSrc, all(f64ToBits(0.0999999998))).state.vcc === 0xFFFFFFFF, '…and compares as 0.09999996423721313');
+  const mods = run1('v_cmp_lt_f64_e64 s4, -v[0:1], |v[2:3]|', e => { all(f64ToBits(3))(e); all(f64ToBits(-2), 2)(e); });
+  assert(mods.state.readSGPR(4) === 0xFFFFFFFF, 'f64 neg and abs modifiers: -3 < |-2|');
+  const eq = (src: string, bits: bigint) => run1(src, all(bits)).state.readSGPR(4) === 0xFFFFFFFF;
+  assert(eq('v_cmp_eq_u64_e64 s4, 0xffffffff, v[0:1]', 0xFFFFFFFFn) && !eq('v_cmp_eq_u64_e64 s4, 0xffffffff, v[0:1]', -1n),
+    'a u64 literal is zero-extended');
+  assert(eq('v_cmp_eq_i64_e64 s4, 0xffffffff, v[0:1]', -1n) && !eq('v_cmp_eq_i64_e64 s4, 0xffffffff, v[0:1]', 0xFFFFFFFFn),
+    'an i64 literal is sign-extended');
+  const pair = run1('v_cmp_lt_u64 vcc_lo, s[0:1], v[2:3]', e => {
+    e.state.writeSGPR(0, 0);
+    e.state.writeSGPR(1, 1);
+    for (let l = 0; l < 32; l++) write64(e, 2, l, BigInt(l) << 31n);
+  });
+  assert(pair.state.vcc === 0xFFFFFFF8, 'an SGPR pair as src0: 2^32 < lane × 2^31 from lane 3 up');
+}
+{
+  const ok = (src: string) => assemble(src).errors.length === 0;
+  assert(ok('v_cmp_lt_f32_e64 s0, v0, v1 clamp') && ok('v_cmp_u_f64_e64 s0, v[0:1], v[2:3] clamp'), 'float compares accept clamp');
+  assert(!ok('v_cmp_lt_i32_e64 s0, v0, v1 clamp') && !ok('v_cmp_lt_u64_e64 s0, v[0:1], v[2:3] clamp') && !ok('v_cmp_class_f32_e64 s0, v0, v1 clamp'),
+    'integer and class compares take no clamp (as in LLVM)');
+  assert(!ok('v_cmp_lt_u64 vcc_lo, s[1:2], v[2:3]') && !ok('v_cmp_lt_f64 vcc_lo, v[0:2], v[2:3]'), '64-bit compares need aligned register pairs');
+  assert(!ok('v_cmp_lt_f64 vcc_lo, v[0:1], v[2:3] src0_sel:DWORD') && !ok('v_cmp_class_f64_sdwa vcc_lo, v[0:1], v2'), '64-bit compares have no SDWA form');
+  assert(!ok('v_cmp_lt_i64_e64 s0, -v[0:1], v[2:3]') && !ok('v_cmp_class_f32_e64 s0, v0, -v1'),
+    'neg only applies to float sources, not to integers or the class mask');
+  assert(!ok('v_cmp_lt_u16_e64 s0, v0, v1 op_sel:[1,0,0]'), '16-bit compares take no op_sel on GFX10');
+  assert(!ok('v_cmp_lt_i64 vcc_lo, 0.3, v[0:1]') && ok('v_cmp_lt_i64 vcc_lo, 0.5, v[0:1]'), 'a 64-bit integer operand takes only inline float constants');
+  assert(!ok('v_cmp_lt_f64 vcc_lo, 0x123456789, v[0:1]'), 'an f64 integer literal must fit in 32 bits');
 }
 
 // ════════════════════════════════════════════

@@ -52,6 +52,26 @@ function bitsToF32(bits: number): number {
   return f32buf[0];
 }
 
+const f64buf = new Float64Array(1);
+const u64buf = new BigUint64Array(f64buf.buffer);
+
+/** High 32 bits of a double: the literal for a 64-bit float operand. */
+function f64HighBits(v: number): number {
+  f64buf[0] = v;
+  return Number(u64buf[0] >> 32n);
+}
+
+function f64LowBits(v: number): number {
+  f64buf[0] = v;
+  return Number(u64buf[0] & 0xFFFFFFFFn);
+}
+
+/** The double a 64-bit float operand sees for a literal: the literal in the high half, zeros below. */
+function f64FromHighBits(hi: number): number {
+  u64buf[0] = BigInt(hi >>> 0) << 32n;
+  return f64buf[0];
+}
+
 // ── Constant operands ──
 
 function isScalarReg(op: Operand | undefined): op is Operand {
@@ -79,7 +99,7 @@ function inlineFloatEncoding(v: number, kind: ConstKind): number | null {
     const c = INLINE_FLOAT_MAP[enc];
     if (kind === 'f16' || kind === 'pkf16') {
       if (f32ToF16(v) === INLINE_FLOAT16_BITS[enc]) return enc;
-    } else if (kind === 'u64' || kind === 'i64') {
+    } else if (kind === 'u64' || kind === 'i64' || kind === 'f64') {
       if (enc === 248 ? Math.abs(v - INV_2PI_F64) < 1e-9 : v === c) return enc;
     } else if (Math.fround(v) === Math.fround(c)) {
       return enc;
@@ -121,6 +141,12 @@ export function encodeConstant(op: Operand, kind: ConstKind): ConstEncoding {
         if (inl !== null) return { enc: inl };
         return fail(`Floating-point constant ${v} cannot be used as a 64-bit integer operand`);
       }
+      case 'f64': {
+        // The literal is the high half of the double and the low half reads as 0 (see encodingWarnings)
+        const inl = inlineFloatEncoding(v, kind);
+        if (inl !== null) return { enc: inl };
+        return { enc: LITERAL_CONST, literal: f64HighBits(v) };
+      }
       default: {
         // 32-bit operands, and 16-bit integer operands (packed or not): integer instructions receive
         // inline float constants as f32 values, so a float always means its f32 bit pattern there
@@ -139,8 +165,8 @@ export function encodeConstant(op: Operand, kind: ConstKind): ConstEncoding {
     fail(`Constant ${formatNumber(v)} does not fit in a ${width}-bit operand`);
   }
   // A bit pattern such as 0xffffffff is the inline constant -1 for 32/16-bit operands
-  // (not for 64-bit operands, where the literal is zero-extended)
-  if (kind !== 'u64' && kind !== 'i64') {
+  // (not for 64-bit operands, where the literal is zero-extended or is the high half of a double)
+  if (kind !== 'u64' && kind !== 'i64' && kind !== 'f64') {
     const signed = width === 16 ? (v << 16) >> 16 : v | 0;
     const folded = inlineIntEncoding(signed);
     if (folded !== null) return { enc: folded };
@@ -512,7 +538,12 @@ const NO_CLAMP = new Set([
 ]);
 
 function checkClamp(info: OpcodeInfo, instr: ParsedInstruction): void {
-  if (instr.clamp && NO_CLAMP.has(info.mnemonic)) fail(`${info.mnemonic} does not support clamp`);
+  if (!instr.clamp) return;
+  // Compares accept clamp (which leaves the mask unchanged) only when they compare floats, as in LLVM
+  const cmp = info.compare;
+  if (NO_CLAMP.has(info.mnemonic) || (cmp && (cmp.op === 'class' || !cmp.type.startsWith('f')))) {
+    fail(`${info.mnemonic} does not support clamp`);
+  }
 }
 
 function checkDppSdwaAllowed(info: OpcodeInfo, instr: ParsedInstruction): void {
@@ -705,6 +736,33 @@ export function assembleToBinary(instructions: ParsedInstruction[]): Uint32Array
   const words: number[] = [];
   for (const instr of instructions) words.push(...encodeInstruction(instr));
   return new Uint32Array(words);
+}
+
+/** Something that assembles but probably not as written: where it is and what happens. */
+export interface EncodingWarning {
+  slot: 'src0' | 'src1' | 'src2';
+  message: string;
+}
+
+/**
+ * A float literal for a 64-bit float operand keeps only the high 32 bits of the double, so a value
+ * such as 0.1 changes (LLVM warns about this too).
+ */
+export function encodingWarnings(instr: ParsedInstruction): EncodingWarning[] {
+  const info = lookupByMnemonic(instr.mnemonic);
+  if (!info || info.salu || info.format === InstructionFormat.DS) return [];
+  const warnings: EncodingWarning[] = [];
+  const slots = ['src0', 'src1', 'src2'] as const;
+  sources(instr).slice(0, valuSourceCount(info)).forEach((op, i) => {
+    if (!op || op.type !== OperandType.LITERAL || !constIsFloat(op)) return;
+    if (valuConstKind(info, i) !== 'f64' || f64LowBits(op.value) === 0) return;
+    warnings.push({
+      slot: slots[i],
+      message: `${op.value} is not exact as a 64-bit float literal: a literal holds only the high 32 bits of the double, ` +
+        `so the instruction uses ${f64FromHighBits(f64HighBits(op.value))}`,
+    });
+  });
+  return warnings;
 }
 
 // ── Decoder ──
@@ -1104,6 +1162,12 @@ function literalText(literal: number | undefined, kind: ConstKind): string {
     const f = bitsToF32(bits);
     const text = floatText(f);
     if (Number.isFinite(f) && f32Bits(Number(text)) === bits) return text;
+  } else if (kind === 'f64') {
+    // The literal is the high half of a double: show short values such as 2.5 as floats, others in hex
+    const f = f64FromHighBits(bits);
+    if (Number.isFinite(f) && Math.abs(f) < 1e15 && (f === 0 || Math.abs(f) >= 1e-6) && Number(f.toPrecision(9)) === f) {
+      return floatText(f);
+    }
   }
   return hex(bits);
 }

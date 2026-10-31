@@ -108,10 +108,10 @@ function scalarSrc(ctx: LayoutContext, role: OperandRole): BitField['show'] {
   return v => sourceName(v, regWidth(ctx, role));
 }
 
-/** VSRC1 of a 32-bit VALU encoding; with SDWA its S1 bit makes it a scalar or constant. */
+/** VSRC1 of a 32-bit VALU encoding (a register pair for 64-bit compares); with SDWA its S1 bit makes it a scalar or constant. */
 function vsrc1(ctx: LayoutContext): BitField['show'] {
   if (ctx.decoded.extra === 'SDWA') return (v, w) => ((w[1] >>> 31) & 1 ? sourceFieldName(v) : vgprName(v));
-  return v => vgprName(v);
+  return v => vgprName(v, regWidth(ctx, 'src1'));
 }
 
 function e32Fields(ctx: LayoutContext): BitField[] {

@@ -1,7 +1,7 @@
 // ── RDNA2 Opcode Table ──
 // Maps mnemonic → opcode info with encoding format and semantic function
 
-import { InstructionFormat, OpcodeInfo, SaluSemantics, SaluContext, ScalarWidth } from './types';
+import { CompareOp, CompareType, InstructionFormat, OpcodeInfo, SaluSemantics, SaluContext, ScalarWidth, SemanticFn, ValueType } from './types';
 import { f16ToF32, f32ToF16 } from './float16';
 
 // IEEE 754 helper for bit-exact float operations
@@ -2872,455 +2872,173 @@ const VOP3_ONLY_OPCODES: OpcodeInfo[] = [
   },
 ];
 
-const VOPC_OPCODES: OpcodeInfo[] = [
-  {
-    mnemonic: 'v_cmp_lt_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x01,
-    operandCount: 2,
-    execute: (a, b) => (a < (b ?? 0)) ? 1 : 0,
-    description: 'Compare two 32-bit floats: set VCC bit if src0 < vsrc1.\nVCC[lane] = (src0 < vsrc1)',
-    syntax: 'v_cmp_lt_f32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_eq_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x02,
-    operandCount: 2,
-    execute: (a, b) => (a === (b ?? 0)) ? 1 : 0,
-    description: 'Compare two 32-bit floats: set VCC bit if src0 == vsrc1.\nVCC[lane] = (src0 == vsrc1)',
-    syntax: 'v_cmp_eq_f32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_le_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x03,
-    operandCount: 2,
-    execute: (a, b) => (a <= (b ?? 0)) ? 1 : 0,
-    description: 'Compare two 32-bit floats: set VCC bit if src0 ≤ vsrc1.\nVCC[lane] = (src0 <= vsrc1)',
-    syntax: 'v_cmp_le_f32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_gt_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x04,
-    operandCount: 2,
-    execute: (a, b) => (a > (b ?? 0)) ? 1 : 0,
-    description: 'Compare two 32-bit floats: set VCC bit if src0 > vsrc1.\nVCC[lane] = (src0 > vsrc1)',
-    syntax: 'v_cmp_gt_f32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_lg_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x05,
-    operandCount: 2,
-    execute: (a, b) => (a < (b ?? 0) || a > (b ?? 0)) ? 1 : 0,
-    description: 'Compare two 32-bit floats: set VCC bit if src0 < vsrc1 or src0 > vsrc1 (false if either is NaN).\nVCC[lane] = (src0 <> vsrc1)',
-    syntax: 'v_cmp_lg_f32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_ge_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x06,
-    operandCount: 2,
-    execute: (a, b) => (a >= (b ?? 0)) ? 1 : 0,
-    description: 'Compare two 32-bit floats: set VCC bit if src0 ≥ vsrc1.\nVCC[lane] = (src0 >= vsrc1)',
-    syntax: 'v_cmp_ge_f32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_nge_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x09,
-    operandCount: 2,
-    execute: (a, b) => (!(a >= (b ?? 0))) ? 1 : 0,
-    description: 'Compare two 32-bit floats: set VCC if NOT (src0 >= vsrc1).\nVCC[lane] = !(src0 >= vsrc1) (unordered)',
-    syntax: 'v_cmp_nge_f32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_nle_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x0C,
-    operandCount: 2,
-    execute: (a, b) => (!(a <= (b ?? 0))) ? 1 : 0,
-    description: 'Compare two 32-bit floats: set VCC if NOT (src0 <= vsrc1).\nVCC[lane] = !(src0 <= vsrc1) (unordered)',
-    syntax: 'v_cmp_nle_f32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_lt_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x81,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) < ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare two signed 32-bit integers: set VCC if src0 < vsrc1.\nVCC[lane] = (src0 < vsrc1)',
-    syntax: 'v_cmp_lt_i32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_eq_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x82,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) === ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare two signed 32-bit integers: set VCC if src0 == vsrc1.\nVCC[lane] = (src0 == vsrc1)',
-    syntax: 'v_cmp_eq_i32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_le_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x83,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) <= ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare two signed 32-bit integers: set VCC if src0 ≤ vsrc1.\nVCC[lane] = (src0 <= vsrc1)',
-    syntax: 'v_cmp_le_i32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_gt_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x84,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) > ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare two signed 32-bit integers: set VCC if src0 > vsrc1.\nVCC[lane] = (src0 > vsrc1)',
-    syntax: 'v_cmp_gt_i32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_ne_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x85,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) !== ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare two signed 32-bit integers: set VCC if src0 ≠ vsrc1.\nVCC[lane] = (src0 != vsrc1)',
-    syntax: 'v_cmp_ne_i32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_ge_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x86,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) >= ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare two signed 32-bit integers: set VCC if src0 ≥ vsrc1.\nVCC[lane] = (src0 >= vsrc1)',
-    syntax: 'v_cmp_ge_i32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_eq_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xC2,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) === ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare two unsigned 32-bit integers: set VCC if src0 == vsrc1.\nVCC[lane] = (src0 == vsrc1)',
-    syntax: 'v_cmp_eq_u32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_ne_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xC5,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) !== ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare two unsigned 32-bit integers: set VCC if src0 != vsrc1.\nVCC[lane] = (src0 != vsrc1)',
-    syntax: 'v_cmp_ne_u32 src0, vsrc1',
-    writesVCC: true,
-  },
-  // v_cmpx_* — write to EXEC instead of VCC
-  // v_cmpx_*_f32 — float comparisons that write EXEC
-  {
-    mnemonic: 'v_cmpx_lt_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x11,
-    operandCount: 2,
-    execute: (a, b) => (a < (b ?? 0)) ? 1 : 0,
-    description: 'Compare floats and write to EXEC mask.\nEXEC[lane] = (src0 < vsrc1)',
-    syntax: 'v_cmpx_lt_f32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_eq_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x12,
-    operandCount: 2,
-    execute: (a, b) => (a === (b ?? 0)) ? 1 : 0,
-    description: 'Compare floats and write to EXEC mask.\nEXEC[lane] = (src0 == vsrc1)',
-    syntax: 'v_cmpx_eq_f32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_le_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x13,
-    operandCount: 2,
-    execute: (a, b) => (a <= (b ?? 0)) ? 1 : 0,
-    description: 'Compare floats and write to EXEC mask.\nEXEC[lane] = (src0 <= vsrc1)',
-    syntax: 'v_cmpx_le_f32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_gt_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x14,
-    operandCount: 2,
-    execute: (a, b) => (a > (b ?? 0)) ? 1 : 0,
-    description: 'Compare floats and write to EXEC mask.\nEXEC[lane] = (src0 > vsrc1)',
-    syntax: 'v_cmpx_gt_f32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_lg_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x15,
-    operandCount: 2,
-    execute: (a, b) => (a < (b ?? 0) || a > (b ?? 0)) ? 1 : 0,
-    description: 'Compare floats and write to EXEC mask (ordered not-equal: false if either is NaN).\nEXEC[lane] = (src0 <> vsrc1)',
-    syntax: 'v_cmpx_lg_f32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_ge_f32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x16,
-    operandCount: 2,
-    execute: (a, b) => (a >= (b ?? 0)) ? 1 : 0,
-    description: 'Compare floats and write to EXEC mask.\nEXEC[lane] = (src0 >= vsrc1)',
-    syntax: 'v_cmpx_ge_f32 src0, vsrc1',
-  },
-  // v_cmpx_*_i32 / v_cmpx_*_u32 — integer comparisons that write EXEC
-  {
-    mnemonic: 'v_cmpx_eq_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x92,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) === ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare signed ints and write to EXEC mask.\nEXEC[lane] = (src0 == vsrc1)',
-    syntax: 'v_cmpx_eq_i32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_eq_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xD2,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) === ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare unsigned ints and write to EXEC mask.\nEXEC[lane] = (src0 == vsrc1)',
-    syntax: 'v_cmpx_eq_u32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_gt_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xD4,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) > ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare unsigned ints (greater than) and write to EXEC mask.\nEXEC[lane] = (src0 > vsrc1)',
-    syntax: 'v_cmpx_gt_u32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_ne_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xD5,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) !== ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare unsigned ints (not equal) and write to EXEC mask.\nEXEC[lane] = (src0 != vsrc1)',
-    syntax: 'v_cmpx_ne_u32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_lt_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x91,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) < ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare signed ints (less than) and write to EXEC mask.\nEXEC[lane] = (src0 < vsrc1)',
-    syntax: 'v_cmpx_lt_i32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_le_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x93,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) <= ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare signed ints (less or equal) and write to EXEC mask.\nEXEC[lane] = (src0 <= vsrc1)',
-    syntax: 'v_cmpx_le_i32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_gt_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x94,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) > ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare signed ints (greater than) and write to EXEC mask.\nEXEC[lane] = (src0 > vsrc1)',
-    syntax: 'v_cmpx_gt_i32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_ne_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x95,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) !== ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare signed ints (not equal) and write to EXEC mask.\nEXEC[lane] = (src0 != vsrc1)',
-    syntax: 'v_cmpx_ne_i32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_ge_i32',
-    format: InstructionFormat.VOPC,
-    opcode: 0x96,
-    operandCount: 2,
-    execute: (a, b) => ((a | 0) >= ((b ?? 0) | 0)) ? 1 : 0,
-    description: 'Compare signed ints (greater or equal) and write to EXEC mask.\nEXEC[lane] = (src0 >= vsrc1)',
-    syntax: 'v_cmpx_ge_i32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_lt_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xD1,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) < ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare unsigned ints (less than) and write to EXEC mask.\nEXEC[lane] = (src0 < vsrc1)',
-    syntax: 'v_cmpx_lt_u32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_le_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xD3,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) <= ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare unsigned ints (less or equal) and write to EXEC mask.\nEXEC[lane] = (src0 <= vsrc1)',
-    syntax: 'v_cmpx_le_u32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmpx_ge_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xD6,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) >= ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare unsigned ints (greater or equal) and write to EXEC mask.\nEXEC[lane] = (src0 >= vsrc1)',
-    syntax: 'v_cmpx_ge_u32 src0, vsrc1',
-  },
-  {
-    mnemonic: 'v_cmp_lt_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xC1,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) < ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare two unsigned 32-bit integers: set VCC if src0 < vsrc1.\nVCC[lane] = (src0 < vsrc1)',
-    syntax: 'v_cmp_lt_u32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_le_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xC3,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) <= ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare two unsigned 32-bit integers: set VCC if src0 ≤ vsrc1.\nVCC[lane] = (src0 <= vsrc1)',
-    syntax: 'v_cmp_le_u32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_gt_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xC4,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) > ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare two unsigned 32-bit integers: set VCC if src0 > vsrc1.\nVCC[lane] = (src0 > vsrc1)',
-    syntax: 'v_cmp_gt_u32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_ge_u32',
-    format: InstructionFormat.VOPC,
-    opcode: 0xC6,
-    operandCount: 2,
-    execute: (a, b) => ((a >>> 0) >= ((b ?? 0) >>> 0)) ? 1 : 0,
-    description: 'Compare two unsigned 32-bit integers: set VCC if src0 ≥ vsrc1.\nVCC[lane] = (src0 >= vsrc1)',
-    syntax: 'v_cmp_ge_u32 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_lt_f16',
-    format: InstructionFormat.VOPC,
-    opcode: 0xC9,
-    operandCount: 2,
-    execute: (a, b) => (a < (b ?? 0)) ? 1 : 0,
-    description: 'Compare two 16-bit floats: set VCC if src0 < vsrc1.\nVCC[lane] = (src0 < vsrc1)',
-    syntax: 'v_cmp_lt_f16 src0, vsrc1',
-    writesVCC: true,
-    types: { d: 'b32', s: ['f16', 'f16'] },
-  },
-  {
-    mnemonic: 'v_cmp_gt_f16',
-    format: InstructionFormat.VOPC,
-    opcode: 0xCC,
-    operandCount: 2,
-    execute: (a, b) => (a > (b ?? 0)) ? 1 : 0,
-    description: 'Compare two 16-bit floats: set VCC if src0 > vsrc1.\nVCC[lane] = (src0 > vsrc1)',
-    syntax: 'v_cmp_gt_f16 src0, vsrc1',
-    writesVCC: true,
-    types: { d: 'b32', s: ['f16', 'f16'] },
-  },
-  {
-    mnemonic: 'v_cmp_eq_u16',
-    format: InstructionFormat.VOPC,
-    opcode: 0xAA,
-    operandCount: 2,
-    execute: (a, b) => ((a & 0xFFFF) === ((b ?? 0) & 0xFFFF)) ? 1 : 0,
-    description: 'Compare two unsigned 16-bit integers: set VCC if src0 == vsrc1.\nVCC[lane] = (src0 == vsrc1)',
-    syntax: 'v_cmp_eq_u16 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_ne_u16',
-    format: InstructionFormat.VOPC,
-    opcode: 0xAD,
-    operandCount: 2,
-    execute: (a, b) => ((a & 0xFFFF) !== ((b ?? 0) & 0xFFFF)) ? 1 : 0,
-    description: 'Compare two unsigned 16-bit integers: set VCC if src0 != vsrc1.\nVCC[lane] = (src0 != vsrc1)',
-    syntax: 'v_cmp_ne_u16 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_lt_i16',
-    format: InstructionFormat.VOPC,
-    opcode: 0x89,
-    operandCount: 2,
-    execute: (a, b) => (((a << 16) >> 16) < (((b ?? 0) << 16) >> 16)) ? 1 : 0,
-    description: 'Compare two signed 16-bit integers: set VCC if src0 < vsrc1.\nVCC[lane] = (src0 < vsrc1)',
-    syntax: 'v_cmp_lt_i16 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_le_i16',
-    format: InstructionFormat.VOPC,
-    opcode: 0x8B,
-    operandCount: 2,
-    execute: (a, b) => (((a << 16) >> 16) <= (((b ?? 0) << 16) >> 16)) ? 1 : 0,
-    description: 'Compare two signed 16-bit integers: set VCC if src0 <= vsrc1.\nVCC[lane] = (src0 <= vsrc1)',
-    syntax: 'v_cmp_le_i16 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_gt_i16',
-    format: InstructionFormat.VOPC,
-    opcode: 0x8C,
-    operandCount: 2,
-    execute: (a, b) => (((a << 16) >> 16) > (((b ?? 0) << 16) >> 16)) ? 1 : 0,
-    description: 'Compare two signed 16-bit integers: set VCC if src0 > vsrc1.\nVCC[lane] = (src0 > vsrc1)',
-    syntax: 'v_cmp_gt_i16 src0, vsrc1',
-    writesVCC: true,
-  },
-  {
-    mnemonic: 'v_cmp_ge_i16',
-    format: InstructionFormat.VOPC,
-    opcode: 0x8E,
-    operandCount: 2,
-    execute: (a, b) => (((a << 16) >> 16) >= (((b ?? 0) << 16) >> 16)) ? 1 : 0,
-    description: 'Compare two signed 16-bit integers: set VCC if src0 >= vsrc1.\nVCC[lane] = (src0 >= vsrc1)',
-    syntax: 'v_cmp_ge_i16 src0, vsrc1',
-    writesVCC: true,
-  },
+// ── VOPC compares ──
+// Every GFX10 compare is generated from the tables below. Within a family the opcode is the family base
+// plus the condition's truth table (its position in FLOAT_CONDITIONS / INT_CONDITIONS), and the
+// v_cmpx_* form of a compare is its v_cmp_* opcode + 0x10.
+
+/** Float conditions in opcode order; each position is a truth table: bit 0 less, 1 equal, 2 greater, 3 unordered. */
+const FLOAT_CONDITIONS: CompareOp[] = ['f', 'lt', 'eq', 'le', 'gt', 'lg', 'ge', 'o', 'u', 'nge', 'nlg', 'ngt', 'nle', 'neq', 'nlt', 'tru'];
+/** Integer conditions in opcode order, with the same truth-table bits (integers are never unordered). */
+const INT_CONDITIONS: CompareOp[] = ['f', 'lt', 'eq', 'le', 'gt', 'ne', 'ge', 't'];
+
+const COMPARE_TRUTH = new Map<CompareOp, number>([
+  ...FLOAT_CONDITIONS.map((op, i): [CompareOp, number] => [op, i]),
+  ['ne', 5],
+  ['t', 7],
+]);
+
+/** How two compare operands are ordered: 0 = less, 1 = equal, 2 = greater, 3 = unordered (a NaN). */
+export function compareOrder(a: number, b: number): number {
+  if (Number.isNaN(a) || Number.isNaN(b)) return 3;
+  return a < b ? 0 : a === b ? 1 : 2;
+}
+
+/** Does a compare condition hold for operands in the given order (see compareOrder)? */
+export function compareHolds(op: CompareOp, order: number): boolean {
+  return (((COMPARE_TRUTH.get(op) ?? 0) >> order) & 1) === 1;
+}
+
+/** Exponent and mantissa widths of the floating-point formats. */
+const FLOAT_FIELDS = { f16: [5, 10], f32: [8, 23], f64: [11, 52] } as const;
+
+/**
+ * IEEE class of a float's bit pattern, as its bit in the v_cmp_class mask: 0 signaling NaN, 1 quiet NaN,
+ * 2 -infinity, 3 -normal, 4 -denormal, 5 -0, 6 +0, 7 +denormal, 8 +normal, 9 +infinity.
+ */
+export function floatClass(bits: bigint, format: 'f16' | 'f32' | 'f64'): number {
+  const [expBits, mantBits] = FLOAT_FIELDS[format];
+  const mant = bits & ((1n << BigInt(mantBits)) - 1n);
+  const exp = Number((bits >> BigInt(mantBits)) & BigInt((1 << expBits) - 1));
+  const negative = ((bits >> BigInt(expBits + mantBits)) & 1n) === 1n;
+  if (exp === (1 << expBits) - 1) {
+    if (mant === 0n) return negative ? 2 : 9;
+    return ((mant >> BigInt(mantBits - 1)) & 1n) === 1n ? 1 : 0; // the top mantissa bit marks a quiet NaN
+  }
+  if (exp === 0) return mant === 0n ? (negative ? 5 : 6) : (negative ? 4 : 7);
+  return negative ? 3 : 8;
+}
+
+/** [compare type, its conditions, opcode of truth table 0]: every v_cmp_* family except the class tests. */
+const COMPARE_FAMILIES: Array<[CompareType, CompareOp[], number]> = [
+  ['f32', FLOAT_CONDITIONS, 0x00],
+  ['f64', FLOAT_CONDITIONS, 0x20],
+  ['i32', INT_CONDITIONS, 0x80],
+  ['i16', INT_CONDITIONS.slice(1, 7), 0x88],
+  ['i64', INT_CONDITIONS, 0xA0],
+  ['u16', INT_CONDITIONS.slice(1, 7), 0xA8],
+  ['u32', INT_CONDITIONS, 0xC0],
+  ['f16', FLOAT_CONDITIONS.slice(0, 8), 0xC8],
+  ['f16', FLOAT_CONDITIONS.slice(8), 0xE0],
+  ['u64', INT_CONDITIONS, 0xE0],
 ];
+
+/** v_cmp_class_* opcodes. */
+const CLASS_COMPARES: Array<[CompareType, number]> = [['f32', 0x88], ['f16', 0x8F], ['f64', 0xA8]];
+
+/** Value type of a compare source (32-bit integers are raw bits; the condition reads them signed or unsigned). */
+const COMPARE_SOURCE: Record<CompareType, ValueType> = {
+  f16: 'f16', f32: 'f32', f64: 'f64', i16: 'i16', u16: 'u16', i32: 'b32', u32: 'b32', i64: 'i64', u64: 'u64',
+};
+
+const COMPARE_TYPE_TEXT: Record<CompareType, string> = {
+  f16: '16-bit floats', f32: '32-bit floats', f64: '64-bit floats (register pairs)',
+  i16: 'signed 16-bit integers', u16: 'unsigned 16-bit integers',
+  i32: 'signed 32-bit integers', u32: 'unsigned 32-bit integers',
+  i64: 'signed 64-bit integers (register pairs)', u64: 'unsigned 64-bit integers (register pairs)',
+};
+
+/** When each condition holds, in words, and as a formula ('' = never or always). */
+const CONDITION_TEXT: Record<Exclude<CompareOp, 'class'>, [string, string]> = {
+  f: ['', '0'],
+  lt: ['src0 < src1', 'src0 < src1'],
+  eq: ['src0 == src1', 'src0 == src1'],
+  le: ['src0 <= src1', 'src0 <= src1'],
+  gt: ['src0 > src1', 'src0 > src1'],
+  lg: ['src0 < src1 or src0 > src1', 'src0 <> src1'],
+  ge: ['src0 >= src1', 'src0 >= src1'],
+  o: ['neither source is NaN', '!isnan(src0) && !isnan(src1)'],
+  u: ['either source is NaN', 'isnan(src0) || isnan(src1)'],
+  nge: ['src0 < src1 or either is NaN', '!(src0 >= src1)'],
+  nlg: ['src0 == src1 or either is NaN', '!(src0 <> src1)'],
+  ngt: ['src0 <= src1 or either is NaN', '!(src0 > src1)'],
+  nle: ['src0 > src1 or either is NaN', '!(src0 <= src1)'],
+  neq: ['src0 != src1 or either is NaN', '!(src0 == src1)'],
+  nlt: ['src0 >= src1 or either is NaN', '!(src0 < src1)'],
+  tru: ['', '1'],
+  ne: ['src0 != src1', 'src0 != src1'],
+  t: ['', '1'],
+};
+
+const CLASS_BITS = 'Class bits of src1: 0 signaling NaN, 1 quiet NaN, 2 -infinity, 3 -normal, 4 -denormal, 5 -0, ' +
+  '6 +0, 7 +denormal, 8 +normal, 9 +infinity.';
+
+function compareDescription(type: CompareType, op: CompareOp, cmpx: boolean): string {
+  const mask = cmpx ? 'EXEC' : 'VCC';
+  const pair = (formula: string, sources: RegExp) => (type.endsWith('64') ? formula.replace(sources, '$1[0:1]') : formula);
+  if (op === 'class') {
+    const what = type === 'f64' ? 'a 64-bit float (register pair)' : `a ${type === 'f16' ? '16' : '32'}-bit float`;
+    const result = cmpx ? 'keep each active lane where src1 has the bit for its class and turn the others off'
+      : `set the ${mask} bit of each active lane where src1 has the bit for its class`;
+    return `Test the class of src0, ${what}, against the mask in src1${cmpx ? ' and write EXEC' : ''}: ${result}.\n` +
+      `${mask}[lane] = (src1 >> class(${pair('src0', /(src0)/)})) & 1\n${CLASS_BITS}`;
+  }
+  const [when, formula] = CONDITION_TEXT[op];
+  const types = COMPARE_TYPE_TEXT[type];
+  let first: string;
+  if (!when) {
+    const always = formula === '1';
+    first = cmpx
+      ? `Always-${always ? 'true' : 'false'} compare of ${types} that writes EXEC: ${always ? 'every active lane stays on' : 'turns every lane off'}.`
+      : `Always-${always ? 'true' : 'false'} compare of ${types}: ${always ? 'sets the VCC bit of every active lane' : 'clears every VCC bit'}.`;
+  } else {
+    const nan = type.startsWith('f') && ['lt', 'eq', 'le', 'gt', 'lg', 'ge'].includes(op) ? ' (false if either is NaN)' : '';
+    first = cmpx
+      ? `Compare two ${types} and write EXEC: keep each active lane where ${when}${nan} and turn the others off.`
+      : `Compare two ${types}: set the VCC bit of each active lane where ${when}${nan}.`;
+  }
+  return `${first}\n${mask}[lane] = ${pair(formula, /(src[01])/g)}`;
+}
+
+/** Semantics for 16- and 32-bit sources: typed values, or for the class tests src0's raw bits and the mask. */
+function compareExecute(type: CompareType, op: CompareOp): SemanticFn {
+  if (op === 'class') {
+    const format = type as 'f16' | 'f32' | 'f64';
+    return (a, b) => ((b ?? 0) >>> floatClass(BigInt(a >>> 0), format)) & 1;
+  }
+  const norm = type === 'i32' ? (v: number) => v | 0 : type === 'u32' ? (v: number) => v >>> 0 : (v: number) => v;
+  return (a, b) => (compareHolds(op, compareOrder(norm(a), norm(b ?? 0))) ? 1 : 0);
+}
+
+function compareEntry(type: CompareType, op: CompareOp, opcode: number, cmpx: boolean): OpcodeInfo {
+  const mnemonic = `v_cmp${cmpx ? 'x' : ''}_${op}_${type}`;
+  const src = COMPARE_SOURCE[type];
+  const wide = type.endsWith('64');
+  return {
+    mnemonic,
+    format: InstructionFormat.VOPC,
+    opcode,
+    operandCount: 2,
+    execute: compareExecute(type, op),
+    description: compareDescription(type, op, cmpx),
+    syntax: `${mnemonic} src0${wide ? '[0:1]' : ''}, vsrc1${wide && op !== 'class' ? '[0:1]' : ''}`,
+    types: { d: 'b32', s: [src, op === 'class' ? 'b32' : src] },
+    compare: { type, op },
+    ...(cmpx ? {} : { writesVCC: true }),
+  };
+}
+
+const VOPC_OPCODES: OpcodeInfo[] = [];
+for (const [type, ops, base] of COMPARE_FAMILIES) {
+  for (const op of ops) {
+    const opcode = base + (COMPARE_TRUTH.get(op) ?? 0);
+    VOPC_OPCODES.push(compareEntry(type, op, opcode, false), compareEntry(type, op, opcode + 0x10, true));
+  }
+}
+for (const [type, opcode] of CLASS_COMPARES) {
+  VOPC_OPCODES.push(compareEntry(type, 'class', opcode, false), compareEntry(type, 'class', opcode + 0x10, true));
+}
+VOPC_OPCODES.sort((a, b) => a.opcode - b.opcode);
 
 // ── SOP1 Instructions (scalar, 1-source) ──
 // Semantics follow the GFX10 ISA. SCC is written only by instructions that the ISA says write it.

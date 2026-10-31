@@ -1,7 +1,7 @@
 // ── Top-Level Assembler ──
 
 import { AssemblyError, AssemblyResult, ParsedInstruction } from '../isa/types';
-import { encodeInstruction, EncodingError } from '../isa/encoding';
+import { encodeInstruction, encodingWarnings, EncodingError } from '../isa/encoding';
 import { lookupByMnemonic } from '../isa/opcodes';
 import { tokenize } from './lexer';
 import { parse } from './parser';
@@ -34,6 +34,11 @@ function checkWarnings(instructions: ParsedInstruction[]): AssemblyError[] {
 export function assemble(source: string): AssemblyResult {
   const { instructions, errors, labels } = parse(tokenize(source));
   const warnings = checkWarnings(instructions);
+  for (const instr of instructions) {
+    for (const w of encodingWarnings(instr)) {
+      warnings.push({ message: w.message, line: instr.line, column: instr.spans?.[w.slot]?.start ?? instr.column });
+    }
+  }
   if (errors.length > 0) {
     return { binary: new Uint32Array(0), errors, warnings, instructions };
   }
