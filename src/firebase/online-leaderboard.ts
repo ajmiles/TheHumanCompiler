@@ -3,8 +3,9 @@
 // Falls back gracefully to local-only when Firebase is not configured.
 
 import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getAuth, signInAnonymously, Auth } from 'firebase/auth';
+import { connectAuthEmulator, getAuth, signInAnonymously, Auth } from 'firebase/auth';
 import {
+  connectFirestoreEmulator,
   getFirestore,
   collection,
   addDoc,
@@ -16,7 +17,7 @@ import {
   deleteDoc,
   Firestore,
 } from 'firebase/firestore';
-import { firebaseConfig, FIREBASE_ENABLED } from './config';
+import { firebaseConfig, FIREBASE_ENABLED, FIREBASE_EMULATORS } from './config';
 import { LeaderboardEntry, LeaderboardEntryWithOwner, LeaderboardCategory } from '../puzzle/leaderboard';
 
 let app: FirebaseApp | null = null;
@@ -29,9 +30,15 @@ async function ensureInit(): Promise<boolean> {
   if (initialized) return db !== null;
 
   try {
-    app = initializeApp(firebaseConfig);
+    const emulators = FIREBASE_EMULATORS;
+    app = initializeApp(emulators ? { ...firebaseConfig, projectId: emulators.projectId } : firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
+    if (emulators) {
+      console.info('Online leaderboards use the local Firebase emulators (npm run emulators); VITE_FIREBASE_PROD=1 uses the live ones');
+      connectAuthEmulator(auth, `http://${emulators.host}:${emulators.authPort}`, { disableWarnings: true });
+      connectFirestoreEmulator(db, emulators.host, emulators.firestorePort);
+    }
     await signInAnonymously(auth);
     initialized = true;
     return true;

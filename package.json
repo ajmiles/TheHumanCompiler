@@ -9,6 +9,7 @@
     "test": "tsx tests/test_all.ts",
     "test:verifier": "tsx tests/verifier_quickjs.ts",
     "hw-job": "tsx scripts/hw-job.ts",
+    "emulators": "npx --yes firebase-tools@15 emulators:start --only auth,firestore --project demo-human-compiler",
     "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks',{stdio:'ignore'})}catch(e){}\""
   },
   "keywords": [],
