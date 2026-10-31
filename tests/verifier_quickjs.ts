@@ -72,8 +72,8 @@ check(evaluate(`JSON.stringify(HumanCompilerVerifier.verifySandbox(${JSON.string
 const job = verify(smoothClamp, 'smooth-clamp').job!;
 const runs = (outputs: number[][]): HwJobRuns => ({
   invocations: outputs.map(o => ({
-    solution: { durations: [135, 131, 133], outputWords: o, outputsStable: true },
-    baseline: { durations: [101, 100], outputWords: [], outputsStable: true },
+    solution: { durations: [133, 131, 133, 133, 160], outputWords: o, outputsStable: true },
+    baseline: { durations: [100, 100, 104], outputWords: [], outputsStable: true },
   })),
 });
 for (const outputs of [job.invocations.map(i => i.emulatorOutputs), job.invocations.map(i => i.emulatorOutputs.map(() => 0))]) {

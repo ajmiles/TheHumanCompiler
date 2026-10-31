@@ -3455,7 +3455,7 @@ const SOPP_OPCODES: OpcodeInfo[] = [
     opcode: 0x0C,
     operandCount: 0,
     execute: () => 0,
-    description: 'Wait for outstanding memory operations to complete.',
+    description: 'Wait for outstanding memory operations to complete. LDS (ds_*) instructions count towards lgkmcnt: s_waitcnt lgkmcnt(N) waits until at most N are still on their way. Until then, don\'t read or overwrite their destination VGPRs.',
     syntax: 's_waitcnt simm16',
   },
   {
@@ -3742,11 +3742,11 @@ const MIMG_OPCODES: OpcodeInfo[] = [
 const DS_OPCODES: OpcodeInfo[] = [
   { mnemonic: 'ds_write_b32', format: InstructionFormat.DS, opcode: 0x0D, operandCount: 2, execute: (a) => a, description: 'Write 32 bits to LDS.\nLDS[vaddr + offset] = vdata', syntax: 'ds_write_b32 vaddr, vdata offset:0' },
   { mnemonic: 'ds_write2st64_b32', format: InstructionFormat.DS, opcode: 0x0F, operandCount: 3, execute: (a) => a, description: 'Write two 32-bit values to LDS with a stride of 64 dwords.\nLDS[vaddr + offset0×256] = vdata0; LDS[vaddr + offset1×256] = vdata1', syntax: 'ds_write2st64_b32 vaddr, vdata0, vdata1 offset0:0 offset1:1' },
-  { mnemonic: 'ds_swizzle_b32', format: InstructionFormat.DS, opcode: 0x35, operandCount: 2, execute: (a) => a, description: 'Swizzle data across lanes without touching LDS memory. Reading from an inactive lane returns 0.\noffset[15]=1 (below 0xC000): quad permute; offset[15]=0: and/or/xor lane masks; ≥0xC000: rotate; ≥0xE000: FFT.', syntax: 'ds_swizzle_b32 vdst, vsrc offset:0' },
-  { mnemonic: 'ds_read_b32', format: InstructionFormat.DS, opcode: 0x36, operandCount: 2, execute: (a) => a, description: 'Read 32 bits from LDS.\nvdst = LDS[vaddr + offset]', syntax: 'ds_read_b32 vdst, vaddr offset:0' },
-  { mnemonic: 'ds_read2st64_b32', format: InstructionFormat.DS, opcode: 0x38, operandCount: 2, execute: (a) => a, description: 'Read two 32-bit values from LDS with a stride of 64 dwords.\nvdst[0] = LDS[vaddr + offset0×256]; vdst[1] = LDS[vaddr + offset1×256]', syntax: 'ds_read2st64_b32 v[vdst:vdst+1], vaddr offset0:0 offset1:1' },
-  { mnemonic: 'ds_permute_b32', format: InstructionFormat.DS, opcode: 0xB2, operandCount: 3, execute: (a) => a, description: 'Forward lane permute (no LDS access). Each active lane sends vdata to lane ((vaddr + offset) / 4) % 32; lanes that receive nothing get 0.\nvdst[(vaddr + offset) / 4] = vdata', syntax: 'ds_permute_b32 vdst, vaddr, vdata offset:0' },
-  { mnemonic: 'ds_bpermute_b32', format: InstructionFormat.DS, opcode: 0xB3, operandCount: 3, execute: (a) => a, description: 'Backward lane permute (no LDS access). Each lane reads vdata from lane ((vaddr + offset) / 4) % 32; reading an inactive lane returns 0.\nvdst = vdata[(vaddr + offset) / 4]', syntax: 'ds_bpermute_b32 vdst, vaddr, vdata offset:0' },
+  { mnemonic: 'ds_swizzle_b32', format: InstructionFormat.DS, opcode: 0x35, operandCount: 2, execute: (a) => a, description: 'Swizzle data across lanes without touching LDS memory. Reading from an inactive lane returns 0.\noffset[15]=1 (below 0xC000): quad permute; offset[15]=0: and/or/xor lane masks; ≥0xC000: rotate; ≥0xE000: FFT.\nThe result arrives later: s_waitcnt lgkmcnt(0) before using vdst.', syntax: 'ds_swizzle_b32 vdst, vsrc offset:0' },
+  { mnemonic: 'ds_read_b32', format: InstructionFormat.DS, opcode: 0x36, operandCount: 2, execute: (a) => a, description: 'Read 32 bits from LDS.\nvdst = LDS[vaddr + offset]\nThe result arrives later: s_waitcnt lgkmcnt(0) before using vdst.', syntax: 'ds_read_b32 vdst, vaddr offset:0' },
+  { mnemonic: 'ds_read2st64_b32', format: InstructionFormat.DS, opcode: 0x38, operandCount: 2, execute: (a) => a, description: 'Read two 32-bit values from LDS with a stride of 64 dwords.\nvdst[0] = LDS[vaddr + offset0×256]; vdst[1] = LDS[vaddr + offset1×256]\nThe result arrives later: s_waitcnt lgkmcnt(0) before using vdst.', syntax: 'ds_read2st64_b32 v[vdst:vdst+1], vaddr offset0:0 offset1:1' },
+  { mnemonic: 'ds_permute_b32', format: InstructionFormat.DS, opcode: 0xB2, operandCount: 3, execute: (a) => a, description: 'Forward lane permute (no LDS access). Each active lane sends vdata to lane ((vaddr + offset) / 4) % 32; lanes that receive nothing get 0.\nvdst[(vaddr + offset) / 4] = vdata\nThe result arrives later: s_waitcnt lgkmcnt(0) before using vdst.', syntax: 'ds_permute_b32 vdst, vaddr, vdata offset:0' },
+  { mnemonic: 'ds_bpermute_b32', format: InstructionFormat.DS, opcode: 0xB3, operandCount: 3, execute: (a) => a, description: 'Backward lane permute (no LDS access). Each lane reads vdata from lane ((vaddr + offset) / 4) % 32; reading an inactive lane returns 0.\nvdst = vdata[(vaddr + offset) / 4]\nThe result arrives later: s_waitcnt lgkmcnt(0) before using vdst.', syntax: 'ds_bpermute_b32 vdst, vaddr, vdata offset:0' },
 ];
 
 // ── Lookup Tables ──

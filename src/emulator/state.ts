@@ -11,6 +11,16 @@ const _u32 = new Uint32Array(_f32.buffer);
 /** Local data share size per workgroup, in bytes. */
 export const LDS_SIZE_BYTES = 64 * 1024;
 
+/**
+ * A DS instruction whose result has not arrived yet. LDS operations finish in order, and the program waits for them
+ * with s_waitcnt lgkmcnt(N), which leaves at most N outstanding.
+ */
+export interface PendingLds {
+  mnemonic: string;
+  /** The VGPRs it writes when its data arrives (none for stores). */
+  vgprs: number[];
+}
+
 export interface GPUStateSnapshot {
   vgprs: Uint32Array[];
   sgprs: Uint32Array;
@@ -18,6 +28,7 @@ export interface GPUStateSnapshot {
   scc: number;
   pc: number;
   cycleCount: number;
+  pendingLds: PendingLds[];
 }
 
 export class GPUState {
@@ -34,6 +45,10 @@ export class GPUState {
   modifiedRegs: Set<string>;
   /** Highest VGPR index reached through M0-relative addressing (v_movrel*); -1 if none. */
   maxIndirectVgpr: number;
+  /** DS instructions issued but not yet waited for, oldest first. */
+  pendingLds: PendingLds[];
+  /** While the executor runs an instruction: told of every VGPR it reads or writes (null otherwise). */
+  vgprAccess: ((reg: number, write: boolean) => void) | null;
 
   constructor() {
     this.vgprs = [];
@@ -44,6 +59,8 @@ export class GPUState {
     this.cycleCount = 0;
     this.modifiedRegs = new Set();
     this.maxIndirectVgpr = -1;
+    this.pendingLds = [];
+    this.vgprAccess = null;
 
     for (let i = 0; i < NUM_VGPRS; i++) {
       this.vgprs.push(new Uint32Array(WAVE_WIDTH));
@@ -68,6 +85,8 @@ export class GPUState {
     this.pc = 0;
     this.cycleCount = 0;
     this.maxIndirectVgpr = -1;
+    this.pendingLds = [];
+    this.vgprAccess = null;
     this.modifiedRegs.clear();
   }
 
@@ -79,6 +98,7 @@ export class GPUState {
       scc: this.scc,
       pc: this.pc,
       cycleCount: this.cycleCount,
+      pendingLds: this.pendingLds.map(p => ({ mnemonic: p.mnemonic, vgprs: [...p.vgprs] })),
     };
   }
 
@@ -91,28 +111,33 @@ export class GPUState {
     this.scc = snap.scc;
     this.pc = snap.pc;
     this.cycleCount = snap.cycleCount;
+    this.pendingLds = snap.pendingLds.map(p => ({ mnemonic: p.mnemonic, vgprs: [...p.vgprs] }));
     this.modifiedRegs.clear();
   }
 
   /** Read raw 32-bit value from VGPR */
   readVGPR_u32(reg: number, lane: number): number {
+    if (this.vgprAccess) this.vgprAccess(reg & 0xFF, false);
     return this.vgprs[reg & 0xFF][lane];
   }
 
   /** Read VGPR as float (bitcast from u32) */
   readVGPR(reg: number, lane: number): number {
+    if (this.vgprAccess) this.vgprAccess(reg & 0xFF, false);
     _u32[0] = this.vgprs[reg & 0xFF][lane];
     return _f32[0];
   }
 
   /** Write raw 32-bit value to VGPR */
   writeVGPR_u32(reg: number, lane: number, value: number): void {
+    if (this.vgprAccess) this.vgprAccess(reg & 0xFF, true);
     this.vgprs[reg & 0xFF][lane] = value >>> 0;
     this.modifiedRegs.add(`v${reg & 0xFF}`);
   }
 
   /** Write float to VGPR (bitcast to u32 for storage) */
   writeVGPR(reg: number, lane: number, value: number): void {
+    if (this.vgprAccess) this.vgprAccess(reg & 0xFF, true);
     _f32[0] = value;
     this.vgprs[reg & 0xFF][lane] = _u32[0];
     this.modifiedRegs.add(`v${reg & 0xFF}`);

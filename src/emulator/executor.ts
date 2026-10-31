@@ -256,6 +256,11 @@ function sdwaSelect(raw: number, sel: number, sext: boolean): number {
   return sext ? ((field << (32 - width)) >> (32 - width)) >>> 0 : field;
 }
 
+/** Whether an SDWA write keeps part of the old destination (and so reads it, as hardware does). */
+function sdwaKeepsOld(d: DecodedInstruction): boolean {
+  return (d.sdwaDstSel ?? 6) < 6 && (d.sdwaDstUnused ?? 0) === 2;
+}
+
 function sdwaWrite(old: number, result: number, dstSel: number, dstUnused: number): number {
   if (dstSel >= 6) return result >>> 0;
   const width = dstSel <= 3 ? 8 : 16;
@@ -347,7 +352,7 @@ function movrel(state: GPUState, d: DecodedInstruction, info: OpcodeInfo, kind: 
     if (l0 === LANE_DISABLED) continue;
     let v = l0 === READ_ZERO ? 0 : srcIsVgpr ? state.readVGPR_u32(src, l0) : readScalar32(state, d.src0Encoded, d.literal);
     if (isSdwa) {
-      v = sdwaWrite(state.readVGPR_u32(dst, lane), sdwaSelect(v, d.sdwaSrc0Sel ?? 6, !!d.sdwaSrc0Sext),
+      v = sdwaWrite(sdwaKeepsOld(d) ? state.readVGPR_u32(dst, lane) : 0, sdwaSelect(v, d.sdwaSrc0Sel ?? 6, !!d.sdwaSrc0Sext),
         d.sdwaDstSel ?? 6, d.sdwaDstUnused ?? 0);
     }
     writes.push([lane, v]);
@@ -723,10 +728,10 @@ function executeVALU(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): 
     if (isFloatType(types.d)) result = outputModifiers(result, d);
     let bits = toBits(result, types.d);
     if (d.clamp && PACKED_F16_RESULT.has(m)) bits = clampPackedF16(bits);
-    const old = state.readVGPR_u32(d.dst, lane);
+    // Only partial writes read the old value: reading it otherwise would make an overwrite look like a read
     let value: number;
-    if (isSdwa) value = sdwaWrite(old, bits, d.sdwaDstSel ?? 6, d.sdwaDstUnused ?? 0);
-    else if (is16BitType(types.d)) value = writeHalf(old, bits, (opSel & 8) !== 0);
+    if (isSdwa) value = sdwaWrite(sdwaKeepsOld(d) ? state.readVGPR_u32(d.dst, lane) : 0, bits, d.sdwaDstSel ?? 6, d.sdwaDstUnused ?? 0);
+    else if (is16BitType(types.d)) value = writeHalf(state.readVGPR_u32(d.dst, lane), bits, (opSel & 8) !== 0);
     else value = bits;
     writes.push([lane, value]);
   }
@@ -1058,27 +1063,76 @@ export function executeInstruction(state: GPUState, instr: ResolvedInstruction, 
   if (info.format === InstructionFormat.UNKNOWN) {
     fault(`Unknown instruction ${info.mnemonic} at byte address 0x${(d.address * 4).toString(16)}`);
   }
-  switch (d.format) {
-    case InstructionFormat.SOPP:
-      return executeSOPP(state, d, info);
-    case InstructionFormat.SOP1:
-    case InstructionFormat.SOP2:
-    case InstructionFormat.SOPC:
-    case InstructionFormat.SOPK:
-      return executeSALU(state, d, info, ctx);
-    case InstructionFormat.VOP1:
-    case InstructionFormat.VOP2:
-    case InstructionFormat.VOPC:
-    case InstructionFormat.VOP3:
-      executeVALU(state, d, info);
-      return undefined;
-    case InstructionFormat.VOP3P:
-      executeVOP3P(state, d, info);
-      return undefined;
-    case InstructionFormat.DS:
-      executeDS(state, d, info);
-      return undefined;
-    default:
-      return fault(`${info.mnemonic}: ${d.format} instructions are not supported by the emulator`);
+  if (state.pendingLds.length > 0) {
+    if (info.mnemonic === 's_waitcnt') retireLds(state, d.simm16 ?? 0);
+    else if (info.mnemonic === 's_endpgm') state.pendingLds = []; // the outputs are read once everything has arrived
+    else state.vgprAccess = ldsHazard(state, d.format === InstructionFormat.DS);
   }
+  try {
+    switch (d.format) {
+      case InstructionFormat.SOPP:
+        return executeSOPP(state, d, info);
+      case InstructionFormat.SOP1:
+      case InstructionFormat.SOP2:
+      case InstructionFormat.SOPC:
+      case InstructionFormat.SOPK:
+        return executeSALU(state, d, info, ctx);
+      case InstructionFormat.VOP1:
+      case InstructionFormat.VOP2:
+      case InstructionFormat.VOPC:
+      case InstructionFormat.VOP3:
+        executeVALU(state, d, info);
+        return undefined;
+      case InstructionFormat.VOP3P:
+        executeVOP3P(state, d, info);
+        return undefined;
+      case InstructionFormat.DS:
+        executeDS(state, d, info);
+        state.pendingLds.push({ mnemonic: info.mnemonic, vgprs: dsDestinations(info.mnemonic, d.dst) });
+        return undefined;
+      default:
+        return fault(`${info.mnemonic}: ${d.format} instructions are not supported by the emulator`);
+    }
+  } finally {
+    state.vgprAccess = null;
+  }
+}
+
+// ── LDS results arrive later ──
+// On a GPU a DS instruction only starts its work: its result lands in its destination VGPRs some cycles later, and the
+// program must wait for it with s_waitcnt lgkmcnt. The emulator writes results at once, so it stops a program that
+// reads (or overwrites) such a VGPR before waiting, which on hardware would see the old value (or lose its own).
+
+/** The VGPRs a DS instruction writes when its data arrives. */
+function dsDestinations(mnemonic: string, dst: number): number[] {
+  switch (mnemonic) {
+    case 'ds_read_b32':
+    case 'ds_swizzle_b32':
+    case 'ds_permute_b32':
+    case 'ds_bpermute_b32':
+      return [dst & 0xFF];
+    case 'ds_read2st64_b32':
+      return [dst & 0xFF, (dst + 1) & 0xFF];
+    default:
+      return []; // stores
+  }
+}
+
+/** s_waitcnt lgkmcnt(N): LDS operations finish in order, so all but the newest N have. */
+function retireLds(state: GPUState, simm16: number): void {
+  const lgkmcnt = (simm16 >>> 8) & 0x3F;
+  while (state.pendingLds.length > lgkmcnt) state.pendingLds.shift();
+}
+
+/** Faults on a VGPR whose LDS result hasn't been waited for. Another DS instruction may write one (results land in order). */
+function ldsHazard(state: GPUState, isDs: boolean): (reg: number, write: boolean) => void {
+  const writer = new Map<number, string>();
+  for (const p of state.pendingLds) for (const reg of p.vgprs) writer.set(reg, p.mnemonic);
+  return (reg, write) => {
+    const mnemonic = writer.get(reg);
+    if (mnemonic === undefined || (write && isDs)) return;
+    fault(write
+      ? `v${reg} is written before the ${mnemonic} that also writes it has finished: its result would arrive later and overwrite this one. Wait for it first with s_waitcnt lgkmcnt(0)`
+      : `v${reg} is read before the ${mnemonic} that writes it has finished: LDS results arrive later, so wait for them first with s_waitcnt lgkmcnt(0)`);
+  };
 }

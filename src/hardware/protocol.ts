@@ -68,7 +68,11 @@ export interface HwJob {
   puzzleId: string;
   puzzleHash: string;
   codeHash: string;
-  /** How many times to run each program; the score uses the fastest run. */
+  /**
+   * How many times to time each program. Each timed run must follow an untimed run of the same program with nothing
+   * but a UAV barrier between them, so its instruction cache is warm (resource transitions invalidate it).
+   * The score uses the most common duration.
+   */
   runs: number;
   /** Bytes each run writes at the result address. */
   resultBytes: number;
@@ -93,7 +97,8 @@ export interface HwJobRuns {
 /**
  * measured: the outputs pass the puzzle and `cycles` is the time.
  * failed: the outputs are wrong, or the runs don't fit the job.
- * unstable: runs disagree (different outputs, or faster than the empty program): measure again.
+ * unstable: runs disagree (different outputs, no duration in half the runs, or faster than the empty program):
+ * measure again.
  */
 export type HwStatus = 'measured' | 'failed' | 'unstable';
 
@@ -101,7 +106,7 @@ export type HwStatus = 'measured' | 'failed' | 'unstable';
 export interface HwScore {
   status: HwStatus;
   harness: number;
-  /** Core clocks over all invocations: for each, its fastest run minus the fastest run of its baseline. */
+  /** Core clocks over all invocations: for each, its solution's most common duration less its baseline's. */
   cycles?: number;
   perInvocation?: number[];
   /** Output lanes whose bits differ from the emulator's though the puzzle passes (an approximate v_rcp_f32, say). */

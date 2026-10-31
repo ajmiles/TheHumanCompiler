@@ -290,7 +290,7 @@ const FORMATS: FormatSpec[] = [
         { name: 'ADDR', bits: 8, color: '#bc8cff', description: 'Per-lane byte address VGPR (ds_swizzle_b32: the source data)' },
       ],
     ],
-    description: 'Local Data Share instructions read and write fast on-chip memory shared by the work-group, and include lane-permute instructions (ds_swizzle_b32, ds_permute_b32, ds_bpermute_b32) that never touch memory.',
+    description: 'Local Data Share instructions read and write fast on-chip memory shared by the work-group, and include lane-permute instructions (ds_swizzle_b32, ds_permute_b32, ds_bpermute_b32) that never touch memory. Their results arrive some cycles later: wait with s_waitcnt lgkmcnt(0) before using a destination VGPR.',
     operandRules: [
       'Address = ADDR (per lane) + OFFSET, in bytes',
       'ds_swizzle_b32 uses OFFSET as a lane pattern (and/or/xor masks, quad permute, rotate, FFT)',

@@ -117,10 +117,27 @@ const floatOf = (bits: number) => {
   return f32[0];
 };
 
-const fastest = (durations: number[]) => durations.reduce((a, b) => Math.min(a, b), Infinity);
+/**
+ * The duration most runs took (the shorter, for a tie), and the share of runs that took it. On a devkit about 99% of
+ * runs agree exactly; a few come in a couple of cycles short or much longer, so neither the fastest run nor an
+ * average is the cost.
+ */
+function settled(durations: number[]): { duration: number; share: number } {
+  const counts = new Map<number, number>();
+  for (const d of durations) counts.set(d, (counts.get(d) ?? 0) + 1);
+  let duration = Infinity;
+  let count = 0;
+  for (const [d, c] of counts) {
+    if (c > count || (c === count && d < duration)) {
+      duration = d;
+      count = c;
+    }
+  }
+  return { duration, share: count / durations.length };
+}
 
 /**
- * Score a job's runs: each invocation costs its solution's fastest run less its baseline's fastest run, and the
+ * Score a job's runs: each invocation costs its solution's most common duration less its baseline's, and the
  * outputs must pass the puzzle, as the emulator's did.
  */
 export function score(job: HwJob, runs: HwJobRuns): HwScore {
@@ -140,6 +157,8 @@ export function score(job: HwJob, runs: HwJobRuns): HwScore {
   const collected = new Map<number, number[]>(outputs.map(o => [o.register, []]));
   const perInvocation: number[] = [];
   let emulatorMismatches = 0;
+  // Wrong outputs fail even if the timings are unstable too: measuring again won't fix them
+  let unstableTiming: string | undefined;
   for (const [inv, { solution, baseline }] of runs.invocations.entries()) {
     for (const [name, r] of [['solution', solution], ['baseline', baseline]] as const) {
       if (r.durations.length === 0) return verdict('failed', `The ${name} of invocation ${inv + 1} never ran`);
@@ -156,15 +175,18 @@ export function score(job: HwJob, runs: HwJobRuns): HwScore {
         if (word !== emulated[k * WAVE_WIDTH + lane] >>> 0) emulatorMismatches++;
       }
     });
-    const cycles = fastest(solution.durations) - fastest(baseline.durations);
-    if (cycles < 0) return verdict('unstable', `Invocation ${inv + 1} ran faster than the empty program`);
-    perInvocation.push(cycles);
+    const s = settled(solution.durations);
+    const b = settled(baseline.durations);
+    if (s.share < 0.5 || b.share < 0.5) unstableTiming ??= `The timings of invocation ${inv + 1} didn't settle: no duration came up in half the runs`;
+    else if (s.duration < b.duration) unstableTiming ??= `Invocation ${inv + 1} ran faster than the empty program`;
+    perInvocation.push(s.duration - b.duration);
   }
 
   if (puzzle) {
     const check = validatePuzzle(puzzle, collected);
     if (!check.pass) return verdict('failed', `Wrong output on the devkit: ${check.totalCorrect} of ${check.totalExpected} values are right`);
   }
+  if (unstableTiming) return verdict('unstable', unstableTiming);
   return {
     status: 'measured',
     harness: job.harness,

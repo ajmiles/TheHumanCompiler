@@ -201,7 +201,7 @@ const INTRA_WAVE: Tutorial = {
     {
       title: 'ds_swizzle_b32 — Lane Permutation',
       text:
-        '<code>ds_swizzle_b32</code> permutes data between lanes <strong>without touching LDS memory</strong>, despite the "ds" prefix. It\'s a pure register-to-register lane shuffle.\n\n' +
+        '<code>ds_swizzle_b32</code> permutes data between lanes <strong>without touching LDS memory</strong>, despite the "ds" prefix. It still goes through the LDS hardware, though, so like every <code>ds_</code> instruction its result arrives <strong>some cycles later</strong>: wait for it with <code>s_waitcnt lgkmcnt(0)</code> before using the destination register. Read it too early on a real GPU and you get its old value; here, the program stops with an error.\n\n' +
         'The permutation is controlled by a 16-bit <em>offset</em> word. When bit 15 is clear, it uses <strong>bitwise mode</strong> for full 32-thread data sharing:\n\n' +
         '<code style="font-family:monospace;letter-spacing:1px">┌──────────┬──────────┬──────────┬───┐\n' +
         '│  bit 15  │ [14:10]  │  [9:5]   │[4:0]│\n' +
@@ -211,8 +211,9 @@ const INTRA_WAVE: Tutorial = {
         'When bit 15 is set (and the offset is below <code>0xC000</code>), it uses <strong>QDM (Quad Distribute Mode)</strong>: <code>offset[7:0]</code> holds four 2-bit selectors, one per lane position, and every group of 4 lanes uses them to pick its source lanes within the quad.\n\n' +
         'Try this example. First, even lanes get 0.0 and odd lanes get 1.0. Then:\n' +
         '• <strong>XOR swap</strong> (<code>0x041F</code>): xor=1, and=0x1F → swaps adjacent pairs (0↔1, 2↔3, …) so v1 has the values flipped\n' +
-        '• <strong>OR broadcast odd</strong> (<code>0x003E</code>): or=1, and=0x1E → every lane reads its odd neighbour, so v2 is all 1.0',
-      code: '; Setup: even lanes=0.0, odd lanes=1.0\nv_mov_b32 v0, 0.0\ns_mov_b32 exec_lo, 0xAAAAAAAA\nv_mov_b32 v0, 1.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; XOR swap: xor=1, or=0, and=0x1F → 0x041F\n; Lane 0 reads lane 1, lane 1 reads lane 0, etc.\n; v1: odd lanes get 0.0, even lanes get 1.0 (swapped!)\nds_swizzle_b32 v1, v0 offset:0x041F\n;\n; OR broadcast odd: xor=0, or=1, and=0x1E → 0x003E\n; src = (lane & 0x1E) | 1 → every lane reads its odd neighbour\n; v2: all lanes get 1.0 (the odd lane value)\nds_swizzle_b32 v2, v0 offset:0x003E\ns_endpgm',
+        '• <strong>OR broadcast odd</strong> (<code>0x003E</code>): or=1, and=0x1E → every lane reads its odd neighbour, so v2 is all 1.0\n' +
+        '• <code>s_waitcnt lgkmcnt(0)</code> waits for both results; then v3 adds them',
+      code: '; Setup: even lanes=0.0, odd lanes=1.0\nv_mov_b32 v0, 0.0\ns_mov_b32 exec_lo, 0xAAAAAAAA\nv_mov_b32 v0, 1.0\ns_mov_b32 exec_lo, 0xFFFFFFFF\n;\n; XOR swap: xor=1, or=0, and=0x1F → 0x041F\n; Lane 0 reads lane 1, lane 1 reads lane 0, etc.\n; v1: odd lanes get 0.0, even lanes get 1.0 (swapped!)\nds_swizzle_b32 v1, v0 offset:0x041F\n;\n; OR broadcast odd: xor=0, or=1, and=0x1E → 0x003E\n; src = (lane & 0x1E) | 1 → every lane reads its odd neighbour\n; v2: all lanes get 1.0 (the odd lane value)\nds_swizzle_b32 v2, v0 offset:0x003E\n;\n; The results arrive later: wait for them before reading v1 or v2\ns_waitcnt lgkmcnt(0)\nv_add_f32 v3, v1, v2\ns_endpgm',
     },
     {
       title: 'DPP — Data Parallel Primitives',
@@ -238,7 +239,7 @@ const INTRA_WAVE: Tutorial = {
         '<code>Step 2:</code> <code>quad_perm:[2,3,0,1]</code> — add the other pair → every lane holds its quad sum\n' +
         '<code>Step 3:</code> <code>row_ror:4</code> — add the previous quad → sums of 8 lanes\n' +
         '<code>Step 4:</code> <code>row_ror:8</code> — add the other half-row → every lane holds its row sum\n' +
-        '<code>Step 5:</code> DPP can\'t cross rows, so fetch the other row\'s sum with <code>ds_swizzle_b32</code> (xor_mask 16: <code>offset:0x401F</code>) or <code>v_permlanex16_b32</code>, and add it\n\n' +
+        '<code>Step 5:</code> DPP can\'t cross rows, so fetch the other row\'s sum with <code>ds_swizzle_b32</code> (xor_mask 16: <code>offset:0x401F</code>, then <code>s_waitcnt lgkmcnt(0)</code> for its result) or <code>v_permlanex16_b32</code>, and add it\n\n' +
         'Because every step is a rotation or permutation, <strong>every lane</strong> ends up with the full sum — no broadcast needed. A <code>row_shr</code> chain also works, but only the last lane of each row receives the complete sum.\n\n' +
         'This log₂(N) reduction pattern is fundamental to GPU parallel programming.',
     },
@@ -248,7 +249,7 @@ const INTRA_WAVE: Tutorial = {
         'Intra-wave communication in summary:\n\n' +
         '• <code>v_readfirstlane_b32</code> copies the first active lane\'s value to a scalar register — the simplest lane→scalar bridge.\n\n' +
         '• <code>v_readlane_b32</code> reads any lane by index — useful for targeted data extraction.\n\n' +
-        '• <code>ds_swizzle_b32</code> permutes data between lanes using a control word — flexible and fast, despite the "ds" name.\n\n' +
+        '• <code>ds_swizzle_b32</code> permutes data between lanes using a control word — flexible and fast, despite the "ds" name. Its result arrives later: <code>s_waitcnt lgkmcnt(0)</code> before using it.\n\n' +
         '• <strong>DPP</strong> modifiers read src0 from another lane of the same 16-lane row — the basis of fast reductions, scans and shuffles. <code>v_permlanex16_b32</code> and <code>ds_swizzle_b32</code> cross rows.\n\n' +
         'These primitives map to HLSL\'s <code>Wave*</code> intrinsics and are essential for high-performance GPU programming.',
     },

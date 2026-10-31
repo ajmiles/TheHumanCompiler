@@ -35,6 +35,11 @@ export function hardwareProblems(instructions: readonly ParsedInstruction[]): st
       problems.push(`${at} changes hardware state that the emulator doesn't model`);
       continue;
     }
+    // Only reachable code has to finish in the emulator, so this can only be dead code there; the devkit can't run it
+    if (info.mnemonic === 's_branch' && ((instr.simm16 ?? 0) & 0xFFFF) === 0xFFFF) {
+      problems.push(`${at} branches to itself, a loop that never ends`);
+      continue;
+    }
     const operands: [OperandRole | null, Operand | undefined][] = [
       ['dst', instr.dst], ['src0', instr.src0], ['src1', instr.src1], ['src2', instr.src2], [null, instr.sdst],
     ];

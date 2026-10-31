@@ -6439,8 +6439,12 @@ group('DPP and SDWA coverage');
     'Quad Average: quad_perm reduction');
   const wave = getPuzzleById('wave-average')!;
   assert(runPuzzle(wave, [...quad, 'v_add_f32 v1, v1, v1 row_ror:4', 'v_add_f32 v1, v1, v1 row_ror:8',
-    'ds_swizzle_b32 v2, v1 offset:0x401F', 'v_add_f32 v1, v1, v2', 'v_mul_f32 v1, 0.03125, v1', 's_endpgm'].join('\n')).pass,
-    'Wave Average: row_ror:4 and row_ror:8, then ds_swizzle across rows');
+    'ds_swizzle_b32 v2, v1 offset:0x401F', 's_waitcnt lgkmcnt(0)', 'v_add_f32 v1, v1, v2', 'v_mul_f32 v1, 0.03125, v1', 's_endpgm'].join('\n')).pass,
+    'Wave Average: row_ror:4 and row_ror:8, then ds_swizzle across rows (waiting for its result)');
+  const noWait = runPuzzle(wave, [...quad, 'v_add_f32 v1, v1, v1 row_ror:4', 'v_add_f32 v1, v1, v1 row_ror:8',
+    'ds_swizzle_b32 v2, v1 offset:0x401F', 'v_add_f32 v1, v1, v2', 'v_mul_f32 v1, 0.03125, v1', 's_endpgm'].join('\n'));
+  assert(!noWait.pass && /v2 is read before the ds_swizzle_b32/.test(noWait.crash?.message ?? ''),
+    'Wave Average without s_waitcnt crashes, as on a devkit it adds a stale v2 and gives each row its own sum');
   assert(runPuzzle(wave, [...quad, 'v_add_f32 v1, v1, v1 row_xmask:4', 'v_add_f32 v1, v1, v1 row_xmask:8',
     'v_permlanex16_b32 v2, v1, 0, 0', 'v_add_f32 v1, v1, v2', 'v_mul_f32 v1, 0.03125, v1', 's_endpgm'].join('\n')).pass,
     'Wave Average: row_xmask:4 and row_xmask:8, then v_permlanex16_b32 across rows');
@@ -7474,6 +7478,48 @@ group('Hardware runs: the shared puzzle runner');
     's_setreg_imm32_b32 faults: on a GPU it changes float modes and traps, which the emulator does not model');
 }
 
+group('LDS results arrive later: s_waitcnt lgkmcnt');
+{
+  // A devkit found this: a solution that read ds_swizzle_b32's result without waiting passed here and failed there
+  const faultOf = (src: string) => run1(src).fault ?? '';
+  const swizzled = 'v_mov_b32 v1, 1.0\nds_swizzle_b32 v2, v1 offset:0x041F';
+  assert(/^v2 is read before the ds_swizzle_b32 that writes it has finished.*s_waitcnt lgkmcnt\(0\)$/.test(faultOf(`${swizzled}\nv_add_f32 v3, v1, v2`)),
+    'reading a ds_swizzle_b32 result before s_waitcnt lgkmcnt faults, and says how to wait');
+  const waited = run1(`${swizzled}\ns_waitcnt lgkmcnt(0)\nv_add_f32 v3, v1, v2`);
+  assert(waited.fault === null && waited.state.readVGPR(3, 0) === 2, '... and after s_waitcnt lgkmcnt(0) it runs');
+  assert(/^v1 is written before the ds_read_b32 that also writes it has finished/.test(faultOf('ds_read_b32 v1, v0\nv_mov_b32 v1, 0')),
+    'overwriting a VGPR whose LDS result is on its way faults: the result would land later');
+  assert(/^v1 is read before the ds_read_b32/.test(faultOf('ds_read_b32 v1, v0\nds_read_b32 v2, v1')),
+    'a DS instruction reads its address as it issues: using a pending result for it faults');
+  assert(faultOf('ds_read_b32 v1, v0\nds_read_b32 v1, v2\ns_waitcnt lgkmcnt(0)\nv_mov_b32 v3, v1') === '',
+    'two DS instructions may write the same VGPR: their results land in order');
+  assert(faultOf('ds_read_b32 v1, v0\nds_read_b32 v2, v0\ns_waitcnt lgkmcnt(1)\nv_mov_b32 v3, v1') === '' &&
+    /^v2 is read/.test(faultOf('ds_read_b32 v1, v0\nds_read_b32 v2, v0\ns_waitcnt lgkmcnt(1)\nv_mov_b32 v3, v2')),
+    's_waitcnt lgkmcnt(1) waits for all but the newest');
+  assert(faultOf('ds_read_b32 v1, v0\nds_write_b32 v0, v5\ns_waitcnt lgkmcnt(1)\nv_mov_b32 v3, v1') === '' &&
+    /^v1 is read/.test(faultOf('ds_write_b32 v0, v5\nds_read_b32 v1, v0\ns_waitcnt lgkmcnt(1)\nv_mov_b32 v3, v1')),
+    'stores count towards lgkmcnt too');
+  assert(/^v9 is read/.test(faultOf('ds_read2st64_b32 v[8:9], v0 offset0:1 offset1:2\ns_waitcnt lgkmcnt(1)\nv_mov_b32 v3, v9')),
+    'ds_read2st64_b32 writes both of its VGPRs');
+  assert(faultOf('ds_read_b32 v1, v0\nv_add_f32 v2, v3, v4\ns_nop 0') === '' &&
+    /^v1 is read/.test(faultOf('ds_read_b32 v1, v0\ns_waitcnt vmcnt(0)\nv_mov_b32 v2, v1')),
+    'other VGPRs are free meanwhile, and waiting on another counter does not help');
+  assert(/^v1 is read/.test(faultOf('ds_read_b32 v1, v0\ns_mov_b32 m0, 1\nv_movrels_b32 v5, v0')),
+    'reading a pending VGPR through M0 faults too');
+  const ended = run1('v_mov_b32 v0, 0\nv_mov_b32 v5, 7\nds_write_b32 v0, v5\nds_read_b32 v1, v0');
+  assert(ended.fault === null && ended.state.readVGPR_u32(1, 0) === 7 && ended.state.pendingLds.length === 0,
+    'a result still on its way at s_endpgm is an output: the outputs are read once everything has arrived');
+  const stepping = setup('ds_read_b32 v1, v0\nv_mov_b32 v2, v1\ns_endpgm');
+  stepping.step();
+  const snap = stepping.state.snapshot();
+  assert(stepping.state.pendingLds.length === 1 && stepping.state.readVGPR_u32(1, 0) === 0,
+    'between instructions (the register display) a pending VGPR reads without a fault');
+  stepping.step();
+  stepping.state.restore(snap);
+  assert(/^v1 is read/.test(stepping.fault ?? '') && stepping.state.pendingLds.length === 1 && stepping.state.pendingLds[0].mnemonic === 'ds_read_b32',
+    'a snapshot keeps the results still on their way');
+}
+
 group('Hardware runs: the harness');
 {
   // s_memtime and the global stores are hand-encoded: these are LLVM's GFX10 encodings
@@ -7588,6 +7634,9 @@ group('Hardware runs: checking a submission');
     problems('s_swappc_b64 s[0:1], s[2:3]').length === 1 && problems('s_mov_b64 s[0:1], ttmp[14:15]').length === 1 &&
     problems('v_add_f32 v0, v1, v2\nds_write_b32 v1, v0\ns_mov_b64 vcc, exec\nv_readlane_b32 s0, v0, 31\ns_waitcnt_vscnt null, 0\ns_endpgm').length === 0,
     'hardwareProblems: program addresses, MODE writes and trap registers; ordinary ALU, LDS and lane instructions are fine');
+  assert(/branches to itself/.test(problems('s_endpgm\nhere: s_branch here').join()) &&
+    problems('loop: s_nop 0\ns_branch loop\ns_endpgm').length === 0 && problems('here: s_cbranch_scc1 here\ns_endpgm').length === 0,
+    'hardwareProblems: an s_branch to itself (as dead code, past s_endpgm); loops with a body and conditional branches are fine');
 }
 
 group('Hardware runs: scoring the devkit runs');
@@ -7600,14 +7649,22 @@ group('Hardware runs: scoring the devkit runs');
       baseline: { durations: baseline, outputWords: [], outputsStable: true },
     })),
   });
-  const measured = score(job, runsFor([131, 125, 128], [101, 100, 104]));
+  // As on a devkit: nearly every run agrees, with the odd one a couple of cycles short and a few much longer
+  const measured = score(job, runsFor([125, 123, 125, 131, 125, 125, 170], [100, 100, 100, 104, 100, 100]));
   assert(measured.status === 'measured' && measured.cycles === 50 && measured.perInvocation?.join() === '25,25' &&
-    measured.emulatorMismatches === undefined && measured.harness === 1, 'score: each invocation\'s fastest run less its baseline\'s fastest, summed');
+    measured.emulatorMismatches === undefined && measured.harness === 1,
+    'score: each invocation\'s most common duration less its baseline\'s (not the fastest), summed');
+  assert(score(job, runsFor([126, 125, 126, 125], [100])).perInvocation?.join() === '25,25', 'score: a tie goes to the shorter duration');
+  assert(score(job, runsFor([125, 126, 127, 140], [100])).status === 'unstable' && score(job, runsFor([125], [100, 101, 102])).status === 'unstable',
+    'score: no duration in half the runs (of either program) is unstable');
   const nudged = emulated.map(o => o.slice());
   nudged[0][5] = (nudged[0][5] + 1) >>> 0;
   const close = score(job, runsFor([130], [100], nudged));
   assert(close.status === 'measured' && close.emulatorMismatches === 1, 'score: an output an ulp off the emulator\'s still passes, and is counted');
-  assert(score(job, runsFor([130], [100], emulated.map(o => o.map(() => 0)))).status === 'failed', 'score: wrong outputs fail');
+  assert(score(job, runsFor([130], [100], emulated.map(o => o.map(() => 0)))).status === 'failed' &&
+    score(job, runsFor([125, 126, 127], [100], emulated.map(o => o.map(() => 0)))).status === 'failed' &&
+    score(job, runsFor([90], [100], emulated.map(o => o.map(() => 0)))).status === 'failed',
+    'score: wrong outputs fail, even when the timings are unstable too (measuring again would not help)');
   assert(score(job, runsFor([130], [100], emulated, false)).status === 'unstable' && score(job, runsFor([90], [100])).status === 'unstable',
     'score: outputs that change between runs, or a run faster than the empty program, are unstable');
   assert(score({ ...job, puzzleHash: '0' }, runsFor([130], [100])).status === 'failed' && score({ ...job, harness: 0 }, runsFor([130], [100])).status === 'failed' &&

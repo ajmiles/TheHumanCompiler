@@ -25,7 +25,10 @@ A devkit is to time submitted solutions on real RDNA2 hardware, for a
 and wraps it in a timing harness ([`harness.ts`](src/hardware/harness.ts)), and
 `score()` turns the devkit's runs into the result
 ([`protocol.ts`](src/hardware/protocol.ts) describes what the runner gets and
-sends back, and what it reads and writes in Firestore). The build bundles them
+sends back, and what it reads and writes in Firestore). The devkit times each
+program many times, each run straight after an untimed run so its instructions
+are already cached, and the score is the most common duration less that of the
+empty harness. The build bundles `verify()` and `score()`
 into `dist/hw/verifier.js`, which the devkit runs in QuickJS. `npm run hw-job`
 makes jobs by hand, including a set of calibration programs (see
 [`scripts/hw-job.ts`](scripts/hw-job.ts)).
@@ -35,8 +38,10 @@ score also uploads the solution's source, privately, to `submissions/{entryId}`,
 and the leaderboards show a Hardware cycles board of the entries it has timed.
 Until then the site shows neither, and uploads nothing. To launch it:
 
-1. In the Firebase console, add an email/password user for the devkit, and put
-   its UID in `isRunner()` in [`firestore.rules`](firestore.rules).
+1. In the Firebase console, enable the Email/Password sign-in provider
+   (Authentication > Sign-in method; it's off now), add an email/password user
+   for the devkit, and put its UID in `isRunner()` in
+   [`firestore.rules`](firestore.rules).
 2. Deploy the rules and indexes (below).
 3. Start the devkit's runner.
 

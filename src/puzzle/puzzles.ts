@@ -474,7 +474,7 @@ const WAVE_AVERAGE: Puzzle = {
     'Start with a quad reduction using quad_perm (like Quad Average).',
     'Then fold the four quads of each 16-lane row together: row_ror:4 and then row_ror:8 (or row_xmask:4 and row_xmask:8) leave the row sum in every lane.',
     'row_shr only shifts one way — lanes at the start of a row have no source — so it can\'t give every lane the full sum.',
-    'DPP never crosses rows on RDNA2. Fetch the other row with ds_swizzle_b32 (xor_mask 16 = offset:0x401F) or v_permlanex16_b32, then add.',
+    'DPP never crosses rows on RDNA2. Fetch the other row with ds_swizzle_b32 (xor_mask 16 = offset:0x401F, then s_waitcnt lgkmcnt(0) before using its result) or v_permlanex16_b32, then add.',
     'Divide by 32 at the end (multiply by 0.03125).',
   ],
   optimalInstructions: 7,
