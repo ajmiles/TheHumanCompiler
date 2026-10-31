@@ -19,7 +19,7 @@ import { globalStore, invocationPrograms, pickScratch, resultBytes, setupSource,
 import { HwJobRuns } from '../src/hardware/protocol';
 import { codeHash, hash64, puzzleHash } from '../src/hardware/hash';
 import { score, verify, verifySandbox } from '../src/hardware/verify';
-import { scoreJson, verifyJson } from '../src/hardware/verifier';
+import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
 import { hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
@@ -7686,6 +7686,8 @@ group('Hardware runs: scoring the devkit runs');
   const viaJson = verifyJson(JSON.stringify({ source: SMOOTH_CLAMP, puzzleId: 'smooth-clamp', runs: 7 }));
   assert(viaJson === JSON.stringify(verify(SMOOTH_CLAMP, 'smooth-clamp', undefined, 7)) && JSON.parse(viaJson).job.runs === 7 &&
     JSON.parse(scoreJson(JSON.stringify({ job, runs: runsFor([130], [100]) }))).cycles === 60, 'verifyJson / scoreJson: the same answers through JSON');
+  assert(puzzleHashOf('smooth-clamp') === job.puzzleHash && puzzleHashOf('no-such-puzzle') === null,
+    'puzzleHashOf: the hash that a submission for the puzzle must have, to not be stale (null for no such puzzle)');
 }
 
 group('Hardware runs: the Hardware cycles board');

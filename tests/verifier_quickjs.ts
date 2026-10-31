@@ -70,6 +70,8 @@ check(evaluate(`JSON.stringify(HumanCompilerVerifier.verifySandbox(${JSON.string
   'verifySandbox: a calibration program');
 
 const job = verify(smoothClamp, 'smooth-clamp').job!;
+check(evaluate(`HumanCompilerVerifier.puzzleHashOf('smooth-clamp') + ',' + HumanCompilerVerifier.puzzleHashOf('no-such-puzzle')`) === `${job.puzzleHash},null`,
+  'puzzleHashOf: the hash a submission must have, to not be stale');
 const runs = (outputs: number[][]): HwJobRuns => ({
   invocations: outputs.map(o => ({
     solution: { durations: [133, 131, 133, 133, 160], outputWords: o, outputsStable: true },

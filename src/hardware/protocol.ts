@@ -10,9 +10,9 @@
 //   1. Keeps runner/status up to date: { heartbeat: server time, queued: submissions waiting, harness: HW_HARNESS,
 //      version: the verifier's }. While it exists, the site shows the Hardware cycles board and sends solutions.
 //   2. Takes the submissions/{entryId} whose status is 'pending', oldest createdAt first, and sets 'running'.
-//   3. Sets 'stale' if the submission's puzzleHash isn't the puzzle's any more. Otherwise it verify()s the source,
-//      with the stats that leaderboards/{puzzleId}/entries/{entryId} claims: if that isn't ok, it sets 'rejected',
-//      with the reason as detail.
+//   3. Sets 'stale' if the submission's puzzleHash isn't the puzzle's any more (puzzleHashOf() in verifier.ts).
+//      Otherwise it verify()s the source, with the stats that leaderboards/{puzzleId}/entries/{entryId} claims: if
+//      that isn't ok, it sets 'rejected', with the reason as detail.
 //   4. Times the job and score()s the runs, recording the status, detail, cycles, claimMismatches and harness ('hung'
 //      if the GPU doesn't finish), and updatedAt: server time.
 //   5. When measured, adds hw: { cycles, perInvocation, emulatorMismatches, harness, measuredAt: server time,

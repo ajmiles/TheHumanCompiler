@@ -4,7 +4,9 @@
 // The JSON functions are for the title, which passes strings in and out.
 
 import './engine-fixes';
+import { getPuzzleById } from '../puzzle/puzzles';
 import { VERSION } from '../version';
+import { puzzleHash } from './hash';
 import { HW_HARNESS, HW_PROTOCOL, HwJob, HwJobRuns } from './protocol';
 import { DEFAULT_RUNS, score, SolutionStats, verify, verifySandbox } from './verify';
 
@@ -20,6 +22,15 @@ export { score, verify, verifySandbox };
 export const version = VERSION;
 export const protocol = HW_PROTOCOL;
 export const harness = HW_HARNESS;
+
+/**
+ * The hash of a puzzle as this verifier has it, or null if it has no such puzzle. A submission whose puzzleHash
+ * differs was solved for another version of the puzzle: it's stale.
+ */
+export function puzzleHashOf(puzzleId: string): string | null {
+  const puzzle = getPuzzleById(puzzleId);
+  return puzzle ? puzzleHash(puzzle) : null;
+}
 
 /** verify() for JSON: {"source", "puzzleId", "claim"?, "runs"?} → VerifyResult. */
 export function verifyJson(request: string): string {
