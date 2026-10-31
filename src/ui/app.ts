@@ -93,11 +93,10 @@ function buildLevelOrder(): LevelItem[] {
 
 const LEVEL_ORDER = buildLevelOrder();
 import { validatePuzzle } from '../puzzle/validator';
-import { WAVE_WIDTH } from '../isa/constants';
-import { AssemblyError, AssemblyResult, Operand, OperandType } from '../isa/types';
+import { collectInvocationOutputs, highestNamedRegister, invocationCount, loadInvocationInputs, vgprsUsed } from '../puzzle/runner';
+import { AssemblyError, AssemblyResult, OperandType } from '../isa/types';
 import { decodeBinary, disassemble } from '../isa/encoding';
-import { lookupByMnemonic, lookupByOpcode } from '../isa/opcodes';
-import { operandRegCount, OperandRole } from '../isa/operands';
+import { lookupByOpcode } from '../isa/opcodes';
 import { VERSION } from '../version';
 import { TutorialPanel } from './tutorial-panel';
 
@@ -471,42 +470,16 @@ export class App {
   }
 
   /** Find the highest VGPR index used by the program (named or reached by v_movrel*) and puzzle I/O. */
+  /** Highest VGPR the program names or reaches through M0, or that holds a puzzle input or output. */
   private computeMaxVGPR(): number {
-    let max = Math.max(this.highestNamedRegister(OperandType.VGPR), this.peakIndirectVgpr);
-
-    // From puzzle I/O ports
-    if (this.currentPuzzle) {
-      for (const port of this.currentPuzzle.inputs) {
-        if (!port.isSGPR) max = Math.max(max, port.register);
-      }
-      for (const port of this.currentPuzzle.outputs) max = Math.max(max, port.register);
-    }
-
-    return max;
+    return vgprsUsed(this.assemblyResult?.instructions ?? [], this.currentPuzzle, this.peakIndirectVgpr) - 1;
   }
 
   /** Find the highest SGPR index referenced by the program. */
   private computeMaxSGPR(): number {
-    let max = this.highestNamedRegister(OperandType.SGPR);
+    let max = highestNamedRegister(this.assemblyResult?.instructions ?? [], OperandType.SGPR);
     for (const port of this.currentPuzzle?.inputs ?? []) {
       if (port.isSGPR) max = Math.max(max, port.register);
-    }
-    return max;
-  }
-
-  /** Highest register of one file named by an operand, counting every register of a range such as v[4:5]. */
-  private highestNamedRegister(type: OperandType): number {
-    let max = -1;
-    for (const instr of this.assemblyResult?.instructions ?? []) {
-      const info = lookupByMnemonic(instr.mnemonic);
-      const operands: [OperandRole | null, Operand | undefined][] = [
-        ['dst', instr.dst], ['src0', instr.src0], ['src1', instr.src1], ['src2', instr.src2], [null, instr.sdst],
-      ];
-      for (const [role, op] of operands) {
-        if (op?.type !== type) continue;
-        const width = Math.max(op.regCount ?? 1, info && role ? operandRegCount(info, role) : 1);
-        max = Math.max(max, op.value + width - 1);
-      }
     }
     return max;
   }
@@ -742,9 +715,7 @@ export class App {
     this.currentInvocation = 0;
     this.collectedOutputs.clear();
 
-    // Calculate total invocations
-    const streamLen = puzzle.outputs[0]?.values.length ?? 0;
-    this.totalInvocations = Math.ceil(streamLen / WAVE_WIDTH);
+    this.totalInvocations = invocationCount(puzzle);
 
     // Set up I/O panel
     this.ioPanel.setPuzzle(puzzle);
@@ -798,25 +769,7 @@ export class App {
   }
 
   private loadInputsForInvocation(puzzle: Puzzle, invocationIndex: number): void {
-    const start = invocationIndex * WAVE_WIDTH;
-
-    for (const input of puzzle.inputs) {
-      if (input.isSGPR) {
-        // Scalar input: one value per invocation (indexed by invocation, not lane)
-        const value = invocationIndex < input.values.length ? input.values[invocationIndex] : 0;
-        this.emulator.state.writeSGPR(input.register, value >>> 0);
-        continue;
-      }
-      for (let lane = 0; lane < WAVE_WIDTH; lane++) {
-        const idx = start + lane;
-        const value = idx < input.values.length ? input.values[idx] : 0;
-        if (input.isInteger) {
-          this.emulator.state.writeVGPR_u32(input.register, lane, value >>> 0);
-        } else {
-          this.emulator.state.writeVGPR(input.register, lane, value);
-        }
-      }
-    }
+    loadInvocationInputs(this.emulator.state, puzzle, invocationIndex);
 
     // Clear modified regs since we're loading inputs, not executing
     this.emulator.state.modifiedRegs.clear();
@@ -847,22 +800,7 @@ export class App {
     this.totalCycles += this.emulator.getCycleCount();
 
     // Collect outputs from designated VGPRs
-    for (const output of this.currentPuzzle.outputs) {
-      if (!this.collectedOutputs.has(output.register)) {
-        this.collectedOutputs.set(output.register, []);
-      }
-      const collected = this.collectedOutputs.get(output.register)!;
-
-      const start = this.currentInvocation * WAVE_WIDTH;
-      for (let lane = 0; lane < WAVE_WIDTH; lane++) {
-        const idx = start + lane;
-        if (idx < output.values.length) {
-          collected[idx] = output.isInteger
-            ? this.emulator.state.readVGPR_u32(output.register, lane)
-            : this.emulator.state.readVGPR(output.register, lane);
-        }
-      }
-    }
+    collectInvocationOutputs(this.emulator.state, this.currentPuzzle, this.currentInvocation, this.collectedOutputs);
 
     this.ioPanel.updateOutput(this.collectedOutputs, this.currentInvocation);
 

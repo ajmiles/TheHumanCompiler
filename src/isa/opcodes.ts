@@ -3698,7 +3698,7 @@ const SOPK_OPCODES: OpcodeInfo[] = [
     'Add sign-extended 16-bit immediate to SGPR. SCC = signed overflow.\nsdst = sdst + signext(SIMM16)', 's_addk_i32 sdst, simm16', 'sext'),
   scalarOp(SOPK, 's_mulk_i32', 0x10, 2, [32, 32, 0], (a, k) => (sext32(a) * k) & M32, undefined,
     'Multiply SGPR by sign-extended 16-bit immediate.\nsdst = sdst × signext(SIMM16)', 's_mulk_i32 sdst, simm16', 'sext'),
-  sopkSpecial('s_setreg_imm32_b32', 0x15, 2, 'Set hardware register from 32-bit immediate (no effect in the emulator).', 's_setreg_imm32_b32 hwreg, imm32'),
+  sopkSpecial('s_setreg_imm32_b32', 0x15, 2, 'Set hardware register from 32-bit immediate (not modelled: running it in the emulator is an error).', 's_setreg_imm32_b32 hwreg, imm32'),
   sopkSpecial('s_waitcnt_vscnt', 0x17, 0, 'Wait for vector store count to reach a specified value (no effect in the emulator).', 's_waitcnt_vscnt null, simm16'),
 ];
 

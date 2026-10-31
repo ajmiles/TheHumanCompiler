@@ -996,8 +996,11 @@ function executeScalarSpecial(state: GPUState, d: DecodedInstruction, info: Opco
       return undefined;
     }
     case 's_setreg_imm32_b32':
+      // On a GPU it changes float rounding and denormals, enables exception traps, …: a program relying on that
+      // would pass here and behave differently on hardware
+      return fault('s_setreg_imm32_b32 writes hardware state (float modes, exception traps, …) that the emulator does not model');
     case 's_waitcnt_vscnt':
-      return undefined; // hardware state / memory counters are not modelled
+      return undefined; // memory counters are not modelled
     default:
       return fault(`${m} is not implemented by the emulator`);
   }

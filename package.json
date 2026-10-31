@@ -4,9 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && vite build --config vite.verifier.config.ts",
     "preview": "vite preview",
     "test": "tsx tests/test_all.ts",
+    "test:verifier": "tsx tests/verifier_quickjs.ts",
+    "hw-job": "tsx scripts/hw-job.ts",
     "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks',{stdio:'ignore'})}catch(e){}\""
   },
   "keywords": [],
@@ -14,7 +16,9 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@jitl/quickjs-ng-wasmfile-release-sync": "^0.32.0",
     "monaco-editor": "^0.55.1",
+    "quickjs-emscripten-core": "^0.32.0",
     "tsx": "^4.23.15",
     "typescript": "^6.0.2",
     "vite": "^8.0.3"

@@ -9,9 +9,16 @@ import { getPuzzleById, ALL_PUZZLES } from '../src/puzzle/puzzles';
 import { validatePuzzle } from '../src/puzzle/validator';
 import { ALL_TUTORIALS } from '../src/puzzle/tutorials';
 import { Puzzle, PuzzleResult } from '../src/puzzle/types';
-import { InstructionFormat, OperandSlot } from '../src/isa/types';
+import { InstructionFormat, OperandSlot, OperandType } from '../src/isa/types';
+import { TTMP_MAX, TTMP_MIN } from '../src/isa/constants';
 import { twoOverPiTable } from '../src/isa/float64';
 import { checkLine, EditChoice, editChoices, labelsIn, lineEdit, ModifierField, modifierOptions, replaceSpan } from '../src/assembler/operand-edit';
+import { highestNamedRegister, loadInvocationInputs, runPuzzle as runPuzzleBinary, vgprsUsed } from '../src/puzzle/runner';
+import { hardwareProblems } from '../src/hardware/checks';
+import { globalStore, invocationPrograms, pickScratch, resultBytes, setupSource, sMemtime } from '../src/hardware/harness';
+import { HwJobRuns } from '../src/hardware/protocol';
+import { codeHash, hash64, puzzleHash, score, verify, verifySandbox } from '../src/hardware/verify';
+import { scoreJson, verifyJson } from '../src/hardware/verifier';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -6208,32 +6215,7 @@ group('Regression: code review fixes');
 function runPuzzle(puzzle: Puzzle, source: string): PuzzleResult {
   const r = assemble(source);
   assert(r.errors.length === 0, `puzzle solution assembles: ${r.errors.map(e => e.message).join('; ')}`);
-  const outputs = new Map<number, number[]>(puzzle.outputs.map(o => [o.register, []]));
-  const invocations = Math.ceil(puzzle.outputs[0].values.length / 32);
-  for (let inv = 0; inv < invocations; inv++) {
-    const emu = new Emulator();
-    emu.load(r.binary);
-    for (const input of puzzle.inputs) {
-      if (input.isSGPR) {
-        emu.state.writeSGPR(input.register, (input.values[inv] ?? 0) >>> 0);
-        continue;
-      }
-      for (let lane = 0; lane < 32; lane++) {
-        const v = input.values[inv * 32 + lane] ?? 0;
-        if (input.isInteger) emu.state.writeVGPR_u32(input.register, lane, v >>> 0);
-        else emu.state.writeVGPR(input.register, lane, v);
-      }
-    }
-    emu.run();
-    if (emu.fault) return validatePuzzle(puzzle, outputs, { invocation: inv, message: emu.fault });
-    for (const o of puzzle.outputs) {
-      const out = outputs.get(o.register)!;
-      for (let lane = 0; lane < 32 && inv * 32 + lane < o.values.length; lane++) {
-        out[inv * 32 + lane] = o.isInteger ? emu.state.readVGPR_u32(o.register, lane) : emu.state.readVGPR(o.register, lane);
-      }
-    }
-  }
-  return validatePuzzle(puzzle, outputs);
+  return runPuzzleBinary(puzzle, r.binary).result;
 }
 
 group('Regression: player report — the 3.0 in a smoothstep had no effect');
@@ -7465,6 +7447,186 @@ const isF64 = (got: number, want: number) => (Number.isNaN(want) ? Number.isNaN(
   assert(!ok('v_ldexp_f64 v[0:1], v[2:3], -v4') && !ok('v_trig_preop_f64 v[0:1], v[2:3], |v4|'), 'the integer src1 of v_ldexp_f64 / v_trig_preop_f64 takes no modifiers');
   const w = assemble('v_add_f64 v[0:1], 0.1, v[2:3]\ns_endpgm').warnings;
   assert(w.length === 1 && /high 32 bits/.test(w[0].message), 'an inexact f64 float literal warns');
+}
+
+/** A Smooth Clamp solution: 10 instructions, inputs v0–v2, output v3. */
+const SMOOTH_CLAMP = ['v_sub_f32 v2, v2, v0', 'v_sub_f32 v1, v1, v0', 'v_rcp_f32 v1, v1', 'v_mul_f32 v0, v1, v2', 'v_max_f32 v0, v0, 0.0',
+  'v_min_f32 v0, v0, 1.0', 'v_mul_f32 v1, v0, v0', 'v_mad_f32 v0, v0, -2.0, 3.0', 'v_mul_f32 v3, v0, v1', 's_endpgm'].join('\n');
+
+group('Hardware runs: the shared puzzle runner');
+{
+  const smooth = getPuzzleById('smooth-clamp')!;
+  const asm = assemble(SMOOTH_CLAMP);
+  const run = runPuzzleBinary(smooth, asm.binary);
+  assert(run.result.pass && run.invocations.length === 2 && run.invocations.every(i => i.cycles === 10) && run.cycles === 20,
+    'runPuzzle: each invocation runs the 10 instructions, s_endpgm included: 20 for the Speed board');
+  assert(run.invocations.every(i => i.outputBits.length === 1 && i.outputBits[0].length === 32) && run.invocations[1].outputBits[0][0] === 0x3F800000,
+    'runPuzzle: the bits of all 32 lanes of each output register');
+  const crashed = runPuzzleBinary(smooth, assemble('v_mov_b32 v3, 0').binary);
+  assert(!crashed.result.pass && crashed.result.crash?.invocation === 0 && crashed.invocations.length === 0, 'runPuzzle: a crash ends the run');
+  assert(vgprsUsed(asm.instructions, smooth, run.peakIndirectVgpr) === 4 && vgprsUsed(assemble('v_mov_b32 v9, 0').instructions, null, -1) === 10 &&
+    vgprsUsed([], smooth, 40) === 41, 'vgprsUsed: the highest VGPR named, reached through M0, or holding an input or output, plus one');
+  assert(highestNamedRegister(assemble('v_lshlrev_b64 v[4:5], 1, v[6:7]').instructions, OperandType.VGPR) === 7 &&
+    highestNamedRegister(assemble('s_mov_b64 s[2:3], 0').instructions, OperandType.SGPR) === 3, 'highestNamedRegister: both registers of a pair count');
+  assert(/does not model/.test(run1('s_setreg_imm32_b32 0x4801, 0x1f0').fault ?? ''),
+    's_setreg_imm32_b32 faults: on a GPU it changes float modes and traps, which the emulator does not model');
+}
+
+group('Hardware runs: the harness');
+{
+  // s_memtime and the global stores are hand-encoded: these are LLVM's GFX10 encodings
+  assert(same(sMemtime(100), [0xF4901900, 0]) && same(sMemtime(10), [0xF4900280, 0]), 'encoding (LLVM): s_memtime s[100:101], s_memtime s[10:11]');
+  assert(same(globalStore(1, 3, 1, 2), [0xDC708000, 0x00020103]) && same(globalStore(1, 3, 1, 2, 24), [0xDC708018, 0x00020103]) &&
+    same(globalStore(1, 3, 1, 2, -8), [0xDC708FF8, 0x00020103]) && same(globalStore(2, 3, 1, 0x7D), [0xDC748000, 0x007D0103]),
+    'encoding (LLVM): global_store_dword v3, v1, s[2:3] (offset:24, offset:-8), global_store_dwordx2 v[3:4], v[1:2], off');
+
+  // From any registers and LDS, the setup leaves exactly what the emulator starts the invocation with
+  let seed = 1;
+  const random = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0);
+  const different: string[] = [];
+  for (const id of ['smooth-clamp', 'rng-iterate', 'byte-sort']) {
+    const puzzle = getPuzzleById(id)!;
+    for (const inv of [0, 1]) {
+      const binary = assemble([...setupSource(puzzle, inv).filter(l => !l.startsWith('s_setreg_imm32_b32')), 's_endpgm'].join('\n')).binary;
+      const dirty = new Emulator();
+      dirty.load(binary);
+      for (const reg of dirty.state.vgprs) for (let lane = 0; lane < 32; lane++) reg[lane] = random();
+      for (let s = 0; s < 128; s++) if (s < TTMP_MIN || s > TTMP_MAX) dirty.state.sgprs[s] = random();
+      for (let i = 0; i < dirty.state.lds.length; i++) dirty.state.lds[i] = random();
+      dirty.state.scc = 1;
+      dirty.run();
+      const clean = new Emulator();
+      clean.load(binary);
+      loadInvocationInputs(clean.state, puzzle, inv);
+      const vgprs = dirty.state.vgprs.every((reg, r) => reg.every((v, lane) => v === clean.state.vgprs[r][lane]));
+      const sgprs = [...Array(128).keys()].every(s => (s >= TTMP_MIN && s <= TTMP_MAX) || dirty.state.readSGPR(s) === clean.state.readSGPR(s));
+      if (dirty.fault || !vgprs || !sgprs || dirty.state.scc !== 0 || dirty.state.lds.some(v => v !== 0)) different.push(`${id} ${inv + 1}`);
+    }
+  }
+  assert(different.length === 0, `setup: from random registers and LDS, each invocation starts as in the emulator${different.length ? `; not ${different.join(', ')}` : ''}`);
+  assert(setupSource(null, 0).includes('s_setreg_imm32_b32 0x4801, 0x1f0'),
+    'setup: the float mode as the emulator behaves (round to nearest even, denormals kept, DX10 clamp, IEEE off)');
+
+  // The program: setup, timer, the solution on a cache line with s_endpgm branching to the epilogue (also on one)
+  const solution = Array.from(assemble(SMOOTH_CLAMP).binary);
+  const job = verify(SMOOTH_CLAMP, 'smooth-clamp').job!;
+  const find = (code: number[], part: number[], from = 0) => {
+    for (let i = from; i + part.length <= code.length; i++) if (part.every((w, k) => code[i + k] === w)) return i;
+    return -1;
+  };
+  const branchTarget = (code: number[], at: number) => at + 1 + ((code[at] << 16) >> 16);
+  const wrong: string[] = [];
+  job.invocations.forEach(({ solution: sol, baseline: base }, i) => {
+    const at = find(sol.code, solution.slice(0, -1));
+    const end = at + solution.length - 1;
+    const epilogue = branchTarget(sol.code, end);
+    if (at <= 0 || at % 16 !== 0 || sol.code[end] >>> 16 !== 0xBF82 || epilogue % 16 !== 0) wrong.push(`${i}: layout`);
+    if (!same(sol.code.slice(epilogue, epilogue + 2), sMemtime(102)) || find(sol.code, sMemtime(102)) !== find(sol.code, sMemtime(102), at - 16)) wrong.push(`${i}: timers`);
+    if (find(sol.code, globalStore(2, 253, 254, 104, 0)) > at || find(sol.code, globalStore(1, 253, 3, 104, 16)) < epilogue ||
+      find(sol.code, globalStore(2, 253, 254, 104, 8)) < epilogue) wrong.push(`${i}: stores`);
+    if (sol.code.slice(0, at).includes(0xBBFD0000)) wrong.push(`${i}: waits in the timed part`);
+    // The baseline: the same setup and timer, s_endpgm alone (branching a line on) and the same epilogue
+    if (!same(base.code.slice(0, at), sol.code.slice(0, at)) || branchTarget(base.code, at) !== at + 16 ||
+      !same(base.code.slice(at + 16), sol.code.slice(epilogue))) wrong.push(`${i}: baseline`);
+    const relocs = sol.relocations.map(r => `${r.value}:${sol.code[r.dword].toString(16)}`).join();
+    if (relocs !== 'resultAddressLo:dead0000,resultAddressHi:dead0001,resultAddressLo:dead0000,resultAddressHi:dead0001' ||
+      JSON.stringify(base.relocations) !== JSON.stringify(sol.relocations)) wrong.push(`${i}: relocations ${relocs}`);
+  });
+  assert(wrong.length === 0, `program: the solution and its epilogue on cache lines, the baseline the same around s_endpgm${wrong.length ? `; ${wrong.join('; ')}` : ''}`);
+  const run = runPuzzleBinary(getPuzzleById('smooth-clamp')!, assemble(SMOOTH_CLAMP).binary);
+  assert(job.resultBytes === 144 && job.invocations.every((inv, i) => same(inv.emulatorOutputs, run.invocations[i].outputBits.flat())) &&
+    JSON.stringify(JSON.parse(JSON.stringify(job))) === JSON.stringify(job) &&
+    job.invocations.every(inv => inv.solution.code.every(w => Number.isInteger(w) && w >= 0 && w <= 0xFFFFFFFF)),
+    'job: plain JSON, with the result size and the emulator\'s output bits');
+
+  // Every s_endpgm branches to the epilogue
+  const early = ['s_cmp_eq_u32 s0, 0', 's_cbranch_scc1 done', 'v_mov_b32 v0, 1', 's_endpgm', 'done:', 'v_mov_b32 v0, 2', 's_endpgm'].join('\n');
+  const earlyBinary = Array.from(assemble(early).binary);
+  const sandbox = verifySandbox(early).job!;
+  const code = sandbox.invocations[0].solution.code;
+  const start = find(code, earlyBinary.slice(0, 3));
+  const targets = [3, 5].map(k => branchTarget(code, start + k));
+  assert(targets[0] === targets[1] && targets[0] % 16 === 0 && same(code.slice(targets[0], targets[0] + 2), sMemtime(102)) &&
+    sandbox.resultBytes === 16 && sandbox.puzzleId === 'sandbox', 'program: each s_endpgm becomes a branch to the same epilogue');
+
+  // Scratch registers: the highest that are no input or output; the timer waits for its store if the solution may use them
+  const smooth = getPuzzleById('smooth-clamp')!;
+  const twoOutputs: Puzzle = { ...smooth, outputs: [{ ...smooth.outputs[0], register: 4 }, { ...smooth.outputs[0], register: 5 }] };
+  const stores = invocationPrograms(twoOutputs, Uint32Array.of(0xBF810000), 6, 0).solution.code;
+  assert(find(stores, globalStore(1, 253, 4, 104, 16)) > 0 && find(stores, globalStore(1, 253, 5, 104, 144)) > 0 && resultBytes(twoOutputs) === 272,
+    'epilogue: 32 lanes of each output, one after the other after the timestamps');
+  assert(JSON.stringify(pickScratch(smooth, 4)) === '{"scratch":{"time":102,"address":104,"offset":253,"data":254},"sharedWithSolution":false}' &&
+    pickScratch(smooth, 256).sharedWithSolution, 'scratch: s[102:103], s[104:105], v253 and v[254:255], shared once the solution uses them');
+  const crowded: Puzzle = { ...smooth, inputs: [{ ...smooth.inputs[0], register: 255 }, { name: 'S', register: 104, values: [1, 2], isInteger: true, isSGPR: true }],
+    outputs: [{ ...smooth.outputs[0], register: 254 }] };
+  assert(JSON.stringify(pickScratch(crowded, 4).scratch) === '{"time":100,"address":102,"offset":251,"data":252}', 'scratch: inputs and outputs are kept clear of');
+  const highJob = verify(`v_mov_b32 v255, 0\n${SMOOTH_CLAMP}`, 'smooth-clamp').job!.invocations[0];
+  const waits = (code: number[]) => code.filter(w => w === 0xBBFD0000).length;
+  assert(waits(highJob.solution.code) === 2 && waits(highJob.baseline.code) === 2 && waits(job.invocations[0].solution.code) === 1,
+    'timer: s_waitcnt_vscnt after the store when the solution uses the scratch VGPRs (GFX10 LDS/branch/VMEM hazard), in the baseline too');
+}
+
+group('Hardware runs: checking a submission');
+{
+  const ok = verify(SMOOTH_CLAMP, 'smooth-clamp', { codeSize: 56, vgprsUsed: 4, cycles: 20 });
+  assert(ok.ok && JSON.stringify(ok.stats) === '{"codeSize":56,"vgprsUsed":4,"cycles":20}' && ok.claimMismatches === undefined && ok.job?.runs === 100,
+    'verify: a correct solution with the stats it claims');
+  assert(verify(SMOOTH_CLAMP, 'smooth-clamp', { codeSize: 40, cycles: 20 }).claimMismatches?.join() === 'codeSize: claimed 40, actually 56',
+    'verify: a claim that does not match is reported');
+  assert(verify(SMOOTH_CLAMP, 'no-such-puzzle').reason === "There is no puzzle 'no-such-puzzle'" &&
+    verify('v_bogus v0\ns_endpgm', 'smooth-clamp').reason?.startsWith('Line 1: ') === true, 'verify: an unknown puzzle, a line that does not assemble');
+  assert(/^Wrong output: \d+ of 64 values are right$/.test(verify('v_mov_b32 v3, 0\ns_endpgm', 'smooth-clamp').reason ?? '') &&
+    /^It crashed in invocation 1: /.test(verify('v_mov_b32 v3, 0', 'smooth-clamp').reason ?? ''), 'verify: wrong outputs, a crash');
+  const pc = verify(`s_getpc_b64 s[10:11]\n${SMOOTH_CLAMP}`, 'smooth-clamp');
+  const ttmp = verify(`s_mov_b32 s10, ttmp0\n${SMOOTH_CLAMP}`, 'smooth-clamp');
+  assert(!pc.ok && pc.stats?.codeSize === 60 && pc.job === undefined && pc.reason === 'Line 1: s_getpc_b64 uses program addresses, which are different on the devkit' &&
+    !ttmp.ok && /^Line 1: s_mov_b32 uses a ttmp register/.test(ttmp.reason ?? ''), 'verify: passing solutions that cannot run on the devkit say why');
+  const problems = (src: string) => hardwareProblems(assemble(src).instructions);
+  assert(problems('s_setreg_imm32_b32 0x4801, 0x1f0').length === 1 && problems('s_setpc_b64 s[0:1]').length === 1 &&
+    problems('s_swappc_b64 s[0:1], s[2:3]').length === 1 && problems('s_mov_b64 s[0:1], ttmp[14:15]').length === 1 &&
+    problems('v_add_f32 v0, v1, v2\nds_write_b32 v1, v0\ns_mov_b64 vcc, exec\nv_readlane_b32 s0, v0, 31\ns_waitcnt_vscnt null, 0\ns_endpgm').length === 0,
+    'hardwareProblems: program addresses, MODE writes and trap registers; ordinary ALU, LDS and lane instructions are fine');
+}
+
+group('Hardware runs: scoring the devkit runs');
+{
+  const job = verify(SMOOTH_CLAMP, 'smooth-clamp').job!;
+  const emulated = job.invocations.map(i => i.emulatorOutputs);
+  const runsFor = (solution: number[], baseline: number[], outputs = emulated, stable = true): HwJobRuns => ({
+    invocations: job.invocations.map((_, i) => ({
+      solution: { durations: solution, outputWords: outputs[i], outputsStable: stable },
+      baseline: { durations: baseline, outputWords: [], outputsStable: true },
+    })),
+  });
+  const measured = score(job, runsFor([131, 125, 128], [101, 100, 104]));
+  assert(measured.status === 'measured' && measured.cycles === 50 && measured.perInvocation?.join() === '25,25' &&
+    measured.emulatorMismatches === undefined && measured.harness === 1, 'score: each invocation\'s fastest run less its baseline\'s fastest, summed');
+  const nudged = emulated.map(o => o.slice());
+  nudged[0][5] = (nudged[0][5] + 1) >>> 0;
+  const close = score(job, runsFor([130], [100], nudged));
+  assert(close.status === 'measured' && close.emulatorMismatches === 1, 'score: an output an ulp off the emulator\'s still passes, and is counted');
+  assert(score(job, runsFor([130], [100], emulated.map(o => o.map(() => 0)))).status === 'failed', 'score: wrong outputs fail');
+  assert(score(job, runsFor([130], [100], emulated, false)).status === 'unstable' && score(job, runsFor([90], [100])).status === 'unstable',
+    'score: outputs that change between runs, or a run faster than the empty program, are unstable');
+  assert(score({ ...job, puzzleHash: '0' }, runsFor([130], [100])).status === 'failed' && score({ ...job, harness: 0 }, runsFor([130], [100])).status === 'failed' &&
+    score(job, { invocations: [] }).status === 'failed' && score(job, runsFor([], [100])).status === 'failed',
+    'score: a changed puzzle, another harness, missing invocations or runs fail');
+  const sandbox = verifySandbox('v_add_f32 v0, v0, v1\ns_endpgm').job!;
+  const empty = { durations: [100], outputWords: [], outputsStable: true };
+  const timed = score(sandbox, { invocations: [{ solution: { ...empty, durations: [107, 109] }, baseline: empty }] });
+  assert(timed.status === 'measured' && timed.cycles === 7, 'score: a sandbox program has no outputs to check');
+
+  assert(hash64('') === 'cbf29ce484222325' && hash64('a') === 'af63dc4c8601ec8c', 'hash64: the FNV-1a (64-bit) test vectors');
+  const smooth = getPuzzleById('smooth-clamp')!;
+  const changed: Puzzle = { ...smooth, inputs: smooth.inputs.map((p, i) => (i === 0 ? { ...p, values: [p.values[0] + 1, ...p.values.slice(1)] } : p)) };
+  assert(puzzleHash({ ...smooth }) === job.puzzleHash && puzzleHash(changed) !== job.puzzleHash && puzzleHash(null) === hash64('sandbox') &&
+    job.codeHash === codeHash(assemble(SMOOTH_CLAMP).binary) && codeHash(Uint32Array.of(1, 2)) !== codeHash(Uint32Array.of(2, 1)),
+    'hashes: a puzzle\'s data and a solution\'s machine code');
+
+  // The functions the devkit title calls, with JSON in and out
+  const viaJson = verifyJson(JSON.stringify({ source: SMOOTH_CLAMP, puzzleId: 'smooth-clamp', runs: 7 }));
+  assert(viaJson === JSON.stringify(verify(SMOOTH_CLAMP, 'smooth-clamp', undefined, 7)) && JSON.parse(viaJson).job.runs === 7 &&
+    JSON.parse(scoreJson(JSON.stringify({ job, runs: runsFor([130], [100]) }))).cycles === 60, 'verifyJson / scoreJson: the same answers through JSON');
 }
 
 // ════════════════════════════════════════════
