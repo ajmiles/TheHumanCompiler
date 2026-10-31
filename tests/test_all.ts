@@ -10,6 +10,7 @@ import { validatePuzzle } from '../src/puzzle/validator';
 import { ALL_TUTORIALS } from '../src/puzzle/tutorials';
 import { Puzzle, PuzzleResult } from '../src/puzzle/types';
 import { InstructionFormat, OperandSlot } from '../src/isa/types';
+import { twoOverPiTable } from '../src/isa/float64';
 import { checkLine, EditChoice, editChoices, labelsIn } from '../src/assembler/operand-edit';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
@@ -6875,6 +6876,239 @@ function write64(e: Emulator, reg: number, lane: number, bits: bigint): void {
   assert(!ok('v_cmp_lt_u16_e64 s0, v0, v1 op_sel:[1,0,0]'), '16-bit compares take no op_sel on GFX10');
   assert(!ok('v_cmp_lt_i64 vcc_lo, 0.3, v[0:1]') && ok('v_cmp_lt_i64 vcc_lo, 0.5, v[0:1]'), 'a 64-bit integer operand takes only inline float constants');
   assert(!ok('v_cmp_lt_f64 vcc_lo, 0x123456789, v[0:1]'), 'an f64 integer literal must fit in 32 bits');
+}
+
+group('VALU: 64-bit floats');
+const f64FromBits = (b: bigint): number => new Float64Array(new BigUint64Array([BigInt.asUintN(64, b)]).buffer)[0];
+const read64 = (e: Emulator, reg: number, lane = 0): bigint =>
+  BigInt(e.state.readVGPR_u32(reg, lane)) | (BigInt(e.state.readVGPR_u32(reg + 1, lane)) << 32n);
+/** Run `src` with doubles in v[0:1], v[2:3] and v[4:5] of lane 0 and return the double it leaves in v[6:7]. */
+const f64op = (src: string, ...vals: number[]) =>
+  f64FromBits(read64(run1(src, e => vals.forEach((v, i) => write64(e, 2 * i, 0, f64ToBits(v)))), 6));
+/** Bit-identical doubles (so -0 differs from +0); any NaN matches NaN. */
+const isF64 = (got: number, want: number) => (Number.isNaN(want) ? Number.isNaN(got) : f64ToBits(got) === f64ToBits(want));
+{
+  const f64ops = getAllOpcodes().filter(o => o.format !== InstructionFormat.VOPC && o.types && [o.types.d, ...o.types.s].includes('f64'));
+  assert(f64ops.length === 26, `26 f64 arithmetic instructions (got ${f64ops.length})`);
+
+  // Encodings from LLVM's GFX10 MC tests (little-endian bytes)
+  const words = (...b: number[]) =>
+    Array.from({ length: b.length / 4 }, (_, i) => (b[4 * i] | (b[4 * i + 1] << 8) | (b[4 * i + 2] << 16) | (b[4 * i + 3] << 24)) >>> 0);
+  const llvm: Array<[string, number[]]> = [
+    ['v_rcp_f64 v[5:6], 0xaf123456', words(0xff, 0x5e, 0x0a, 0x7e, 0x56, 0x34, 0x12, 0xaf)],
+    ['v_cvt_f64_f32_e64 v[5:6], v1 clamp', words(0x05, 0x80, 0x90, 0xd5, 0x01, 0x01, 0x01, 0x02)],
+    ['v_sqrt_f64_e64 v[5:6], v[1:2] mul:2', words(0x05, 0x00, 0xb4, 0xd5, 0x01, 0x01, 0x01, 0x0a)],
+    ['v_frexp_exp_i32_f64 v5, v[1:2]', words(0x01, 0x79, 0x0a, 0x7e)],
+    ['v_fma_f64 v[5:6], -v[1:2], v[2:3], v[3:4]', words(0x05, 0x00, 0x4c, 0xd5, 0x01, 0x05, 0x0e, 0x24)],
+    ['v_add_f64 v[5:6], v[1:2], v[2:3] div:2', words(0x05, 0x00, 0x64, 0xd5, 0x01, 0x05, 0x02, 0x1a)],
+    ['v_mul_f64 v[5:6], 0.5, v[2:3]', words(0x05, 0x00, 0x65, 0xd5, 0xf0, 0x04, 0x02, 0x02)],
+    ['v_max_f64 v[5:6], -v[1:2], v[2:3]', words(0x05, 0x00, 0x67, 0xd5, 0x01, 0x05, 0x02, 0x22)],
+    ['v_ldexp_f64 v[5:6], v[1:2], v2', words(0x05, 0x00, 0x68, 0xd5, 0x01, 0x05, 0x02, 0x02)],
+    ['v_trig_preop_f64 v[5:6], v[1:2], v2', words(0x05, 0x00, 0x74, 0xd5, 0x01, 0x05, 0x02, 0x02)],
+    ['v_div_fixup_f64 v[5:6], v[1:2], -v[2:3], v[3:4]', words(0x05, 0x00, 0x60, 0xd5, 0x01, 0x05, 0x0e, 0x44)],
+    ['v_div_fmas_f64 v[5:6], v[1:2], v[2:3], v[3:4]', words(0x05, 0x00, 0x70, 0xd5, 0x01, 0x05, 0x0e, 0x04)],
+  ];
+  for (const [src, w] of llvm) assert(same(enc(src), w), `encoding (LLVM): ${src}`);
+  assert(same(enc('v_div_scale_f64 v[5:6], s0, v[1:2], v[2:3], v[3:4]'), words(0x05, 0x00, 0x6e, 0xd5, 0x01, 0x05, 0x0e, 0x04)),
+    'v_div_scale_f64: VOP3B opcode 0x16E, laid out like the v_div_scale_f32 encodings in LLVM\'s tests');
+
+  const prog = ['v_div_scale_f64 v[4:5], s0, -v[2:3], v[2:3], s[4:5]', 'v_fma_f64 v[6:7], -|v[0:1]|, 2.5, v[8:9] clamp',
+    'v_cvt_f32_f64_e64 v10, -v[0:1] mul:2', 'v_cvt_f64_u32 v[12:13], 0x12345', 'v_trig_preop_f64 v[14:15], s[2:3], 3',
+    'v_ldexp_f64 v[16:17], v[0:1], -7', 'v_div_fmas_f64 v[18:19], v[0:1], s[6:7], v[2:3]', 'v_floor_f64 v[20:21], 0x40490000', 's_endpgm'].join('\n');
+  const a = assemble(prog);
+  const b = assemble(decodeBinary(a.binary).map(d => disassemble(d)).join('\n'));
+  assert(a.errors.length === 0 && b.errors.length === 0 && same(Array.from(a.binary), Array.from(b.binary)), 'f64 instructions: disassembly round-trips');
+}
+{
+  const un = (m: string, x: number) => f64op(`${m} v[6:7], v[0:1]`, x);
+  const bin = (m: string, x: number, y: number) => f64op(`${m} v[6:7], v[0:1], v[2:3]`, x, y);
+  const fma = (x: number, y: number, z: number) => f64op('v_fma_f64 v[6:7], v[0:1], v[2:3], v[4:5]', x, y, z);
+  assert(isF64(bin('v_add_f64', 0.1, 0.2), 0.1 + 0.2) && isF64(bin('v_mul_f64', 1e200, 1e200), Infinity) && isF64(bin('v_mul_f64', -0, 3), -0),
+    'v_add_f64 / v_mul_f64 round like IEEE doubles');
+  assert(isF64(fma(1 + 2 ** -52, 1 - 2 ** -52, -1), -(2 ** -104)), 'v_fma_f64 rounds once: (1+ε)(1-ε) - 1 = -ε² (a separate multiply gives 0)');
+  assert(isF64(fma(2 ** 1023, 2.5, -1.75 * 2 ** 1023), 0.75 * 2 ** 1023), 'v_fma_f64 keeps a product beyond the double range');
+  assert(isF64(fma(3 * 2 ** -1074, 0.5, 0), 2 ** -1073) && isF64(fma(2 ** -1074, 0.5, 0), 0), 'v_fma_f64 rounds subnormal results to nearest even');
+  assert(isF64(fma(-0, 1, -0), -0) && isF64(fma(-0, 1, 0), 0) && isF64(fma(2, 3, -6), 0) && Number.isNaN(fma(Infinity, 0, 1)) &&
+    Number.isNaN(fma(Infinity, 1, -Infinity)) && isF64(fma(Infinity, -2, 5), -Infinity), 'v_fma_f64: signed zeros, exact cancellation, ∞ × 0 and ∞ - ∞');
+  assert(isF64(bin('v_min_f64', NaN, 2), 2) && isF64(bin('v_max_f64', 3, NaN), 3) && isF64(bin('v_min_f64', 0, -0), -0) &&
+    isF64(bin('v_max_f64', -0, 0), 0), 'v_min_f64 / v_max_f64: a NaN input gives the other one; -0 < +0');
+
+  const ldexp = (x: number, n: number) =>
+    f64FromBits(read64(run1('v_ldexp_f64 v[6:7], v[0:1], v2', e => { write64(e, 0, 0, f64ToBits(x)); e.state.writeVGPR_u32(2, 0, n >>> 0); }), 6));
+  assert(isF64(ldexp(1, -1074), 5e-324) && isF64(ldexp(1.5, -1074), 2 ** -1073) && isF64(ldexp(2 ** 1000, -2000), 2 ** -1000),
+    'v_ldexp_f64 rounds a subnormal result once and keeps exact results exact');
+  assert(isF64(ldexp(1, 5000), Infinity) && isF64(ldexp(-3, -0x80000000), -0) && isF64(ldexp(0, 2000), 0) && isF64(ldexp(-Infinity, -5), -Infinity),
+    'v_ldexp_f64: overflow, underflow to -0, 0 × 2^2000 = 0 and ∞ unchanged');
+
+  const rndne: Array<[number, number]> = [[0.49999999999999994, 0], [2 ** 52 + 1, 2 ** 52 + 1], [2.5, 2], [-2.5, -2], [3.5, 4], [-0.4, -0], [-1e300, -1e300]];
+  assert(rndne.every(([x, want]) => isF64(un('v_rndne_f64', x), want)), 'v_rndne_f64 rounds ties to even exactly, keeping the sign of zero');
+  assert(isF64(un('v_floor_f64', -0.5), -1) && isF64(un('v_ceil_f64', -0.5), -0) && isF64(un('v_trunc_f64', -1.5), -1) &&
+    isF64(un('v_floor_f64', 2 ** 60 + 2 ** 8), 2 ** 60 + 2 ** 8), 'v_floor_f64 / v_ceil_f64 / v_trunc_f64');
+  assert(isF64(un('v_fract_f64', -0.25), 0.75) && isF64(un('v_fract_f64', 5.5), 0.5) && Number.isNaN(un('v_fract_f64', Infinity)), 'v_fract_f64');
+  assert(isF64(un('v_rcp_f64', 3), 1 / 3) && isF64(un('v_rcp_f64', -0), -Infinity) && isF64(un('v_sqrt_f64', 2), Math.SQRT2) &&
+    isF64(un('v_sqrt_f64', -0), -0) && Number.isNaN(un('v_sqrt_f64', -1)) && isF64(un('v_rsq_f64', 0.25), 2) && Number.isNaN(un('v_rsq_f64', -4)),
+    'v_rcp_f64 / v_sqrt_f64 / v_rsq_f64 values and special cases');
+
+  const toF32 = (x: number) => run1('v_cvt_f32_f64 v6, v[0:1]', e => write64(e, 0, 0, f64ToBits(x))).state.readVGPR(6, 0);
+  assert(toF32(1 + 2 ** -24) === 1 && toF32(1 + 3 * 2 ** -25) === 1 + 2 ** -23 && toF32(1e40) === Infinity && Object.is(toF32(-1e-50), -0),
+    'v_cvt_f32_f64 rounds to nearest even; too large gives ∞, too small ±0');
+  const toInt = (m: string, x: number) => run1(`${m} v6, v[0:1]`, e => write64(e, 0, 0, f64ToBits(x))).state.readVGPR_u32(6, 0);
+  assert(toInt('v_cvt_i32_f64', -1.9) === 0xFFFFFFFF && toInt('v_cvt_i32_f64', 3e9) === 0x7FFFFFFF && toInt('v_cvt_i32_f64', -3e9) === 0x80000000 &&
+    toInt('v_cvt_i32_f64', NaN) === 0, 'v_cvt_i32_f64 truncates and saturates; NaN gives 0');
+  assert(toInt('v_cvt_u32_f64', -1) === 0 && toInt('v_cvt_u32_f64', 5e9) === 0xFFFFFFFF && toInt('v_cvt_u32_f64', 7.99) === 7,
+    'v_cvt_u32_f64 truncates and clamps to [0, 2^32 - 1]');
+  const fromRaw = (m: string, raw: number) => f64FromBits(read64(run1(`${m} v[6:7], v0`, e => e.state.writeVGPR_u32(0, 0, raw)), 6));
+  assert(fromRaw('v_cvt_f64_i32', -5 >>> 0) === -5 && fromRaw('v_cvt_f64_u32', 0xFFFFFFFF) === 4294967295 &&
+    fromRaw('v_cvt_f64_f32', floatBits(0.1)) === Math.fround(0.1), 'v_cvt_f64_i32 / v_cvt_f64_u32 / v_cvt_f64_f32 are exact');
+
+  const frexp = (x: number): [number, number] => {
+    const e = run1('v_frexp_mant_f64 v[6:7], v[0:1]\nv_frexp_exp_i32_f64 v8, v[0:1]', em => write64(em, 0, 0, f64ToBits(x)));
+    return [f64FromBits(read64(e, 6)), e.state.readVGPR_u32(8, 0) | 0];
+  };
+  const frexpCases: Array<[number, number, number]> = [[8, 0.5, 4], [5e-324, 0.5, -1073], [-0.75, -0.75, 0], [-0, -0, 0], [Infinity, Infinity, 0], [NaN, NaN, 0]];
+  assert(frexpCases.every(([x, m, ex]) => { const [gm, ge] = frexp(x); return isF64(gm, m) && ge === ex; }),
+    'v_frexp_mant_f64 / v_frexp_exp_i32_f64: [0.5, 1) significands, subnormals normalized, ±0/±∞/NaN give themselves and 0');
+
+  assert(isF64(f64op('v_add_f64 v[6:7], -v[0:1], |v[2:3]|', 1.5, -4), 2.5), 'f64 neg and abs modifiers');
+  assert(isF64(f64op('v_add_f64 v[6:7], v[0:1], v[2:3] clamp', 0.75, 0.75), 1) && isF64(f64op('v_mul_f64 v[6:7], v[0:1], v[2:3] mul:4', 1.5, 2), 12),
+    'f64 clamp and output modifiers');
+  assert(isF64(f64op('v_sqrt_f64 v[6:7], 4.0'), 2) && isF64(f64op('v_sqrt_f64 v[6:7], 0x40310000'), Math.sqrt(17)),
+    'VOP1 f64 sources: inline 4.0, and a literal is the high half of the double (0x40310000 is 17.0)');
+  const pair = run1('v_add_f64 v[6:7], s[0:1], v[2:3]', e => {
+    e.state.writeSGPR(0, 0);
+    e.state.writeSGPR(1, 0x40040000); // 2.5
+    write64(e, 2, 0, f64ToBits(0.25));
+  });
+  assert(f64FromBits(read64(pair, 6)) === 2.75, 'an SGPR pair as an f64 source');
+}
+{
+  // v_trig_preop_f64 reads 2/π. Check the table against an independent computation (Gauss's formula
+  // π/4 = 12·atan(1/18) + 8·atan(1/57) - 5·atan(1/239)) and the well-known leading digits of 2/π
+  const table = twoOverPiTable();
+  const P = 1201n + 64n;
+  const one = 1n << P;
+  const atanInverse = (x: bigint) => {
+    let sum = 0n;
+    let power = one / x;
+    for (let k = 0n; power !== 0n; k++) {
+      sum += (k % 2n === 0n ? power : -power) / (2n * k + 1n);
+      power /= x * x;
+    }
+    return sum;
+  };
+  const pi = 4n * (12n * atanInverse(18n) + 8n * atanInverse(57n) - 5n * atanInverse(239n));
+  assert(table === ((2n << (2n * P)) / pi) >> 64n, 'the 1201-bit 2/π table matches an independent computation');
+  assert((table << 3n).toString(16).startsWith('a2f9836e4e441529fc2757d1f534ddc0db629599'), 'the 2/π table reads 0.a2f9836e4e441529fc27…');
+
+  const preop = (x: number, segment: number) => f64FromBits(read64(run1('v_trig_preop_f64 v[6:7], v[0:1], v2', e => {
+    write64(e, 0, 0, f64ToBits(x));
+    e.state.writeVGPR_u32(2, 0, segment);
+  }), 6));
+  const window = (shift: number) => Number((table >> BigInt(1148 - shift)) & ((1n << 53n) - 1n));
+  assert(f64ToBits(preop(1, 0)) === 0x3FE45F306DC9C882n, 'v_trig_preop_f64 segment 0 is the first 53 bits of 2/π, truncated');
+  assert(Math.abs(preop(1, 0) + preop(1, 1) + preop(1, 2) - 2 / Math.PI) < 1e-16 && preop(1, 1) > 0 && preop(1, 1) < 2 ** -50,
+    'segments 0, 1 and 2 add up to 2/π');
+  assert(preop(2 ** 60, 0) === window(6) * 2 ** -59 && preop(-(2 ** 60), 0) === preop(2 ** 60, 0),
+    'an exponent above 1077 moves the window right (2^60: by 6 bits)');
+  assert(preop(2 ** 950, 1) === window(53 + 896) * 2 ** -874, 'exponents of 1968 or more scale the result up by 2^128');
+  assert(preop(1, 31) === 0 && preop(1, 32) === preop(1, 0), 'segments past the table read 0, and only src1[4:0] counts');
+  assert(preop(1, 20) === window(1060) * 2 ** -1000 * 2 ** -113 && preop(1, 20) > 0 && preop(1, 21) === 0,
+    'segment 20 lands in the subnormal range and is rounded once; segment 21 lies below the smallest subnormal');
+}
+{
+  // The division helpers, with the hardware behaviour where the ISA documents differ
+  const scale = (s0: number, den: number, num: number) => {
+    const e = run1('v_div_scale_f64 v[6:7], s4, v[0:1], v[2:3], v[4:5]', em => {
+      em.state.exec = 1;
+      write64(em, 0, 0, f64ToBits(s0));
+      write64(em, 2, 0, f64ToBits(den));
+      write64(em, 4, 0, f64ToBits(num));
+    });
+    return { v: f64FromBits(read64(e, 6)), flag: e.state.readSGPR(4) };
+  };
+  const zero = scale(1, 0, 1);
+  assert(Number.isNaN(zero.v) && zero.flag === 1, 'v_div_scale_f64: a zero denominator gives NaN with the flag set (hardware; the documents leave it clear)');
+  const [hugeDen, hugeNum] = [scale(1e-10, 1e-10, 1e300), scale(1e300, 1e-10, 1e300)];
+  assert(hugeDen.v === 1e-10 * 2 ** 128 && hugeDen.flag === 1 && hugeNum.v === 1e300 && hugeNum.flag === 1,
+    'a huge quotient: the denominator is scaled up by 2^128 and the flag set');
+  const [tinyDen, tinyNum] = [scale(1e10, 1e10, 1e-300), scale(1e-300, 1e10, 1e-300)];
+  assert(tinyDen.v === 1e10 && tinyNum.v === 1e-300 * 2 ** 128 && tinyNum.flag === 1, 'a subnormal quotient: the numerator is scaled up by 2^128');
+  const [bigDen, bigNum] = [scale(1e308, 1e308, 1), scale(1, 1e308, 1)];
+  assert(bigDen.v === 1e308 * 2 ** -128 && bigDen.flag === 1 && bigNum.v === 1,
+    'a huge denominator with a subnormal quotient: the denominator is scaled down by 2^-128 (the documents say up, which overflows)');
+  const [bigDenOnly, bigDenNum] = [scale(1e308, 1e308, 1e300), scale(1e300, 1e308, 1e300)];
+  assert(bigDenOnly.v === 1e308 * 2 ** -128 && bigDenNum.v === 1e300 * 2 ** -128 && bigDenOnly.flag === 0 && bigDenNum.flag === 0,
+    'a huge denominator (1/D subnormal) with an ordinary quotient: both operands are scaled down by 2^-128, without the flag');
+  const sub = scale(5e-320, 5e-320, 1e-300);
+  assert(sub.v === 5e-320 * 2 ** 128 && sub.flag === 0 && scale(3, 3, 7).v === 3 && scale(3, 3, 7).flag === 0,
+    'a subnormal denominator is scaled up without the flag; ordinary operands are unchanged');
+
+  const fmas = (vcc: number, x: number, y: number, z: number) => f64FromBits(read64(run1('v_div_fmas_f64 v[6:7], v[0:1], v[2:3], v[4:5]', e => {
+    e.state.vcc = vcc;
+    [x, y, z].forEach((v, i) => write64(e, 2 * i, 0, f64ToBits(v)));
+  }), 6));
+  assert(fmas(0, 2, 3, 1) === 7 && fmas(1, 2, 3, 4) === 10 * 2 ** 128 && fmas(1, 0.25, 1, 0.5) === 0.75 * 2 ** -128,
+    'v_div_fmas_f64: with VCC set it rescales by 2^128 when |src2| ≥ 2, else by 2^-128 (hardware; the documents say 2^64)');
+  assert(fmas(1, 1.5 * 2 ** -946, 1, -(2 ** -1006)) === 2 ** -1074, 'v_div_fmas_f64 rescales before its single rounding');
+
+  const fixup = (q: bigint, den: bigint, num: bigint) => read64(run1('v_div_fixup_f64 v[6:7], v[0:1], v[2:3], v[4:5]', e => {
+    [q, den, num].forEach((v, i) => write64(e, 2 * i, 0, v));
+  }), 6);
+  const b = f64ToBits;
+  assert(fixup(b(NaN), b(0), b(0)) === 0xFFF8000000000000n && fixup(b(1), b(-Infinity), b(Infinity)) === 0xFFF8000000000000n,
+    'v_div_fixup_f64: 0/0 and ∞/∞ give the NaN 0xfff8000000000000');
+  assert(fixup(b(1), b(1), 0x7FF0000000000001n) === 0x7FF8000000000001n, 'a NaN numerator is returned quieted');
+  assert(fixup(b(5), b(0), b(-3)) === b(-Infinity) && fixup(b(5), b(Infinity), b(-3)) === b(-0) && fixup(b(5), b(-2), b(3)) === b(-5) &&
+    fixup(b(1), b(1e300), b(1e-300)) === b(0), 'x/0 → ±∞, x/∞ → ±0, underflow → ±0, and the sign of numerator/denominator');
+  assert(fixup(b(NaN), b(1e-300), b(1e300)) === b(Infinity), 'a NaN quotient (the scaled steps overflowed) becomes ±∞ (hardware; the documents keep the NaN)');
+
+  const mods = run1(['v_div_scale_f64 v[6:7], s4, -v[0:1], -v[2:3], v[4:5]', 'v_div_fmas_f64 v[8:9], -v[0:1], v[2:3], |v[10:11]|',
+    'v_div_fixup_f64 v[12:13], v[4:5], -v[14:15], |v[16:17]|'].join('\n'), e => {
+    e.state.vcc = 0;
+    ([[0, 3], [2, 3], [4, 7], [10, -1], [14, 2], [16, -3]] as const).forEach(([reg, v]) => write64(e, reg, 0, f64ToBits(v)));
+  });
+  assert(f64FromBits(read64(mods, 6)) === -3 && f64FromBits(read64(mods, 8)) === -8 && f64FromBits(read64(mods, 12)) === -7,
+    'the division helpers apply the abs and neg source modifiers');
+}
+{
+  // LLVM's double division (scale, reciprocal, two Newton-Raphson steps, rescale, fix up) must give exactly
+  // x / y as JavaScript computes it, including overflow, subnormal results and huge or subnormal denominators
+  const DIV = ['v_div_scale_f64 v[4:5], s0, v[2:3], v[2:3], v[0:1]', 'v_rcp_f64 v[6:7], v[4:5]', 'v_fma_f64 v[8:9], -v[4:5], v[6:7], 1.0',
+    'v_fma_f64 v[6:7], v[6:7], v[8:9], v[6:7]', 'v_fma_f64 v[8:9], -v[4:5], v[6:7], 1.0', 'v_div_scale_f64 v[10:11], vcc_lo, v[0:1], v[2:3], v[0:1]',
+    'v_fma_f64 v[6:7], v[6:7], v[8:9], v[6:7]', 'v_mul_f64 v[8:9], v[10:11], v[6:7]', 'v_fma_f64 v[12:13], -v[4:5], v[8:9], v[10:11]',
+    'v_div_fmas_f64 v[12:13], v[12:13], v[6:7], v[8:9]', 'v_div_fixup_f64 v[0:1], v[12:13], v[2:3], v[0:1]'].join('\n');
+  const divide = (pairs: Array<[number, number]>): number[] => {
+    const e = run1(DIV, em => pairs.forEach(([x, y], lane) => { write64(em, 0, lane, f64ToBits(x)); write64(em, 2, lane, f64ToBits(y)); }));
+    return pairs.map((_, lane) => f64FromBits(read64(e, 0, lane)));
+  };
+  const cases: Array<[number, number]> = [[1, 3], [1e300, 1e60], [1e300, 1e-10], [1e308, 0.5], [1e-300, 1e10], [1, 1e308], [3, 1.5e308], [1e300, 1e308],
+    [1e-300, 5e-320], [5e-324, 3], [1e-300, 1e-10], [1e-310, 1e-312], [0, 0], [1, 0], [0, 1], [-0, 5], [5, -0], [Infinity, Infinity], [Infinity, 2],
+    [2, Infinity], [NaN, 1], [1, NaN], [-7, 2], [7, -2], [2 ** 1023, 0.5], [2 ** -1074, 2 ** 1023], [1.7976931348623157e308, 1e-300], [123.456, 7e-320]];
+  let seed = 2024;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF) / 0x80000000;
+  for (let i = cases.length; i < 32 * 40; i++) {
+    const x = (rnd() + 0.5) * 2 ** (Math.floor(rnd() * 2100) - 1080) * (rnd() < 0.5 ? -1 : 1);
+    const y = (rnd() + 0.5) * 2 ** (Math.floor(rnd() * 2100) - 1080) * (rnd() < 0.5 ? -1 : 1);
+    cases.push([x, y]);
+  }
+  const wrong: string[] = [];
+  for (let i = 0; i < cases.length; i += 32) {
+    const batch = cases.slice(i, i + 32);
+    divide(batch).forEach((q, k) => { if (!isF64(q, batch[k][0] / batch[k][1])) wrong.push(`${batch[k][0]} / ${batch[k][1]} gave ${q}`); });
+  }
+  assert(wrong.length === 0, `LLVM's f64 division sequence matches x / y in ${cases.length} cases${wrong.length ? `; e.g. ${wrong[0]}` : ''}`);
+}
+{
+  const ok = (src: string) => assemble(src).errors.length === 0;
+  assert(ok('v_div_fmas_f64 v[0:1], s[0:1], v[2:3], v[4:5]') && !ok('v_div_fmas_f64 v[0:1], s[0:1], s[2:3], v[4:5]'),
+    'v_div_fmas_f64 reads VCC, which counts as one of its two scalar values');
+  assert(!ok('v_add_f64 v[0:1], v[2:4], v[4:5]') && !ok('v_add_f64 v[0:1], s[1:2], v[4:5]'), 'f64 operands need aligned register pairs');
+  assert(!ok('v_floor_f64 v[0:1], v[2:3] row_shr:1') && !ok('v_floor_f64_sdwa v[0:1], v[2:3]'), 'f64 instructions have no DPP or SDWA form');
+  assert(!ok('v_div_scale_f64 v[0:1], vcc_lo, |v[2:3]|, v[2:3], v[4:5]') && ok('v_div_scale_f64 v[0:1], vcc_lo, -v[2:3], v[2:3], v[4:5]'),
+    'v_div_scale_f64 (VOP3B) takes neg but not abs');
+  assert(!ok('v_ldexp_f64 v[0:1], v[2:3], -v4') && !ok('v_trig_preop_f64 v[0:1], v[2:3], |v4|'), 'the integer src1 of v_ldexp_f64 / v_trig_preop_f64 takes no modifiers');
+  const w = assemble('v_add_f64 v[0:1], 0.1, v[2:3]\ns_endpgm').warnings;
+  assert(w.length === 1 && /high 32 bits/.test(w[0].message), 'an inexact f64 float literal warns');
 }
 
 // ════════════════════════════════════════════

@@ -78,8 +78,11 @@ export function operandRegCount(info: OpcodeInfo, role: OperandRole): number {
   }
   const multi = MULTI_REG[info.mnemonic]?.[role];
   if (multi !== undefined) return multi;
-  // Typed 64-bit sources (the f64/i64/u64 compares) are register pairs
-  if (role !== 'dst' && info.types && is64BitType(vopTypes(info).s[Number(role.slice(3))])) return 2;
+  // Typed 64-bit operands (f64 arithmetic, 64-bit compares) are register pairs
+  if (info.types) {
+    const types = vopTypes(info);
+    if (is64BitType(role === 'dst' ? types.d : types.s[Number(role.slice(3))])) return 2;
+  }
   return 1;
 }
 

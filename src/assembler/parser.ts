@@ -638,7 +638,8 @@ function parseVALU(
         instr.dst = scalarDestOperand(g, 1, 'the destination');
         break;
       case 'sdst': {
-        const sdst = scalarDestOperand(g, 1, info.format === InstructionFormat.VOPC ? 'the compare result' : 'the carry-out');
+        const sdst = scalarDestOperand(g, 1, info.format === InstructionFormat.VOPC ? 'the compare result'
+          : m === 'v_div_scale_f64' ? 'the scale flag' : 'the carry-out');
         if (isCmpx && sdst.value !== EXEC_LO) errorAt(`${m} writes EXEC; use exec_lo (or omit the destination)`, g.token);
         instr.sdst = sdst;
         break;

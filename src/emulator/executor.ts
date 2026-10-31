@@ -18,8 +18,9 @@ import {
   NUM_VGPRS,
 } from '../isa/constants';
 import { f16ToF32, f32ToF16 } from '../isa/float16';
+import { bitsToF64, divFixupF64, divFmasScale, divScaleF64, f64ToBits, fmaF64 } from '../isa/float64';
 import { sadU8, msadU8, compareHolds, compareOrder, floatClass } from '../isa/opcodes';
-import { vopTypes, valuSourceCount, isFloatType, is16BitType, is64BitType } from '../isa/operands';
+import { vopTypes, valuSourceCount, isFloatType, is16BitType, is64BitType, VopTypes } from '../isa/operands';
 import { GPUState, LDS_SIZE_BYTES } from './state';
 import { ResolvedInstruction } from './decoder';
 
@@ -45,8 +46,6 @@ export interface ExecContext {
 
 const f32a = new Float32Array(1);
 const u32a = new Uint32Array(f32a.buffer);
-const f64a = new Float64Array(1);
-const u64a = new BigUint64Array(f64a.buffer);
 
 function bitsToFloat(bits: number): number {
   u32a[0] = bits >>> 0;
@@ -56,16 +55,6 @@ function bitsToFloat(bits: number): number {
 function floatBits(v: number): number {
   f32a[0] = v;
   return u32a[0];
-}
-
-function f64Bits(v: number): bigint {
-  f64a[0] = v;
-  return u64a[0];
-}
-
-function bitsToF64(bits: bigint): number {
-  u64a[0] = BigInt.asUintN(64, bits);
-  return f64a[0];
 }
 
 const M64 = 0xFFFFFFFFFFFFFFFFn;
@@ -120,7 +109,7 @@ function readScalar64(state: GPUState, enc: number, literal: number | undefined,
   if (enc <= 127) return state.readSGPR64(enc);
   const i = inlineInt(enc);
   if (i !== undefined) return BigInt.asUintN(64, BigInt(i));
-  if (enc >= 240 && enc <= 248) return f64Bits(enc === 248 ? 1 / (2 * Math.PI) : INLINE_FLOAT_MAP[enc]);
+  if (enc >= 240 && enc <= 248) return f64ToBits(enc === 248 ? 1 / (2 * Math.PI) : INLINE_FLOAT_MAP[enc]);
   if (enc === LITERAL_CONST) {
     if (literal === undefined) fault('The instruction is missing its literal constant');
     return literal64(literal, ext);
@@ -446,7 +435,47 @@ function quadSad(state: GPUState, d: DecodedInstruction, masked: boolean, wide: 
   for (const [lane, words] of writes) words.forEach((w, k) => state.writeVGPR_u32(d.dst + k, lane, w));
 }
 
+/** An f64 source of one lane as bits, with the VOP3 abs and neg modifiers applied to its sign bit. */
+function readF64Bits(state: GPUState, d: DecodedInstruction, index: 0 | 1 | 2, lane: number): bigint {
+  const enc = index === 0 ? d.src0Encoded : index === 1 ? d.src1 ?? 0 : d.src2 ?? 0;
+  const abs = index === 0 ? d.src0Abs : index === 1 ? d.src1Abs : d.src2Abs;
+  const neg = index === 0 ? d.src0Neg : index === 1 ? d.src1Neg : d.src2Neg;
+  let bits = readLane64(state, enc, lane, d.literal, 'f64');
+  if (abs) bits &= ~(1n << 63n);
+  if (neg) bits ^= 1n << 63n;
+  return bits;
+}
+
+/** The three f64 sources of one lane as numbers. */
+function readF64Sources(state: GPUState, d: DecodedInstruction, lane: number): [number, number, number] {
+  return [0, 1, 2].map(i => bitsToF64(readF64Bits(state, d, i as 0 | 1 | 2, lane))) as [number, number, number];
+}
+
 const VALU_SPECIAL: Record<string, ValuHandler> = {
+  // Double-precision division helpers: they read VCC, write a lane mask or need exact NaN bit patterns
+  v_div_scale_f64: (state, d) => {
+    let mask = 0;
+    perLane64(state, d, (lane) => {
+      const [s0, s1, s2] = readF64Sources(state, d, lane);
+      const r = divScaleF64(s0, s1, s2);
+      if (r.vcc) mask |= 1 << lane;
+      return f64ToBits(outputModifiers(r.value, d));
+    });
+    state.writeSGPR(d.sdst ?? VCC_LO, mask >>> 0);
+  },
+  v_div_fmas_f64: (state, d) => {
+    const vcc = state.vcc;
+    perLane64(state, d, (lane) => {
+      const [a, b, c] = readF64Sources(state, d, lane);
+      return f64ToBits(outputModifiers(fmaF64(a, b, c, (vcc >>> lane) & 1 ? divFmasScale(c) : 0), d));
+    });
+  },
+  v_div_fixup_f64: (state, d) => {
+    perLane64(state, d, (lane) => {
+      const bits = divFixupF64(readF64Bits(state, d, 0, lane), readF64Bits(state, d, 1, lane), readF64Bits(state, d, 2, lane));
+      return d.clamp || d.omod ? f64ToBits(outputModifiers(bitsToF64(bits), d)) : bits;
+    });
+  },
   v_nop: () => {},
   v_readfirstlane_b32: (state, d) => {
     const exec = state.exec;
@@ -589,6 +618,37 @@ function executeVOPC(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): 
   else state.writeSGPR(d.sdst ?? VCC_LO, mask >>> 0);
 }
 
+/**
+ * VALU instructions with 64-bit float operands: register-pair sources and destinations are read and written
+ * exactly, and the semantics run in double precision (32-bit operands are typed as usual).
+ */
+function executeVALU64(state: GPUState, d: DecodedInstruction, info: OpcodeInfo, types: VopTypes): void {
+  const exec = state.exec;
+  const nsrc = valuSourceCount(info);
+  const enc = [d.src0Encoded, d.src1 ?? 0, d.src2 ?? 0];
+  const abs = [!!d.src0Abs, !!d.src1Abs, !!d.src2Abs];
+  const neg = [!!d.src0Neg, !!d.src1Neg, !!d.src2Neg];
+  const writes: Array<[number, number]> = [];
+  const writes64: Array<[number, bigint]> = [];
+  for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+    if (!isActive(exec, lane)) continue;
+    const args = [0, 0, 0];
+    for (let i = 0; i < nsrc; i++) {
+      const t = types.s[i];
+      const v = t === 'f64'
+        ? bitsToF64(readLane64(state, enc[i], lane, d.literal, 'f64'))
+        : typed(readLane(state, enc[i], lane, d.literal, t === 'f16'), t, false);
+      args[i] = applyModifiers(v, t, abs[i], neg[i]);
+    }
+    let result = info.execute(args[0], args[1], args[2]);
+    if (isFloatType(types.d)) result = outputModifiers(result, d);
+    if (types.d === 'f64') writes64.push([lane, f64ToBits(result)]);
+    else writes.push([lane, toBits(result, types.d)]);
+  }
+  for (const [lane, v] of writes64) writeLane64(state, d.dst, lane, v);
+  for (const [lane, v] of writes) state.writeVGPR_u32(d.dst, lane, v);
+}
+
 function executeVALU(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): void {
   const m = info.mnemonic;
   const special = VALU_SPECIAL[m];
@@ -602,6 +662,10 @@ function executeVALU(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): 
   }
 
   const types = vopTypes(info);
+  if (is64BitType(types.d) || types.s.slice(0, valuSourceCount(info)).some(is64BitType)) {
+    executeVALU64(state, d, info, types);
+    return;
+  }
   const exec = state.exec;
   const opSel = info.opSel && d.vop3 ? (d.opSel ?? 0) : 0;
   const enc = [d.src0Encoded, d.src1 ?? 0, d.src2 ?? 0];

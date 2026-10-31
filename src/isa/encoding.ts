@@ -387,7 +387,7 @@ function encodeVOP3(info: OpcodeInfo, instr: ParsedInstruction): number[] {
   const vdst = info.format === InstructionFormat.VOPC ? sdst : instr.dst.value;
   const roles = ['src0', 'src1', 'src2'] as const;
   checkConstantBus(m, used.map((op, i) => ({ op, enc: enc[i], dwords: operandRegCount(info, roles[i]) })),
-    m === 'v_div_fmas_f32');
+    m === 'v_div_fmas_f32' || m === 'v_div_fmas_f64');
 
   const w0 = (0x35 << 26) | ((vop3Opcode(info) & 0x3FF) << 16) | ((instr.clamp ? 1 : 0) << 15) |
     (isB ? (sdst & 0x7F) << 8 : ((opSel & 0xF) << 11) | ((abs & 7) << 8)) | (vdst & 0xFF);
