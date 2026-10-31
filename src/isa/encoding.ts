@@ -740,13 +740,50 @@ export function assembleToBinary(instructions: ParsedInstruction[]): Uint32Array
 
 /** Something that assembles but probably not as written: where it is and what happens. */
 export interface EncodingWarning {
-  slot: 'src0' | 'src1' | 'src2';
+  slot: 'src0' | 'src1' | 'src2' | 'k';
   message: string;
 }
 
+/** "4.2e-45", "NaN", "1": a value at a glance. */
+function shortNumber(v: number): string {
+  return Number.isFinite(v) ? String(Number(v.toPrecision(3))) : String(v);
+}
+
 /**
- * A float literal for a 64-bit float operand keeps only the high 32 bits of the double, so a value
- * such as 0.1 changes (LLVM warns about this too).
+ * Why integer `v` is probably a mistake as a constant for an operand of `kind`: a floating-point operand reads
+ * an integer's bit pattern (a literal for a 64-bit operand fills the high half), so 3 is a tiny denormal, not 3.0.
+ * Null for 0 (the same bits as 0.0), for other operand kinds and for integers that do not fit (an error).
+ */
+function integerConstantWarning(v: number, kind: ConstKind): string | null {
+  if (v === 0) return null;
+  let bits: string;
+  let value: number;
+  if (kind === 'f16') {
+    if (v < -0x8000 || v > 0xFFFF) return null;
+    bits = hex(v & 0xFFFF, 4);
+    value = f16ToF32(v & 0xFFFF);
+  } else if (kind === 'f32' || kind === 'f64') {
+    if (v < -(2 ** 31) || v > 2 ** 32 - 1) return null;
+    if (kind === 'f32') {
+      bits = hex(v, 8);
+      value = bitsToF32(v);
+    } else {
+      u64buf[0] = v >= -16 && v <= 64 ? BigInt.asUintN(64, BigInt(v)) : BigInt(v >>> 0) << 32n;
+      bits = `0x${u64buf[0].toString(16).padStart(16, '0')}`;
+      value = f64buf[0];
+    }
+  } else {
+    return null;
+  }
+  return `${v} is an integer, so this floating-point operand reads its bit pattern ${bits} (${shortNumber(value)}) ` +
+    `rather than ${v}.0. Write ${v}.0 for the number, or use hex for raw bits`;
+}
+
+/**
+ * Constants that assemble but are probably not what was meant: an integer such as 3 written for a
+ * floating-point operand is read as its bit pattern, not as 3.0 (hex is taken to mean the bits); and a float
+ * literal for a 64-bit float operand keeps only the high 32 bits of the double, so a value such as 0.1
+ * changes (LLVM warns about this too).
  */
 export function encodingWarnings(instr: ParsedInstruction): EncodingWarning[] {
   const info = lookupByMnemonic(instr.mnemonic);
@@ -754,14 +791,24 @@ export function encodingWarnings(instr: ParsedInstruction): EncodingWarning[] {
   const warnings: EncodingWarning[] = [];
   const slots = ['src0', 'src1', 'src2'] as const;
   sources(instr).slice(0, valuSourceCount(info)).forEach((op, i) => {
-    if (!op || op.type !== OperandType.LITERAL || !constIsFloat(op)) return;
-    if (valuConstKind(info, i) !== 'f64' || f64LowBits(op.value) === 0) return;
+    if (!op || op.type === OperandType.VGPR || op.type === OperandType.SGPR || op.type === OperandType.SPECIAL) return;
+    const kind = valuConstKind(info, i, instr.opSelHi ?? 0);
+    if (!constIsFloat(op)) {
+      const message = op.isHex ? null : integerConstantWarning(op.value, kind);
+      if (message) warnings.push({ slot: slots[i], message });
+      return;
+    }
+    if (op.type !== OperandType.LITERAL || kind !== 'f64' || f64LowBits(op.value) === 0) return;
     warnings.push({
       slot: slots[i],
       message: `${op.value} is not exact as a 64-bit float literal: a literal holds only the high 32 bits of the double, ` +
         `so the instruction uses ${f64FromHighBits(f64HighBits(op.value))}`,
     });
   });
+  if (instr.kInteger !== undefined) {
+    const message = integerConstantWarning(instr.kInteger, vopTypes(info).d === 'f16' ? 'f16' : 'f32');
+    if (message) warnings.push({ slot: 'k', message });
+  }
   return warnings;
 }
 

@@ -255,6 +255,7 @@ function constantOperand(token: Token, neg: boolean, abs: boolean): Operand {
     : { type: OperandType.LITERAL, value, encoded: LITERAL_CONST, isFloat };
   if (neg) op.neg = true;
   if (abs) op.abs = true;
+  if (/^-?0x/i.test(token.value)) op.isHex = true;
   return op;
 }
 
@@ -646,6 +647,7 @@ function parseVALU(
       }
       case 'k':
         instr.kLiteral = kLiteralBits(info, g);
+        if (/^-?\d+$/.test(g.token.value)) instr.kInteger = Number(g.token.value);
         break;
       default: {
         const regs = operandRegCount(info, role);

@@ -47,6 +47,7 @@ export interface Operand {
   abs?: boolean;       // |src| — clear sign bit before operation
   neg?: boolean;       // -src — flip sign bit before operation
   isFloat?: boolean;   // Constant was written in floating-point syntax (e.g. 3.0)
+  isHex?: boolean;     // Constant was written in hexadecimal (e.g. 0x40400000): a bit pattern
   regCount?: number;   // Number of registers named by a range such as v[0:1]
 }
 
@@ -71,6 +72,7 @@ export interface ParsedInstruction {
   src2?: Operand;      // VOP3 3-source instructions; also the carry-in / condition SGPR of VOP3 carry ops and v_cndmask_b32
   sdst?: Operand;      // Scalar destination: VOPC result mask, VOP3B carry-out (defaults to VCC)
   kLiteral?: number;   // Implied 32-bit literal K of v_madmk/v_madak/v_fmamk/v_fmaak (raw bits)
+  kInteger?: number;   // K as written when that was a decimal integer (the float K then holds its bit pattern)
   line: number;
   column: number;
   spans?: Partial<Record<OperandSlot, SourceSpan>>; // Source columns of the mnemonic and of each written operand

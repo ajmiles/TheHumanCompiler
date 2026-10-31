@@ -6251,6 +6251,35 @@ group('Regression: player report — the 3.0 in a smoothstep had no effect');
   assert(add.state.readVGPR(1, 0) === 1, 'a non-inline float as the second operand reads as an f32 literal (VOP3)');
 }
 
+group('Regression: player report — an integer 3 where the float 3.0 was meant');
+{
+  // A Smooth Clamp solution computed 3 - 2t as v_sub_f32 v2, 3, v2: an integer constant is a bit pattern to a
+  // float operand (3 is a tiny denormal), so the result was -2t³. It assembled without a word; now it warns.
+  const puzzle = getPuzzleById('smooth-clamp')!;
+  const solution = ['v_sub_f32 v3, v1, v0', 'v_rcp_f32 v3, v3', 'v_sub_f32 v2, v2, v0', 'v_mul_f32 v2, v2, v3, clamp',
+    'v_mul_f32 v0, v2, v2', 'v_add_f32 v2, v2, v2', 'v_sub_f32 v2, 3, v2', 'v_mul_f32 v3, v0, v2', 's_endpgm'].join('\n');
+  const w = assemble(solution).warnings;
+  assert(w.length === 1 && w[0].line === 7 && w[0].column === 15 && /^3 is an integer.*0x00000003 \(4\.2e-45\) rather than 3\.0/.test(w[0].message),
+    'the reported solution warns at the 3 of v_sub_f32 v2, 3, v2');
+  assert(!runPuzzle(puzzle, solution).pass && runPuzzle(puzzle, solution.replace(', 3,', ', 3.0,')).pass,
+    'the reported solution fails Smooth Clamp, and passes with 3.0');
+
+  const warns = (src: string) => assemble(`${src}\ns_endpgm`).warnings.map(x => x.message);
+  assert(/0xffffffff \(NaN\)/.test(warns('v_add_f32 v0, -1, v1')[0] ?? '') && /0x000003e8 /.test(warns('v_mul_f32 v0, v1, 1000')[0] ?? ''),
+    'integer inline constants and integer literals warn, with the bits and the value read');
+  assert(/0x0003 \(1\.79e-7\)/.test(warns('v_add_f16 v0, 3, v1')[0] ?? '') &&
+    /0x0000000000000003 /.test(warns('v_add_f64 v[0:1], 3, v[2:3]')[0] ?? '') &&
+    /0x000003e800000000 /.test(warns('v_add_f64 v[0:1], 1000, v[2:3]')[0] ?? ''),
+    '16- and 64-bit float operands warn too (a literal fills the high half of a 64-bit operand)');
+  const k = assemble('v_fmaak_f32 v0, v1, v2, 3\ns_endpgm').warnings;
+  assert(k.length === 1 && k[0].column === 25 && /^3 is an integer/.test(k[0].message), 'an integer K constant warns, at the K');
+  assert(['v_cmp_lt_f32 vcc_lo, 3, v1', 'v_fma_mix_f32 v0, 3, v1, v2', 'v_mul_f32_e64 v0, -|3|, v1'].every(s => warns(s).length === 1),
+    'float compares, mixed-precision FMA sources and integers inside modifiers warn');
+  assert(['v_add_f32 v0, 0x3, v1', 'v_add_f32 v0, 0, v1', 'v_add_f32 v0, 3.0, v1', 'v_fmamk_f32 v0, v1, 0x40400000, v2', 'v_mov_b32 v0, 3',
+    'v_cvt_f32_i32 v0, 3', 'v_ldexp_f32 v0, v1, 3', 'v_add_nc_u32 v0, 3, v1', 'v_cndmask_b32 v0, 3, v1, vcc_lo'].every(s => warns(s).length === 0),
+    'hex bit patterns, 0, floats and integer operands do not warn');
+}
+
 group('Regression: every program must finish by executing s_endpgm');
 {
   // Assembler: a program without s_endpgm still assembles, with a warning on its last instruction
