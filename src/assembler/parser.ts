@@ -111,6 +111,9 @@ interface OperandGroup {
   abs: boolean;
   neg: boolean;
   sext: boolean;  // SDWA sext(...) wrapper
+  /** First and last tokens of the operand, its wrappers included. */
+  first: Token;
+  last: Token;
 }
 
 /** Split the tokens after the mnemonic into operands (with abs/neg/sext wrappers) and trailing modifiers. */
@@ -175,13 +178,15 @@ function splitOperands(rest: Token[]): { groups: OperandGroup[]; mods: Token[] }
     if (!core || !(core.type === TokenType.REGISTER || core.type === TokenType.NUMBER || core.type === TokenType.MNEMONIC)) {
       errorAt(core ? `Unexpected '${core.value}'` : 'Missing operand', core ?? rest[i - 1] ?? t);
     }
-    groups.push({ token: core, abs, neg, sext });
+    const group: OperandGroup = { token: core, abs, neg, sext, first: t, last: core };
     i++;
     while (closers.length > 0) {
       const expected = closers.pop()!;
       if (rest[i]?.type !== expected) errorAt(`Missing '${expected === TokenType.PIPE ? '|' : ')'}'`, rest[i] ?? core);
+      group.last = rest[i];
       i++;
     }
+    groups.push(group);
   }
   return { groups, mods };
 }
@@ -660,6 +665,7 @@ function parseVALU(
         if (slot === 'src0') instr.src0 = op;
         else if (slot === 'src1') instr.src1 = op;
         else instr.src2 = op;
+        (instr.wrappedSpans ??= {})[slot] = { start: g.first.column, end: g.last.end };
         if (g.sext) {
           if (slot === 'src0') instr.sdwaSrc0Sext = true;
           else if (slot === 'src1') instr.sdwaSrc1Sext = true;

@@ -28,26 +28,24 @@ export interface PickerRequest {
   onClose?: () => void;
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-const HINT = 'Pick a value, or type one and press Enter · Esc closes';
+/** Footer of a picker for a line a choice produces: the line, and the instruction's size and change in size. */
+export function previewHtml(line: string, bytes: number, nowBytes: number): string {
+  const delta = bytes - nowBytes;
+  const deltaHtml = delta ? ` <span class="op-picker__delta op-picker__delta--${delta > 0 ? 'up' : 'down'}">(${delta > 0 ? '+' : '−'}${Math.abs(delta)})</span>` : '';
+  return `<span class="op-picker__line">${escapeHtml(line.trim())}</span><span class="op-picker__size">${bytes} bytes${deltaHtml}</span>`;
+}
 
-export class OperandPicker {
-  private root: HTMLDivElement | null = null;
-  private req: PickerRequest | null = null;
-  private input!: HTMLInputElement;
-  private tabsEl!: HTMLElement;
-  private listEl!: HTMLElement;
-  private footerEl!: HTMLElement;
-  private group = '';
-  /** Choices on show, in order. */
-  private shown: EditChoice[] = [];
-  /** Index in `shown` that Enter applies, or -1. */
-  private hot = -1;
-  /** The arrow keys have moved `hot`. */
-  private navigated = false;
+/**
+ * A popup opened from a field of the Instruction Info panel and placed next to it. A click elsewhere,
+ * scrolling the page or resizing the window closes it.
+ */
+export abstract class AnchoredPopup<R extends { anchor: HTMLElement; onClose?: () => void }> {
+  protected root: HTMLDivElement | null = null;
+  protected req: R | null = null;
 
   private readonly onDocumentMouseDown = (e: MouseEvent) => {
     const target = e.target as Node;
@@ -59,10 +57,69 @@ export class OperandPicker {
   };
   private readonly onResize = () => this.close();
 
-  /** The field the picker is open on. */
+  /** The field the popup is open on. */
   get anchor(): HTMLElement | null {
     return this.req?.anchor ?? null;
   }
+
+  /** Add `root` to the page, fill it with `render` and place it next to the field of `this.req`. */
+  protected show(root: HTMLDivElement, render: () => void): void {
+    this.root = root;
+    document.body.appendChild(root);
+    render();
+    this.position();
+    document.addEventListener('mousedown', this.onDocumentMouseDown, true);
+    window.addEventListener('scroll', this.onScroll, true);
+    window.addEventListener('resize', this.onResize);
+  }
+
+  close(restoreFocus = false): void {
+    if (!this.root) return;
+    document.removeEventListener('mousedown', this.onDocumentMouseDown, true);
+    window.removeEventListener('scroll', this.onScroll, true);
+    window.removeEventListener('resize', this.onResize);
+    const req = this.req;
+    this.root.remove();
+    this.root = null;
+    this.req = null;
+    req?.onClose?.();
+    if (restoreFocus && req?.anchor.isConnected) req.anchor.focus();
+  }
+
+  /** Open below the field, or above it when there is more room there. */
+  private position(): void {
+    const root = this.root!;
+    const r = this.req!.anchor.getBoundingClientRect();
+    const margin = 8;
+    const below = window.innerHeight - r.bottom - margin - 4;
+    const above = r.top - margin - 4;
+    const height = root.offsetHeight;
+    root.style.left = `${Math.max(margin, Math.min(r.left, window.innerWidth - root.offsetWidth - margin))}px`;
+    if (height <= below || below >= above) {
+      root.style.top = `${r.bottom + 4}px`;
+      root.style.maxHeight = `${below}px`;
+    } else {
+      // Anchored by its bottom edge so it grows upwards, away from the field
+      root.style.bottom = `${window.innerHeight - r.top + 4}px`;
+      root.style.maxHeight = `${above}px`;
+    }
+  }
+}
+
+const HINT = 'Pick a value, or type one and press Enter · Esc closes';
+
+export class OperandPicker extends AnchoredPopup<PickerRequest> {
+  private input!: HTMLInputElement;
+  private tabsEl!: HTMLElement;
+  private listEl!: HTMLElement;
+  private footerEl!: HTMLElement;
+  private group = '';
+  /** Choices on show, in order. */
+  private shown: EditChoice[] = [];
+  /** Index in `shown` that Enter applies, or -1. */
+  private hot = -1;
+  /** The arrow keys have moved `hot`. */
+  private navigated = false;
 
   open(req: PickerRequest): void {
     this.close();
@@ -81,7 +138,6 @@ export class OperandPicker {
       `<div class="op-picker__tabs" role="tablist"></div>` +
       `<div class="op-picker__body" role="listbox"></div>` +
       `<div class="op-picker__footer"></div>`;
-    this.root = root;
     this.input = root.querySelector('.op-picker__input')!;
     this.tabsEl = root.querySelector('.op-picker__tabs')!;
     this.listEl = root.querySelector('.op-picker__body')!;
@@ -111,29 +167,10 @@ export class OperandPicker {
     });
     this.listEl.addEventListener('mouseleave', () => this.preview(this.restingChoice()));
 
-    document.body.appendChild(root);
-    this.render();
-    this.position();
+    this.show(root, () => this.render());
     this.listEl.querySelector('.op-picker__row--current, .op-picker__chip--current')?.scrollIntoView({ block: 'nearest' });
     this.input.focus();
     this.input.select();
-
-    document.addEventListener('mousedown', this.onDocumentMouseDown, true);
-    window.addEventListener('scroll', this.onScroll, true);
-    window.addEventListener('resize', this.onResize);
-  }
-
-  close(restoreFocus = false): void {
-    if (!this.root) return;
-    document.removeEventListener('mousedown', this.onDocumentMouseDown, true);
-    window.removeEventListener('scroll', this.onScroll, true);
-    window.removeEventListener('resize', this.onResize);
-    const req = this.req;
-    this.root.remove();
-    this.root = null;
-    this.req = null;
-    req?.onClose?.();
-    if (restoreFocus && req?.anchor.isConnected) req.anchor.focus();
   }
 
   private apply(text: string): void {
@@ -266,11 +303,7 @@ export class OperandPicker {
     } else if (result.error) {
       this.footerEl.textContent = result.error;
     } else {
-      const bytes = result.bytes ?? req.bytes;
-      const delta = bytes - req.bytes;
-      const deltaHtml = delta ? ` <span class="op-picker__delta op-picker__delta--${delta > 0 ? 'up' : 'down'}">(${delta > 0 ? '+' : '−'}${Math.abs(delta)})</span>` : '';
-      this.footerEl.innerHTML = `<span class="op-picker__line">${escapeHtml((result.line ?? '').trim())}</span>` +
-        `<span class="op-picker__size">${bytes} bytes${deltaHtml}</span>`;
+      this.footerEl.innerHTML = previewHtml(result.line ?? '', result.bytes ?? req.bytes, req.bytes);
     }
   }
 
@@ -312,24 +345,5 @@ export class OperandPicker {
     el?.classList.add(cls);
     el?.scrollIntoView({ block: 'nearest' });
     this.preview(this.shown[index]);
-  }
-
-  /** Open below the field, or above it when there is more room there. */
-  private position(): void {
-    const root = this.root!;
-    const r = this.req!.anchor.getBoundingClientRect();
-    const margin = 8;
-    const below = window.innerHeight - r.bottom - margin - 4;
-    const above = r.top - margin - 4;
-    const height = root.offsetHeight;
-    root.style.left = `${Math.max(margin, Math.min(r.left, window.innerWidth - root.offsetWidth - margin))}px`;
-    if (height <= below || below >= above) {
-      root.style.top = `${r.bottom + 4}px`;
-      root.style.maxHeight = `${below}px`;
-    } else {
-      // Anchored by its bottom edge so it grows upwards, away from the field
-      root.style.bottom = `${window.innerHeight - r.top + 4}px`;
-      root.style.maxHeight = `${above}px`;
-    }
   }
 }

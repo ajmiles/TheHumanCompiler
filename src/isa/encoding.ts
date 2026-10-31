@@ -1238,7 +1238,10 @@ function vgprText(index: number, count = 1): string {
 
 function withModifiers(text: string, abs?: boolean, neg?: boolean): string {
   if (abs) text = `|${text}|`;
-  return neg ? `-${text}` : text;
+  if (!neg) return text;
+  // A '-' written before a constant becomes part of it (-1.0 is another inline constant, not 1.0 with NEG set),
+  // so a negated constant is printed as neg(…), as LLVM does
+  return !abs && /^[-\d.]/.test(text) ? `neg(${text})` : `-${text}`;
 }
 
 function dppCtrlText(ctrl: number): string {

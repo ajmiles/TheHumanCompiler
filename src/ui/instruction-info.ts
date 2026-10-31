@@ -10,8 +10,9 @@ import { lookupByMnemonic } from '../isa/opcodes';
 import { decodeBinary, describeDppCtrl, encodeInstruction, scalarRegName, sourceFieldName } from '../isa/encoding';
 import { OperandRole, operandRegCount, valuSourceCount, hasPackedModifiers } from '../isa/operands';
 import { VCC_LO } from '../isa/constants';
-import { checkLine, editChoices, labelsIn, replaceSpan } from '../assembler/operand-edit';
+import { checkLine, editChoices, labelsIn, lineEdit, ModifierChoices, ModifierField, modifierOptions, replaceSpan } from '../assembler/operand-edit';
 import { OperandPicker } from './operand-picker';
+import { ModifierPicker } from './modifier-picker';
 
 // ── Bit-field layouts ──
 
@@ -25,6 +26,8 @@ interface BitField {
   show: (value: number, words: number[]) => string;
   /** The part of the source the field encodes, which clicking the field changes. */
   slot?: OperandSlot;
+  /** The VOP3 modifier the field encodes, which clicking the field changes. */
+  mod?: ModifierField;
 }
 
 interface DwordLayout {
@@ -65,6 +68,21 @@ function field(
 ): BitField {
   return { name, hi, lo, color, show, slot };
 }
+
+/** A VOP3 modifier field (CLAMP, OMOD, OP_SEL, ABS or NEG). */
+function modField(name: string, hi: number, lo: number, color: string, show: BitField['show'], mod: ModifierField): BitField {
+  return { ...field(name, hi, lo, color, show), mod };
+}
+
+/** What each modifier field does, shown at the top of its picker. */
+const MODIFIER_INTRO: Record<ModifierField, string> = {
+  clamp: 'Clamp the result, after any output modifier',
+  omod: 'Output modifier: scale a floating-point result before it is clamped',
+  op_sel: 'Which 16-bit half each operand uses: hi reads the high half of a source, or writes the high half of the destination',
+  abs: 'Take the absolute value of a source (before NEG)',
+  neg: 'Negate a source (after ABS)',
+};
+const PERMLANE_OP_SEL_INTRO = 'v_permlane16_b32 and v_permlanex16_b32 keep their FI and BOUND_CTRL flags in OP_SEL';
 
 /** Fixed encoding bits that identify the format. */
 const fixed = (hi: number, lo: number): BitField => field('ENC', hi, lo, COLOR.encoding, v => hexVal(v, 1));
@@ -132,8 +150,8 @@ function e32Fields(ctx: LayoutContext): BitField[] {
 
 function vop3SourceFields(ctx: LayoutContext, vop3p: boolean): BitField[] {
   return [
-    field('NEG', 31, 29, COLOR.neg, binary(3)),
-    vop3p ? field('OP_SEL_HI', 28, 27, COLOR.select, binary(2)) : field('OMOD', 28, 27, COLOR.modifier, v => OMOD[v]),
+    vop3p ? field('NEG', 31, 29, COLOR.neg, binary(3)) : modField('NEG', 31, 29, COLOR.neg, binary(3), 'neg'),
+    vop3p ? field('OP_SEL_HI', 28, 27, COLOR.select, binary(2)) : modField('OMOD', 28, 27, COLOR.modifier, v => OMOD[v], 'omod'),
     field('SRC2', 26, 18, COLOR.src2, valuSource(ctx, 2), 'src2'),
     field('SRC1', 17, 9, COLOR.src1, valuSource(ctx, 1), 'src1'),
     field('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0), 'src0'),
@@ -227,12 +245,12 @@ function layoutFor(ctx: LayoutContext, words: number[]): DwordLayout[] {
       push(d.encoding, e32Fields(ctx));
       break;
     case 'VOP3A':
-      push('VOP3A', [fixed(31, 26), opField(25, 16, ctx), field('CLAMP', 15, 15, COLOR.modifier),
-        field('OP_SEL', 14, 11, COLOR.select, binary(4)), field('ABS', 10, 8, COLOR.abs, binary(3)), vop3Vdst]);
+      push('VOP3A', [fixed(31, 26), opField(25, 16, ctx), modField('CLAMP', 15, 15, COLOR.modifier, v => String(v), 'clamp'),
+        modField('OP_SEL', 14, 11, COLOR.select, binary(4), 'op_sel'), modField('ABS', 10, 8, COLOR.abs, binary(3), 'abs'), vop3Vdst]);
       push('VOP3A', vop3SourceFields(ctx, false));
       break;
     case 'VOP3B':
-      push('VOP3B', [fixed(31, 26), opField(25, 16, ctx), field('CLAMP', 15, 15, COLOR.modifier),
+      push('VOP3B', [fixed(31, 26), opField(25, 16, ctx), modField('CLAMP', 15, 15, COLOR.modifier, v => String(v), 'clamp'),
         field('SDST', 14, 8, COLOR.dst, v => scalarRegName(v), 'sdst'), vop3Vdst]);
       push('VOP3B', vop3SourceFields(ctx, false));
       break;
@@ -435,6 +453,10 @@ export class InstructionInfo {
   private lastHtml = '';
   private shown: ShownInstruction | null = null;
   private picker = new OperandPicker();
+  private modPicker = new ModifierPicker();
+  /** Options of the modifier fields of `modLine`, which every refresh of the panel would otherwise recompute. */
+  private modLine = '';
+  private modOptions = new Map<ModifierField, ModifierChoices | null>();
   private editHandler: ((edit: OperandEdit) => void) | null = null;
 
   constructor(container: HTMLElement) {
@@ -488,7 +510,7 @@ export class InstructionInfo {
   }
 
   private applyCollapsed(): void {
-    if (this.collapsed) this.picker.close();
+    if (this.collapsed) this.closePickers();
     this.scrollable.style.display = this.collapsed ? 'none' : '';
     this.toggleBtn.textContent = this.collapsed ? '▶' : '▼';
     this.toggleBtn.title = this.collapsed ? 'Expand instruction info' : 'Collapse instruction info';
@@ -510,13 +532,33 @@ export class InstructionInfo {
    */
   private setBody(html: string): void {
     if (html === this.lastHtml) return;
-    this.picker.close();
+    this.closePickers();
     this.bodyEl.innerHTML = html;
     this.lastHtml = html;
   }
 
+  private closePickers(): void {
+    this.picker.close();
+    this.modPicker.close();
+  }
+
+  /** The options of a modifier field of the instruction on `lineText` (remembered for the line on show). */
+  private modifierChoices(lineText: string, mod: ModifierField): ModifierChoices | null {
+    if (lineText !== this.modLine) {
+      this.modLine = lineText;
+      this.modOptions.clear();
+    }
+    if (!this.modOptions.has(mod)) this.modOptions.set(mod, modifierOptions(lineText, mod));
+    return this.modOptions.get(mod)!;
+  }
+
   /** Open the picker on an editable field (or close it if it is already open there). */
   private openField(cell: HTMLElement): void {
+    const mod = cell.dataset.mod as ModifierField | undefined;
+    if (mod) {
+      this.openModifier(cell, mod);
+      return;
+    }
     const shown = this.shown;
     const handler = this.editHandler;
     if (!shown || !handler) return;
@@ -530,6 +572,7 @@ export class InstructionInfo {
 
     const { line, lineText } = shown;
     const labels = labelsIn(this.lastSource);
+    this.modPicker.close();
     cell.classList.add('instr-info-bit--active');
     this.picker.open({
       anchor: cell,
@@ -545,6 +588,50 @@ export class InstructionInfo {
         return result.words ? { line: changed, bytes: result.words.length * 4 } : { error: result.error };
       },
       apply: text => handler({ line, span, text, lineText }),
+      onClose: () => cell.classList.remove('instr-info-bit--active'),
+    });
+  }
+
+  /**
+   * Open the modifier picker on a CLAMP, OMOD, OP_SEL, ABS or NEG field (or close it if it is open there),
+   * with row `focus` focused.
+   */
+  private openModifier(cell: HTMLElement, mod: ModifierField, focus?: number): void {
+    const shown = this.shown;
+    const handler = this.editHandler;
+    if (!shown || !handler) return;
+    if (this.modPicker.anchor === cell) {
+      this.modPicker.close();
+      return;
+    }
+    const choices = this.modifierChoices(shown.lineText, mod);
+    if (!choices) return;
+
+    const { line, lineText } = shown;
+    const permlane = shown.instr.mnemonic === 'v_permlane16_b32' || shown.instr.mnemonic === 'v_permlanex16_b32';
+    this.picker.close();
+    cell.classList.add('instr-info-bit--active');
+    this.modPicker.open({
+      anchor: cell,
+      title: cell.dataset.name ?? mod.toUpperCase(),
+      color: cell.dataset.color ?? COLOR.modifier,
+      intro: mod === 'op_sel' && permlane ? PERMLANE_OP_SEL_INTRO : MODIFIER_INTRO[mod],
+      kind: choices.kind,
+      options: choices.options,
+      states: mod === 'op_sel' && !permlane ? ['lo', 'hi'] : undefined,
+      bytes: shown.bytes,
+      focus,
+      apply: (option, index) => {
+        if (option.line === undefined) return;
+        const { span, text } = lineEdit(lineText, option.line);
+        this.modPicker.close();
+        handler({ line, span, text, lineText });
+        // The edit re-rendered the panel: keep switching bits on the field as it is now
+        if (choices.kind === 'toggles') {
+          const next = this.bodyEl.querySelector<HTMLElement>(`.instr-info-bit--editable[data-mod="${mod}"]`);
+          if (next) this.openModifier(next, mod, index);
+        }
+      },
       onClose: () => cell.classList.remove('instr-info-bit--active'),
     });
   }
@@ -623,12 +710,20 @@ export class InstructionInfo {
         const width = f.hi - f.lo + 1;
         const value = width === 32 ? word : (word >>> f.lo) & ((1 << width) - 1);
         const text = f.show(value, words);
-        const canEdit = editable && !!f.slot && !!instr.spans?.[f.slot];
+        let canEdit = editable && !!f.slot && !!instr.spans?.[f.slot];
+        let why = '';
+        if (editable && f.mod) {
+          // A modifier field can be clicked when one of its other values assembles; otherwise the tip says why not
+          const options = this.modifierChoices(lineText, f.mod)?.options ?? [];
+          canEdit = options.some(o => o.line !== undefined && o.line !== lineText);
+          if (!canEdit) why = (options.find(o => o.error && o.operand !== '—') ?? options.find(o => o.error))?.error ?? '';
+        }
         anyEditable ||= canEdit;
-        const tip = `${f.name || 'reserved'} [${f.hi}:${f.lo}] = ${hexVal(value, 1)}${canEdit ? ' — click to change' : ''}`;
+        const tip = `${f.name || 'reserved'} [${f.hi}:${f.lo}] = ${hexVal(value, 1)}${canEdit ? ' — click to change' : why ? ` — ${why}` : ''}`;
         const style = `flex:${width};--field-color:${f.color};--field-bg:${f.color}15;--field-hover:${f.color}38;border-color:${f.color}`;
         html += canEdit
-          ? `<div class="instr-info-bit instr-info-bit--editable" style="${style}" data-slot="${f.slot}" ` +
+          ? `<div class="instr-info-bit instr-info-bit--editable" style="${style}" ` +
+            `${f.mod ? `data-mod="${f.mod}"` : `data-slot="${f.slot}"`} ` +
             `data-name="${escapeHtml(f.name)}" data-color="${f.color}" title="${escapeHtml(tip)}" ` +
             `tabindex="0" role="button" aria-haspopup="dialog">`
           : `<div class="instr-info-bit" style="${style}" title="${escapeHtml(tip)}">`;

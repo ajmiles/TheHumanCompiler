@@ -130,7 +130,7 @@
   border-right: none;
 }
 
-/* Fields that change the source when clicked: OP, the operands, SIMM16 and literals */
+/* Fields that change the source when clicked: OP, the operands, SIMM16, literals and the VOP3 modifiers */
 .instr-info-bit--editable {
   cursor: pointer;
   transition: background-color 0.12s, box-shadow 0.12s;
@@ -442,4 +442,173 @@
 
 .op-picker__hint {
   color: var(--text-muted);
+}
+
+/* ── Modifier picker (CLAMP, OMOD, OP_SEL, ABS and NEG of the VOP3 encodings) ── */
+
+.mod-picker {
+  width: 420px;
+}
+
+.mod-picker .op-picker__header {
+  align-items: baseline;
+}
+
+.mod-picker__intro {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.mod-picker__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 6px 6px;
+}
+
+.mod-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 24px;
+  padding: 3px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mod-picker__row:hover {
+  background: var(--bg-hover);
+}
+
+.mod-picker__row:focus {
+  outline: none;
+}
+
+.mod-picker__row:focus-visible {
+  background: var(--bg-hover);
+  border-color: var(--text-accent);
+}
+
+.mod-picker__row--disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* A check box for a bit, a radio button for a value */
+.mod-picker__mark {
+  position: relative;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+}
+
+.mod-picker--choice .mod-picker__mark {
+  border-radius: 50%;
+}
+
+.mod-picker__row--disabled .mod-picker__mark {
+  background: none;
+  border-style: dashed;
+}
+
+.mod-picker__row--on .mod-picker__mark {
+  border-color: var(--accent-green);
+}
+
+.mod-picker--toggles .mod-picker__row--on .mod-picker__mark {
+  background: var(--accent-green);
+}
+
+.mod-picker--toggles .mod-picker__row--on .mod-picker__mark::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--bg-primary);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.mod-picker--choice .mod-picker__row--on .mod-picker__mark::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  background: var(--accent-green);
+  border-radius: 50%;
+}
+
+.mod-picker__label {
+  flex: 0 0 74px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.mod-picker__row--on .mod-picker__label {
+  color: var(--accent-green);
+}
+
+.mod-picker__operand {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.mod-picker__detail {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.mod-picker__row--disabled .mod-picker__label,
+.mod-picker__row--disabled .mod-picker__operand,
+.mod-picker__row--disabled .mod-picker__detail {
+  color: var(--text-muted);
+}
+
+/* OP_SEL: which half of the operand is used */
+.mod-picker__states {
+  display: inline-flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.mod-picker__states span {
+  padding: 0 6px;
+  color: var(--text-muted);
+}
+
+.mod-picker__states .mod-picker__state--on {
+  background: var(--accent-green);
+  color: var(--bg-primary);
+  font-weight: 700;
+}
+
+.mod-picker__row--disabled .mod-picker__states .mod-picker__state--on {
+  background: var(--border-default);
+  color: var(--text-secondary);
 }

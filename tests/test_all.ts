@@ -11,7 +11,7 @@ import { ALL_TUTORIALS } from '../src/puzzle/tutorials';
 import { Puzzle, PuzzleResult } from '../src/puzzle/types';
 import { InstructionFormat, OperandSlot } from '../src/isa/types';
 import { twoOverPiTable } from '../src/isa/float64';
-import { checkLine, EditChoice, editChoices, labelsIn } from '../src/assembler/operand-edit';
+import { checkLine, EditChoice, editChoices, labelsIn, lineEdit, ModifierField, modifierOptions, replaceSpan } from '../src/assembler/operand-edit';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -6556,6 +6556,147 @@ group('Instruction Info editing: operand spans and choices');
   assert(checkLine('s_branch nowhere', new Set(['done'])).error === "Undefined label 'nowhere'", 'checkLine: an unknown branch target');
   assert(checkLine('v_add_f32 v0, s0, v1 row_shr:1').error !== undefined, 'checkLine: reports what is wrong');
   assert([...labelsIn('a: s_nop 0\nb:\n  s_branch a')].join() === 'a,b', 'labelsIn: every label definition');
+}
+
+group('Instruction Info editing: VOP3 modifier fields');
+{
+  // A source's wrapped span covers its modifiers, so ABS and NEG can rewrite the whole operand
+  const wrapped = (src: string, slot: 'src0' | 'src1' | 'src2'): string | undefined => {
+    const span = assemble(src).instructions[0]?.wrappedSpans?.[slot];
+    return span ? src.split('\n')[0].slice(span.start - 1, span.end - 1) : undefined;
+  };
+  assert(wrapped('v_add_f32_e64 v0, -|v1|, abs(v2) ; c', 'src0') === '-|v1|' && wrapped('v_add_f32_e64 v0, -|v1|, abs(v2) ; c', 'src1') === 'abs(v2)',
+    'wrapped spans: -|…| and abs()');
+  assert(wrapped('v_add_f32_e64 v0, neg(1.0), -abs(s1)', 'src0') === 'neg(1.0)' && wrapped('v_add_f32_e64 v0, neg(1.0), -abs(s1)', 'src1') === '-abs(s1)',
+    'wrapped spans: neg() and -abs()');
+  assert(wrapped('v_add_f32 v0 |v1| |v2|', 'src0') === '|v1|' && wrapped('v_add_f32 v0 |v1| |v2|', 'src1') === '|v2|',
+    'wrapped spans: operands written without commas stay apart');
+  assert(wrapped('v_add_nc_u32 v2, sext(v0), v1 src0_sel:BYTE_0', 'src0') === 'sext(v0)', 'wrapped spans: sext()');
+
+  const opts = (line: string, field: ModifierField) => modifierOptions(line, field)!;
+  const lineOf = (line: string, field: ModifierField, key: string) => opts(line, field).options.find(o => o.key === key)?.line;
+  const errorOf = (line: string, field: ModifierField, key: string) => opts(line, field).options.find(o => o.key === key)?.error ?? '';
+
+  // ABS and NEG: one switch per source, written in the style the line already uses
+  const absLine = 'v_add_f32_e64 v0, -v1, abs(v2) ; note';
+  const abs = opts(absLine, 'abs');
+  assert(abs.kind === 'toggles' && abs.options.map(o => `${o.label}:${o.operand}:${o.on}`).join() === 'SRC0:-v1:false,SRC1:abs(v2):true,SRC2:—:false',
+    'ABS: a switch per source, showing each operand as written and whether its bit is set');
+  assert(lineOf(absLine, 'abs', 'src0') === 'v_add_f32_e64 v0, -|v1|, abs(v2) ; note' && lineOf(absLine, 'abs', 'src1') === 'v_add_f32_e64 v0, -v1, v2 ; note',
+    'ABS: switching on wraps the register inside its minus sign; switching off removes abs()');
+  assert(opts(absLine, 'neg').options.map(o => `${o.label}:${o.on}`).join() === 'SRC0:true,SRC1:false,SRC2:false', 'NEG: each switch shows its own bit');
+  assert(/reads 2 sources/.test(errorOf(absLine, 'abs', 'src2')), 'ABS: a source the instruction does not read cannot be switched');
+  assert(lineOf('v_add_f32_e64 v0, 1.0, |2.0|', 'neg', 'src0') === 'v_add_f32_e64 v0, neg(1.0), |2.0|' &&
+    lineOf('v_add_f32_e64 v0, 1.0, |2.0|', 'neg', 'src1') === 'v_add_f32_e64 v0, 1.0, -|2.0|',
+    'NEG: a constant is negated with neg() (-1.0 would be another constant), or with - before |…|');
+  assert(lineOf('v_add_f32_e64 v0, neg(-2.0), -abs(v1)', 'neg', 'src0') === 'v_add_f32_e64 v0, -2.0, -abs(v1)' &&
+    lineOf('v_add_f32_e64 v0, neg(-2.0), -abs(v1)', 'neg', 'src1') === 'v_add_f32_e64 v0, neg(-2.0), abs(v1)' &&
+    lineOf('v_add_f32_e64 v0, neg(|v1|), v2', 'abs', 'src0') === 'v_add_f32_e64 v0, neg(v1), v2',
+    'NEG / ABS: switching off removes just that modifier, keeping neg() and abs() styles');
+  const shrink = opts('v_add_f32 v9, -v1, v2', 'neg').options;
+  assert(shrink[0].line === 'v_add_f32 v9, v1, v2' && shrink[0].bytes === 4 && shrink[1].bytes === 8,
+    'NEG: removing the only modifier of a promoted instruction gives back the 4-byte VOP2 form');
+  assert(['abs', 'neg'].every(f => opts('v_add_nc_u32_e64 v0, v1, v2', f as ModifierField).options.every(o => o.error)) &&
+    /floating-point operands/.test(errorOf('v_add_nc_u32_e64 v0, v1, v2', 'neg', 'src0')),
+    'ABS / NEG: integer operands cannot take them, and say why');
+  assert(lineOf('v_div_scale_f64 v[0:1], vcc_lo, v[2:3], v[2:3], v[4:5]', 'neg', 'src1') === 'v_div_scale_f64 v[0:1], vcc_lo, v[2:3], -v[2:3], v[4:5]' &&
+    /does not support abs/.test(errorOf('v_div_scale_f64 v[0:1], vcc_lo, v[2:3], v[2:3], v[4:5]', 'abs', 'src0')),
+    'VOP3B: NEG can be switched, ABS cannot (its bits hold SDST)');
+
+  // CLAMP and OMOD: their values, written where LLVM prints them (op_sel, clamp, then the output modifier)
+  const clamp = opts('v_add_f32_e64 v0, v1, v2 mul:2 ; c', 'clamp');
+  assert(clamp.kind === 'choice' && clamp.options.map(o => `${o.label}:${o.on}`).join() === 'off:true,on:false' &&
+    clamp.options[1].line === 'v_add_f32_e64 v0, v1, v2 clamp mul:2 ; c' && /\[0\.0, 1\.0\]/.test(clamp.options[1].detail ?? ''),
+    'CLAMP: off / on; clamp goes before an output modifier');
+  assert(lineOf('v_add_f32_e64 v0, v1, v2 clamp mul:4 ; c', 'clamp', '0') === 'v_add_f32_e64 v0, v1, v2 mul:4 ; c' &&
+    lineOf('v_add_f32_e64 v0, v1, v2 clamp mul:4 ; c', 'omod', '0') === 'v_add_f32_e64 v0, v1, v2 clamp ; c',
+    'CLAMP / OMOD: switching off removes the modifier and the space before it');
+  const omod = opts('v_add_f32_e64 v0, v1, v2 clamp mul:4', 'omod');
+  assert(omod.options.map(o => `${o.label}:${o.on}`).join() === 'none:false,mul:2:false,mul:4:true,div:2:false' &&
+    omod.options[1].line === 'v_add_f32_e64 v0, v1, v2 clamp mul:2' && lineOf('v_add_f32_e64 v0, v1, v2 clamp', 'omod', '3') === 'v_add_f32_e64 v0, v1, v2 clamp div:2',
+    'OMOD: none, mul:2, mul:4, div:2, replaced in place or added after clamp');
+  assert(lineOf('v_add_nc_u32_e64 v0, v1, v2', 'clamp', '1') === 'v_add_nc_u32_e64 v0, v1, v2 clamp' &&
+    /Saturate/.test(opts('v_add_nc_u32_e64 v0, v1, v2', 'clamp').options[1].detail ?? '') &&
+    /floating-point result/.test(errorOf('v_add_nc_u32_e64 v0, v1, v2', 'omod', '1')),
+    'CLAMP saturates an integer result; OMOD needs a floating-point one');
+  assert(lineOf('v_cmp_lt_f32_e64 s0, v1, v2', 'clamp', '1') !== undefined && /does not support clamp/.test(errorOf('v_cmp_lt_u32_e64 s0, v1, v2', 'clamp', '1')),
+    'CLAMP: float compares accept it, integer compares do not');
+
+  // OP_SEL: lo / hi per operand, the destination last, written as LLVM prints it
+  assert(lineOf('v_fma_f16 v0, v1, v2, v3 clamp', 'op_sel', 'src0') === 'v_fma_f16 v0, v1, v2, v3 op_sel:[1,0,0,0] clamp',
+    'OP_SEL: a new op_sel goes before clamp');
+  const sel = opts('v_fma_f16 v0, v1, v2, v3 op_sel:[0,1,0,0]', 'op_sel');
+  assert(sel.options.map(o => `${o.label}:${o.operand}:${o.on}`).join() === 'SRC0:v1:false,SRC1:v2:true,SRC2:v3:false,DST:v0:false' &&
+    sel.options[1].line === 'v_fma_f16 v0, v1, v2, v3' && sel.options[3].line === 'v_fma_f16 v0, v1, v2, v3 op_sel:[0,1,0,1]',
+    'OP_SEL: switching the last bit off removes op_sel; DST is the final entry');
+  assert(opts('v_add_nc_u16 v0, v1, v2 op_sel:[1,0]', 'op_sel').options.map(o => o.label).join() === 'SRC0,SRC1,DST' &&
+    lineOf('v_add_nc_u16 v0, v1, v2 op_sel:[1,0]', 'op_sel', 'dst') === 'v_add_nc_u16 v0, v1, v2 op_sel:[1,0,1]',
+    'OP_SEL: a two-source instruction has three entries');
+  assert(opts('v_add_nc_u16 v0, v1, v2 op_sel:[0,0,1]', 'op_sel').options.map(o => `${o.label}:${o.on}`).join() === 'SRC0:false,SRC1:false,DST:true',
+    'OP_SEL: the DST switch shows bit 3');
+  assert(/op_sel is not supported/.test(errorOf('v_add_f32_e64 v0, v1, v2', 'op_sel', 'src0')), 'OP_SEL: instructions without it say so');
+  const perm = opts('v_permlane16_b32 v0, v1, s2, s3 fi:1', 'op_sel').options;
+  assert(perm.map(o => `${o.label}:${o.on}`).join() === 'FI:true,BOUND_CTRL:false' && perm[0].line === 'v_permlane16_b32 v0, v1, s2, s3' &&
+    perm[1].line === 'v_permlane16_b32 v0, v1, s2, s3 op_sel:[1,1]', 'OP_SEL of v_permlane16_b32: its FI and BOUND_CTRL flags (also written fi:1)');
+  assert(modifierOptions('v_add_f32_e64 v0, v1, s2 row_shr:1', 'clamp') === null, 'a line that does not assemble has no options');
+
+  // Every option that assembles changes exactly its own bit of the encoding, and nothing else
+  const lines = ['v_add_f32_e64 v0, -v1, abs(v2) ; note', 'v_fma_f32 v0, |v1|, 2.0, neg(s3) clamp', 'v_fma_f16 v3, v1, v2, v4 op_sel:[0,1,0,0] div:2',
+    'v_mad_u16 v0, v1, v2, v3', 'v_cmp_lt_f32_e64 s0, -v1, 0.5', 'v_div_scale_f64 v[0:1], vcc_lo, v[2:3], v[2:3], v[4:5]',
+    'v_mul_f64 v[0:1], -v[2:3], |v[4:5]| mul:4', 'v_cndmask_b32_e64 v0, v1, -v2, s4', 'v_med3_f32 v0, 1.0, -|v1|, neg(0.5)',
+    'v_sqrt_f32_e64 v0, |v1|', 'v_permlane16_b32 v0, v1, s2, s3 op_sel:[1,0]', 'v_add_f32_e64 v0, 0x40400000, -v1', 'v_mad_u64_u32 v[0:1], s0, v1, v2, v[2:3]'];
+  const fields: ModifierField[] = ['clamp', 'omod', 'op_sel', 'abs', 'neg'];
+  const bitsOf = (d: ReturnType<typeof decodeBinary>[number]) => ({
+    abs: (d.src0Abs ? 1 : 0) | (d.src1Abs ? 2 : 0) | (d.src2Abs ? 4 : 0), neg: (d.src0Neg ? 1 : 0) | (d.src1Neg ? 2 : 0) | (d.src2Neg ? 4 : 0),
+    op_sel: d.opSel ?? 0, clamp: d.clamp ? 1 : 0, omod: d.omod ?? 0,
+  });
+  const wrong: string[] = [];
+  let checkedOptions = 0;
+  for (const line of lines) {
+    const before = checkLine(line).words!;
+    const d0 = decodeBinary(Uint32Array.from(before))[0];
+    const isB = d0.encoding === 'VOP3B';
+    for (const field of fields) {
+      for (const [i, o] of opts(line, field).options.entries()) {
+        if (o.line === undefined || o.line === line) continue;
+        checkedOptions++;
+        const edit = lineEdit(line, o.line);
+        if (replaceSpan(line, edit.span, edit.text) !== o.line) wrong.push(`lineEdit: ${o.line}`);
+        const after = checkLine(o.line).words!;
+        if (after.length !== before.length) continue; // the size change is checked above
+        const b0 = bitsOf(d0), b1 = bitsOf(decodeBinary(Uint32Array.from(after))[0]);
+        const want = { ...b0 };
+        if (field === 'clamp' || field === 'omod') want[field] = Number(o.key);
+        else if (field === 'op_sel') want.op_sel ^= o.key === 'dst' || o.key === 'bound_ctrl' ? (o.key === 'dst' ? 8 : 2) : 1 << i;
+        else want[field] ^= 1 << i;
+        // Clear the modifier bits (and SDST of VOP3B) and the rest of the encoding must be unchanged
+        const mask0 = isB ? ~0x8000 : ~0xFF00;
+        const rest = (w: number[]) => [w[0] & mask0, w[1] & ~0xF8000000, ...w.slice(2)].map(x => x >>> 0).join();
+        if (JSON.stringify(b1) !== JSON.stringify(want) || rest(after) !== rest(before)) wrong.push(`${field} ${o.label}: ${o.line}`);
+      }
+    }
+  }
+  assert(checkedOptions > 80 && wrong.length === 0,
+    `each of ${checkedOptions} modifier options changes only its own bit${wrong.length ? `; e.g. ${wrong[0]}` : ''}`);
+
+  // lineEdit: the one replacement between two lines
+  const e1 = lineEdit('v_add_f32 v0, v1, v1', 'v_add_f32 v0, v1, |v1|');
+  assert(e1.span.start === 19 && e1.span.end === 21 && e1.text === '|v1|', 'lineEdit: the columns that differ and their new text');
+  const e2 = lineEdit('x clamp', 'x');
+  assert(e2.span.start === 2 && e2.span.end === 8 && e2.text === '', 'lineEdit: a removal');
+
+  // The disassembler prints a negated constant as neg(…), as LLVM does: -1.0 would be another constant
+  const back = (src: string) => {
+    const a = assemble(`${src}\ns_endpgm`);
+    const text = decodeBinary(a.binary).map(d => disassemble(d))[0];
+    const b = assemble(`${text}\ns_endpgm`);
+    return { text, same: b.errors.length === 0 && same(Array.from(a.binary), Array.from(b.binary)) };
+  };
+  const negs = ['v_add_f32_e64 v0, neg(1.0), v1', 'v_add_f32_e64 v0, neg(-2.0), v1', 'v_add_f32_e64 v0, -|-2.0|, v1', 'v_fma_f64 v[0:1], neg(2.0), v[2:3], v[4:5]',
+    'v_add_f32_sdwa v0, neg(1.0), v1 src0_sel:WORD_1', 'v_fma_mix_f32 v0, neg(1.0), v1, v2'].map(back);
+  assert(negs.every(r => r.same) && negs[0].text === 'v_add_f32_e64 v0, neg(1.0), v1' && negs[1].text === 'v_add_f32_e64 v0, neg(-2.0), v1',
+    `disassembly: a negated constant is written neg(…) and round-trips (${negs.filter(r => !r.same).map(r => r.text).join('; ')})`);
+  assert(back('v_add_f32_e64 v0, -s1, -|v2|').text === 'v_add_f32_e64 v0, -s1, -|v2|', 'disassembly: registers keep the - form');
 }
 
 group('16-bit integer VOP3, dot products and pack conversions');

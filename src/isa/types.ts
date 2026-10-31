@@ -76,6 +76,8 @@ export interface ParsedInstruction {
   line: number;
   column: number;
   spans?: Partial<Record<OperandSlot, SourceSpan>>; // Source columns of the mnemonic and of each written operand
+  /** Source columns of each written VALU source with its modifiers: -, |…|, abs(), neg() and sext(). */
+  wrappedSpans?: Partial<Record<'src0' | 'src1' | 'src2', SourceSpan>>;
   omod?: number;       // Output modifier: 0=none, 1=×2, 2=×4, 3=÷2
   clamp?: boolean;     // Clamp output to [0.0, 1.0]
   offset?: number;     // Memory offset (DS: OFFSET1:OFFSET0)
