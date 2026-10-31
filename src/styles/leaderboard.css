@@ -220,6 +220,34 @@
   padding: 12px 8px !important;
 }
 
+/* ── Hardware cycles ── */
+
+/* A board across the width of the others */
+.leaderboard-table-section--wide {
+  grid-column: 1 / -1;
+}
+
+.leaderboard-table-status {
+  float: right;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+.leaderboard-hw-notice,
+.leaderboard-hw-status {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: -14px 0 20px;
+}
+
+.leaderboard-hw-status {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 /* ── Footer ── */
 
 .leaderboard-footer {

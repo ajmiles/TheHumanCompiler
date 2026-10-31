@@ -1,9 +1,10 @@
 // ── Leaderboard Browser ──
 // Shows leaderboards for all completed puzzles in a single overlay.
 
-import { LeaderboardEntryWithOwner, LeaderboardCategory, getRankedEntries, clearLeaderboard, computeVisibleRows } from '../puzzle/leaderboard';
-import { fetchOnlineLeaderboard, isOnlineEnabled, deleteMyOnlineScores } from '../firebase/online-leaderboard';
+import { LeaderboardEntryWithOwner, LeaderboardCategory, HardwareBoard, getRankedEntries, clearLeaderboard, computeVisibleRows } from '../puzzle/leaderboard';
+import { fetchOnlineLeaderboard, fetchHardwareBoard, isOnlineEnabled, deleteMyOnlineScores } from '../firebase/online-leaderboard';
 import { Puzzle } from '../puzzle/types';
+import { hardwareTableHtml } from './hardware-board';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
   { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
@@ -14,6 +15,8 @@ const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon:
 export class LeaderboardBrowser {
   private overlay: HTMLElement;
   private content: HTMLElement;
+  /** Bumped for each puzzle shown, so that the boards of one picked earlier can't replace its. */
+  private generation = 0;
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
@@ -94,19 +97,23 @@ export class LeaderboardBrowser {
     if (!detail) return;
 
     // Render local immediately
-    this.renderTables(detail, puzzleId, title, []);
+    this.renderTables(detail, puzzleId, title, [], null);
 
     // Fetch online and re-render
     if (isOnlineEnabled()) {
-      Promise.all(CATEGORIES.map(cat =>
-        fetchOnlineLeaderboard(puzzleId, cat.key, 50)
-      )).then(results => {
-        this.renderTables(detail, puzzleId, title, results);
+      const generation = ++this.generation;
+      Promise.all([
+        Promise.all(CATEGORIES.map(cat => fetchOnlineLeaderboard(puzzleId, cat.key, 50))),
+        fetchHardwareBoard(puzzleId),
+      ]).then(([results, hardware]) => {
+        if (generation !== this.generation) return;
+        this.renderTables(detail, puzzleId, title, results, hardware);
       }).catch(() => {});
     }
   }
 
-  private renderTables(container: HTMLElement, puzzleId: string, title: string, onlineResults: LeaderboardEntryWithOwner[][]): void {
+  private renderTables(container: HTMLElement, puzzleId: string, title: string, onlineResults: LeaderboardEntryWithOwner[][],
+                       hardware: HardwareBoard | null): void {
     let html = `<h3 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:14px">${this.esc(title)}</h3>`;
     html += `<div class="leaderboard-tables">`;
 
@@ -158,6 +165,8 @@ export class LeaderboardBrowser {
 
       html += `</tbody></table></div>`;
     }
+
+    if (hardware) html += hardwareTableHtml(hardware.entries, hardware.status);
 
     html += `</div>`;
     html += `<div style="text-align:right;margin-top:12px">`;

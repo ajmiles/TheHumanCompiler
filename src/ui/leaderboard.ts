@@ -3,6 +3,8 @@
 import {
   LeaderboardEntryWithOwner,
   LeaderboardCategory,
+  HardwareBoard,
+  SubmissionState,
   getRankedEntries,
   addLeaderboardEntry,
   clearLeaderboard,
@@ -11,10 +13,14 @@ import {
 import {
   submitOnlineScore,
   fetchOnlineLeaderboard,
+  fetchHardwareBoard,
+  watchSubmission,
   isOnlineEnabled,
   deleteMyOnlineScores,
+  SubmittedSolution,
 } from '../firebase/online-leaderboard';
 import { getLeaderboardPref } from './settings';
+import { hardwareTableHtml, submissionStatusText } from './hardware-board';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
   { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
@@ -34,6 +40,24 @@ export class LeaderboardOverlay {
   private puzzleId = '';
   private stats: SolutionStats | null = null;
   private onDismissCb: (() => void) | null = null;
+  /** Bumped by show(), hide() and deleting, so that what arrives for an earlier state is dropped. */
+  private generation = 0;
+  /** The score has been submitted in this showing, so the form has gone. */
+  private submitted = false;
+  /** Online fetches started, and the newest one shown: one that arrives after a newer one is dropped. */
+  private fetchesStarted = 0;
+  private fetchShown = 0;
+  /** The solution, for the devkit to time if it's online when the score is submitted. */
+  private solution: SubmittedSolution | null = null;
+  /** The devkit's status and board, once fetched; null while there's no devkit. */
+  private hardware: HardwareBoard | null = null;
+  /** Whether the solution went with the submitted score, and so has a status to show. */
+  private solutionSent = false;
+  /** The submitted entry, to highlight on the Hardware cycles board. */
+  private submittedId: string | null = null;
+  /** The devkit's record of the solution: undefined until it arrives, null if there's none. */
+  private submissionState: SubmissionState | null | undefined = undefined;
+  private unwatchSubmission: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
@@ -54,15 +78,27 @@ export class LeaderboardOverlay {
     });
   }
 
-  show(puzzleId: string, puzzleTitle: string, stats: SolutionStats): void {
+  /** `solution` is what scored `stats`: with a devkit online, submitting the score sends it to be timed on hardware. */
+  show(puzzleId: string, puzzleTitle: string, stats: SolutionStats, solution?: SubmittedSolution): void {
+    this.stopWatching();
+    this.generation++;
     this.puzzleId = puzzleId;
     this.stats = stats;
+    this.solution = solution ?? null;
+    this.hardware = null;
+    this.submitted = false;
+    this.solutionSent = false;
+    this.submittedId = null;
+    this.submissionState = undefined;
     this._cachedOnlineResults = [];
+    this.content.innerHTML = ''; // a new showing starts from the saved name, not what was typed last time
     this.overlay.classList.remove('puzzle-overlay--hidden');
-    this.render(puzzleTitle, false);
+    this.render(puzzleTitle);
   }
 
   hide(): void {
+    this.stopWatching();
+    this.generation++;
     this.overlay.classList.add('puzzle-overlay--hidden');
     this.onDismissCb?.();
   }
@@ -71,26 +107,54 @@ export class LeaderboardOverlay {
     this.onDismissCb = cb;
   }
 
-  private render(puzzleTitle: string, justSubmitted: boolean): void {
+  private render(puzzleTitle: string): void {
     // Always render local immediately
-    this._renderInner(puzzleTitle, justSubmitted, this._cachedOnlineResults);
+    this._renderInner(puzzleTitle, this._cachedOnlineResults);
 
     // Fetch online scores (always refresh on show and after submit)
     if (isOnlineEnabled()) {
-      Promise.all(CATEGORIES.map(cat =>
-        fetchOnlineLeaderboard(this.puzzleId, cat.key, 50)
-      )).then(results => {
+      const generation = this.generation;
+      const request = ++this.fetchesStarted;
+      Promise.all([
+        Promise.all(CATEGORIES.map(cat => fetchOnlineLeaderboard(this.puzzleId, cat.key, 50))),
+        fetchHardwareBoard(this.puzzleId),
+      ]).then(([results, hardware]) => {
+        // Drop boards for an earlier state, or older than those shown
+        if (generation !== this.generation || request < this.fetchShown) return;
+        this.fetchShown = request;
         this._cachedOnlineResults = results;
-        this._renderInner(puzzleTitle, justSubmitted, results);
+        this.hardware = hardware;
+        this._renderInner(puzzleTitle, results);
       }).catch(() => {});
     }
   }
 
+  /** Follow what the devkit does with the submitted solution, re-rendering as it changes. */
+  private watch(entryId: string, puzzleTitle: string): void {
+    this.stopWatching();
+    const generation = this.generation;
+    this.submittedId = entryId;
+    this.unwatchSubmission = watchSubmission(entryId, state => {
+      if (generation !== this.generation) return;
+      const measuredNow = state?.status === 'measured' && this.submissionState?.status !== 'measured';
+      this.submissionState = state;
+      this._renderInner(puzzleTitle, this._cachedOnlineResults);
+      // Its time is on the board now
+      if (measuredNow) this.render(puzzleTitle);
+    });
+  }
+
+  private stopWatching(): void {
+    this.unwatchSubmission?.();
+    this.unwatchSubmission = null;
+  }
+
   private _cachedOnlineResults: LeaderboardEntryWithOwner[][] = [];
 
-  private _renderInner(puzzleTitle: string, justSubmitted: boolean, onlineResults: LeaderboardEntryWithOwner[][]): void {
+  private _renderInner(puzzleTitle: string, onlineResults: LeaderboardEntryWithOwner[][]): void {
     const stats = this.stats!;
     const pref = getLeaderboardPref();
+    const justSubmitted = this.submitted;
 
     let html = `
       <div class="leaderboard-header">
@@ -137,10 +201,16 @@ export class LeaderboardOverlay {
           </button>
         </div>
       `;
+      if (this.hardware && this.solution) {
+        html += `<div class="leaderboard-hw-notice">🔒 Submitting also sends your solution to the devkit to time on a real GPU. Only you and the devkit can read it.</div>`;
+      }
     } else if (pref === 'view-only' && !justSubmitted) {
       html += `<div class="leaderboard-local-notice">Score submission is disabled. Change this in ⚙️ Settings.</div>`;
     } else if (justSubmitted) {
       html += `<div class="leaderboard-submitted">Score submitted! ✓</div>`;
+      if (this.solutionSent) {
+        html += `<div class="leaderboard-hw-status">${this.escapeHtml(submissionStatusText(this.submissionState))}</div>`;
+      }
     }
 
     html += `<div class="leaderboard-tables">`;
@@ -216,6 +286,10 @@ export class LeaderboardOverlay {
       html += `</tbody></table></div>`;
     }
 
+    if (this.hardware) {
+      html += hardwareTableHtml(this.hardware.entries, this.hardware.status, this.submittedId ?? undefined);
+    }
+
     html += `</div>`;
     html += `<div class="leaderboard-footer">`;
     html += `<button class="controls-bar__btn controls-bar__btn--danger" id="lb-delete-mine-btn">Delete My Scores</button>`;
@@ -227,6 +301,8 @@ export class LeaderboardOverlay {
         : '⚠ Leaderboards are currently local only (stored in your browser). Online leaderboards coming soon!'
     }</div>`;
 
+    // A re-render (when the online boards arrive) keeps the name being typed
+    const typedName = (this.content.querySelector('#lb-name-input') as HTMLInputElement | null)?.value;
     this.content.innerHTML = html;
 
     // Wire up events
@@ -237,14 +313,18 @@ export class LeaderboardOverlay {
     deleteBtn?.addEventListener('click', async () => {
       // Clear local scores
       clearLeaderboard(this.puzzleId);
-      // Delete online scores matching this user's UID
+      // Delete online scores matching this user's UID (and the solutions sent with them)
       if (isOnlineEnabled()) {
         deleteBtn.textContent = 'Deleting...';
         deleteBtn.disabled = true;
+        this.stopWatching();
+        this.generation++;
+        this.solutionSent = false;
+        this.submittedId = null;
         await deleteMyOnlineScores(this.puzzleId);
       }
       this._cachedOnlineResults = [];
-      this.render(puzzleTitle, justSubmitted);
+      this.render(puzzleTitle);
     });
 
     if (!justSubmitted) {
@@ -252,7 +332,7 @@ export class LeaderboardOverlay {
       const submitBtn = this.content.querySelector('#lb-submit-btn') as HTMLButtonElement;
 
       // Try to restore last used name
-      const lastName = localStorage.getItem('humancompiler_player_name') ?? '';
+      const lastName = typedName ?? localStorage.getItem('humancompiler_player_name') ?? '';
       if (nameInput && lastName) nameInput.value = lastName;
 
       // Focus the name input
@@ -281,13 +361,23 @@ export class LeaderboardOverlay {
         };
 
         addLeaderboardEntry(this.puzzleId, entry);
+        this.submitted = true;
 
-        // Submit to online leaderboard if configured
+        // Submit to online leaderboard if configured, with the solution if the notice above said so
         if (isOnlineEnabled()) {
-          submitOnlineScore(this.puzzleId, entry).catch(() => {});
+          const generation = this.generation;
+          const solution = this.hardware && this.solution ? this.solution : undefined;
+          this.solutionSent = !!solution;
+          submitOnlineScore(this.puzzleId, entry, solution).then(id => {
+            if (generation !== this.generation) return;
+            if (solution && id) this.watch(id, puzzleTitle);
+            else if (solution) this.submissionState = null;
+            // The entry is online now
+            this.render(puzzleTitle);
+          }).catch(() => {});
         }
 
-        this.render(puzzleTitle, true);
+        this.render(puzzleTitle);
       });
     }
   }

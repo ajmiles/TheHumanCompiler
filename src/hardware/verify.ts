@@ -7,16 +7,15 @@ import { Emulator } from '../emulator/emulator';
 import { WAVE_WIDTH } from '../isa/constants';
 import { getPuzzleById } from '../puzzle/puzzles';
 import { runPuzzle, vgprsUsed } from '../puzzle/runner';
-import { Puzzle, PuzzlePort } from '../puzzle/types';
+import { Puzzle } from '../puzzle/types';
 import { validatePuzzle } from '../puzzle/validator';
 import { hardwareProblems } from './checks';
-import { invocationPrograms, resultBytes, valueBits } from './harness';
+import { invocationPrograms, resultBytes } from './harness';
+import { codeHash, puzzleHash, SANDBOX } from './hash';
 import { HW_HARNESS, HW_PROTOCOL, HW_REQUIREMENTS, HwJob, HwJobRuns, HwScore, HwStatus } from './protocol';
 
 /** How many times the devkit runs each program by default. */
 export const DEFAULT_RUNS = 100;
-/** The puzzle id of a job for a program with no inputs or outputs. */
-export const SANDBOX = 'sandbox';
 
 /** A solution's leaderboard stats. */
 export interface SolutionStats {
@@ -37,26 +36,6 @@ export interface VerifyResult {
   /** Claimed stats that don't match `stats`. */
   claimMismatches?: string[];
   job?: HwJob;
-}
-
-/** FNV-1a (64-bit) of a string's UTF-16 code units, as 16 hex digits. */
-export function hash64(text: string): string {
-  let h = 0xcbf29ce484222325n;
-  for (let i = 0; i < text.length; i++) h = BigInt.asUintN(64, (h ^ BigInt(text.charCodeAt(i))) * 0x100000001b3n);
-  return h.toString(16).padStart(16, '0');
-}
-
-/** Identifies a puzzle's data: a measurement only stands while the puzzle stays the same. */
-export function puzzleHash(puzzle: Puzzle | null): string {
-  if (!puzzle) return hash64(SANDBOX);
-  const port = (p: PuzzlePort) =>
-    [p.register, p.isSGPR ? 's' : 'v', p.isInteger ? 'u' : 'f', ...p.values.map(v => valueBits(v, p.isInteger || p.isSGPR).toString(16))].join(',');
-  return hash64([puzzle.id, ...puzzle.inputs.map(port), '|', ...puzzle.outputs.map(port)].join(';'));
-}
-
-/** Identifies a solution's machine code. */
-export function codeHash(binary: Uint32Array): string {
-  return hash64(Array.from(binary, w => w.toString(16)).join(','));
 }
 
 function buildJob(puzzle: Puzzle | null, binary: Uint32Array, vgprs: number, emulatorOutputs: number[][], runs: number): HwJob {

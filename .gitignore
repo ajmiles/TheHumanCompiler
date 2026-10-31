@@ -2,3 +2,7 @@ node_modules/
 dist/
 .vite/
 opcodes.md
+# Firebase emulator logs (npm run emulators, npm run test:rules)
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

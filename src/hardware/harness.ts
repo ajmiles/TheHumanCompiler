@@ -17,6 +17,7 @@ import { decodeProgram } from '../emulator/decoder';
 import { NUM_VGPRS, SGPR_MAX, WAVE_WIDTH } from '../isa/constants';
 import { decodeBinary } from '../isa/encoding';
 import { Puzzle } from '../puzzle/types';
+import { valueBits } from './hash';
 import { HwProgram, HwRelocation, RESULT_OUTPUTS, RESULT_T_END, RESULT_T_START } from './protocol';
 
 /** Dwords in a 64-byte instruction cache line. */
@@ -50,15 +51,6 @@ function sBranch(offset: number): number {
 }
 
 const hex = (v: number) => `0x${(v >>> 0).toString(16)}`;
-const f32 = new Float32Array(1);
-const u32 = new Uint32Array(f32.buffer);
-
-/** The bits a puzzle value has in a register, as the app writes it. */
-export function valueBits(value: number, isInteger?: boolean): number {
-  if (isInteger) return value >>> 0;
-  f32[0] = value;
-  return u32[0];
-}
 
 /** Registers the timer and the epilogue borrow; none of them is a puzzle input or output. */
 export interface Scratch {

@@ -86,6 +86,40 @@ export interface LeaderboardEntryWithOwner extends LeaderboardEntry {
   isMine: boolean;
 }
 
+// ── Hardware cycles ──
+
+/** An entry on the Hardware cycles board: its solution, timed on the devkit. */
+export interface HardwareEntry {
+  id: string;
+  name: string;
+  /** Core clocks over all invocations. */
+  cycles: number;
+  isMine: boolean;
+}
+
+/** The devkit's last check-in. */
+export interface RunnerStatus {
+  /** When it last checked in, in milliseconds since 1970. */
+  lastSeen: number;
+  /** Submissions waiting for it. */
+  queued: number;
+}
+
+/** The devkit's status and the entries it has timed for a puzzle. */
+export interface HardwareBoard {
+  status: RunnerStatus;
+  entries: HardwareEntry[];
+}
+
+/** How far a submitted solution has got on the devkit (the status the runner writes). */
+export interface SubmissionState {
+  status: 'pending' | 'running' | 'measured' | 'failed' | 'unstable' | 'rejected' | 'stale' | 'hung';
+  /** Core clocks, once measured. */
+  cycles?: number;
+  /** Why it couldn't be timed. */
+  detail?: string;
+}
+
 export interface VisibleRowResult {
   indices: number[];
   separatorBefore: Set<number>;

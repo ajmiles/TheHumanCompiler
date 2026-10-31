@@ -94,6 +94,7 @@ function buildLevelOrder(): LevelItem[] {
 const LEVEL_ORDER = buildLevelOrder();
 import { validatePuzzle } from '../puzzle/validator';
 import { collectInvocationOutputs, highestNamedRegister, invocationCount, loadInvocationInputs, vgprsUsed } from '../puzzle/runner';
+import { puzzleHash } from '../hardware/hash';
 import { AssemblyError, AssemblyResult, OperandType } from '../isa/types';
 import { decodeBinary, disassemble } from '../isa/encoding';
 import { lookupByOpcode } from '../isa/opcodes';
@@ -125,6 +126,8 @@ export class App {
   private emulator = new Emulator();
   private currentPuzzle: Puzzle | null = null;
   private assemblyResult: AssemblyResult | null = null;
+  /** The source of assemblyResult: what a completed run ran. */
+  private assembledSource = '';
 
   // Puzzle execution state
   private currentInvocation = 0;
@@ -439,6 +442,7 @@ export class App {
   private doAssemble(): void {
     const source = this.editor.getSource();
     this.assemblyResult = assemble(source);
+    this.assembledSource = source;
     this.instructionInfo.setSource(source);
 
     const { errors, warnings } = this.assemblyResult;
@@ -836,7 +840,8 @@ export class App {
           vgprsUsed: this.computeMaxVGPR() + 1,
           cycles: this.totalCycles,
         };
-        this.leaderboard.show(this.currentPuzzle.id, this.currentPuzzle.title, stats);
+        this.leaderboard.show(this.currentPuzzle.id, this.currentPuzzle.title, stats,
+          { source: this.assembledSource, puzzleHash: puzzleHash(this.currentPuzzle) });
       } else {
         this.statusBar.setStatus(
           `✗ FAILED — ${result.totalCorrect}/${result.totalExpected} correct`,

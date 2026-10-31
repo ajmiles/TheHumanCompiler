@@ -8,7 +8,11 @@ import {
   connectFirestoreEmulator,
   getFirestore,
   collection,
-  addDoc,
+  doc,
+  setDoc,
+  getDoc,
+  onSnapshot,
+  serverTimestamp,
   query,
   orderBy,
   limit,
@@ -18,17 +22,33 @@ import {
   Firestore,
 } from 'firebase/firestore';
 import { firebaseConfig, FIREBASE_ENABLED, FIREBASE_EMULATORS } from './config';
-import { LeaderboardEntry, LeaderboardEntryWithOwner, LeaderboardCategory } from '../puzzle/leaderboard';
+import {
+  LeaderboardEntry,
+  LeaderboardEntryWithOwner,
+  LeaderboardCategory,
+  HardwareBoard,
+  HardwareEntry,
+  RunnerStatus,
+  SubmissionState,
+} from '../puzzle/leaderboard';
+import { VERSION } from '../version';
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
-let initialized = false;
+/**
+ * The one sign-in, which every caller shares. Separate sign-ins at the same time would each make a new anonymous
+ * user, and a write queued as one of them is never sent once another takes over.
+ */
+let initPromise: Promise<boolean> | null = null;
 
-async function ensureInit(): Promise<boolean> {
-  if (!FIREBASE_ENABLED) return false;
-  if (initialized) return db !== null;
+function ensureInit(): Promise<boolean> {
+  if (!FIREBASE_ENABLED) return Promise.resolve(false);
+  initPromise ??= init();
+  return initPromise;
+}
 
+async function init(): Promise<boolean> {
   try {
     const emulators = FIREBASE_EMULATORS;
     app = initializeApp(emulators ? { ...firebaseConfig, projectId: emulators.projectId } : firebaseConfig);
@@ -40,11 +60,9 @@ async function ensureInit(): Promise<boolean> {
       connectFirestoreEmulator(db, emulators.host, emulators.firestorePort);
     }
     await signInAnonymously(auth);
-    initialized = true;
     return true;
   } catch (e) {
     console.warn('Firebase init failed, using local leaderboards only:', e);
-    initialized = true;
     return false;
   }
 }
@@ -59,23 +77,32 @@ export function getMyUid(): string | null {
   return auth?.currentUser?.uid ?? null;
 }
 
+/** A solution's source, uploaded privately with its score so that the devkit can time it on hardware. */
+export interface SubmittedSolution {
+  source: string;
+  /** puzzleHash() of the puzzle the player solved (src/hardware/hash.ts). */
+  puzzleHash: string;
+}
+
 /**
- * Submit a score to the online leaderboard.
- * Stores UID alongside the entry for ownership tracking.
+ * Submit a score to the online leaderboard, storing the UID with the entry for ownership. With a solution, its
+ * source goes up too, under the entry's id, for the devkit; a failure there doesn't lose the score.
+ * Returns the entry's id, or null if it wasn't submitted.
  */
 export async function submitOnlineScore(
   puzzleId: string,
   entry: LeaderboardEntry,
-): Promise<boolean> {
+  solution?: SubmittedSolution,
+): Promise<string | null> {
   const ok = await ensureInit();
-  if (!ok || !db) return false;
+  if (!ok || !db) return null;
 
   const uid = getUid();
-  if (!uid) return false;
+  if (!uid) return null;
 
+  const entryRef = doc(collection(db, 'leaderboards', puzzleId, 'entries'));
   try {
-    const entriesRef = collection(db, 'leaderboards', puzzleId, 'entries');
-    await addDoc(entriesRef, {
+    await setDoc(entryRef, {
       uid,
       name: entry.name,
       codeSize: entry.codeSize,
@@ -83,11 +110,26 @@ export async function submitOnlineScore(
       cycles: entry.cycles,
       timestamp: entry.timestamp,
     });
-    return true;
   } catch (e) {
     console.warn('Failed to submit online score:', e);
-    return false;
+    return null;
   }
+  if (solution) {
+    try {
+      await setDoc(doc(db, 'submissions', entryRef.id), {
+        uid,
+        puzzleId,
+        source: solution.source,
+        appVersion: VERSION,
+        puzzleHash: solution.puzzleHash,
+        createdAt: serverTimestamp(),
+        status: 'pending',
+      });
+    } catch (e) {
+      console.warn('Failed to upload the solution for the devkit:', e);
+    }
+  }
+  return entryRef.id;
 }
 
 /**
@@ -128,6 +170,62 @@ export async function fetchOnlineLeaderboard(
   }
 }
 
+/**
+ * The entries the devkit has timed, fastest first. A tie goes to the one submitted first, by the server's clock: the
+ * devkit copies the submission's createdAt into hw.submittedAt (the entry's own timestamp is the player's clock).
+ */
+export async function fetchHardwareLeaderboard(puzzleId: string, maxEntries = 50): Promise<HardwareEntry[]> {
+  const ok = await ensureInit();
+  if (!ok || !db) return [];
+
+  const currentUid = getUid();
+  try {
+    const entriesRef = collection(db, 'leaderboards', puzzleId, 'entries');
+    const snapshot = await getDocs(query(entriesRef, orderBy('hw.cycles', 'asc'), orderBy('hw.submittedAt', 'asc'), limit(maxEntries)));
+    return snapshot.docs.map(entryDoc => {
+      const d = entryDoc.data();
+      return {
+        id: entryDoc.id,
+        name: d.name ?? 'Anonymous',
+        cycles: d.hw?.cycles ?? 0,
+        isMine: !!currentUid && d.uid === currentUid,
+      };
+    });
+  } catch (e) {
+    console.warn('Failed to fetch the Hardware cycles leaderboard:', e);
+    return [];
+  }
+}
+
+/** The devkit's status, or null when there's no devkit (yet): then nothing is timed on hardware. */
+export async function fetchRunnerStatus(): Promise<RunnerStatus | null> {
+  const ok = await ensureInit();
+  if (!ok || !db) return null;
+  try {
+    const snap = await getDoc(doc(db, 'runner', 'status'));
+    const d = snap.data();
+    return d ? { lastSeen: d.heartbeat?.toMillis?.() ?? 0, queued: d.queued ?? 0 } : null;
+  } catch {
+    return null; // e.g. before the rules that let it be read are deployed
+  }
+}
+
+/** The Hardware cycles board for a puzzle, or null when there's no devkit (and so no board). */
+export async function fetchHardwareBoard(puzzleId: string): Promise<HardwareBoard | null> {
+  const status = await fetchRunnerStatus();
+  return status ? { status, entries: await fetchHardwareLeaderboard(puzzleId) } : null;
+}
+
+/** Follow the submission of one of my entries until the returned function is called; null when it can't be read. */
+export function watchSubmission(entryId: string, onChange: (state: SubmissionState | null) => void): () => void {
+  if (!db) return () => undefined;
+  return onSnapshot(doc(db, 'submissions', entryId), snap => {
+    if (!snap.exists() && snap.metadata.fromCache) return; // wait for the server's answer
+    const d = snap.data();
+    onChange(d ? { status: d.status, cycles: d.cycles, detail: d.detail } : null);
+  }, () => onChange(null));
+}
+
 /** Check if online leaderboards are available. */
 export function isOnlineEnabled(): boolean {
   return FIREBASE_ENABLED;
@@ -151,8 +249,10 @@ export async function deleteMyOnlineScores(puzzleId: string): Promise<number> {
 
     let deleted = 0;
     const promises: Promise<void>[] = [];
-    snapshot.forEach((doc) => {
-      promises.push(deleteDoc(doc.ref));
+    snapshot.forEach((entryDoc) => {
+      promises.push(deleteDoc(entryDoc.ref));
+      // And the solution uploaded with it, if any
+      promises.push(deleteDoc(doc(entryDoc.ref.firestore, 'submissions', entryDoc.id)).catch(() => undefined));
       deleted++;
     });
     await Promise.all(promises);

@@ -1,0 +1,48 @@
+name: Firestore rules
+
+# Tests firestore.rules against the Firestore emulator when the rules, or what they guard, change.
+on:
+  pull_request:
+    paths:
+      - firestore.rules
+      - firestore.indexes.json
+      - firebase.json
+      - src/firebase/**
+      - tests/firestore_rules.test.ts
+      - package.json
+      - package-lock.json
+      - .github/workflows/rules.yml
+  push:
+    paths:
+      - firestore.rules
+      - firestore.indexes.json
+      - firebase.json
+      - src/firebase/**
+      - tests/firestore_rules.test.ts
+      - package.json
+      - package-lock.json
+      - .github/workflows/rules.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rules-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # The Firestore emulator needs Java 21 or later
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm run test:rules

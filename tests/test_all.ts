@@ -17,8 +17,10 @@ import { highestNamedRegister, loadInvocationInputs, runPuzzle as runPuzzleBinar
 import { hardwareProblems } from '../src/hardware/checks';
 import { globalStore, invocationPrograms, pickScratch, resultBytes, setupSource, sMemtime } from '../src/hardware/harness';
 import { HwJobRuns } from '../src/hardware/protocol';
-import { codeHash, hash64, puzzleHash, score, verify, verifySandbox } from '../src/hardware/verify';
+import { codeHash, hash64, puzzleHash } from '../src/hardware/hash';
+import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { scoreJson, verifyJson } from '../src/hardware/verifier';
+import { hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -7627,6 +7629,48 @@ group('Hardware runs: scoring the devkit runs');
   const viaJson = verifyJson(JSON.stringify({ source: SMOOTH_CLAMP, puzzleId: 'smooth-clamp', runs: 7 }));
   assert(viaJson === JSON.stringify(verify(SMOOTH_CLAMP, 'smooth-clamp', undefined, 7)) && JSON.parse(viaJson).job.runs === 7 &&
     JSON.parse(scoreJson(JSON.stringify({ job, runs: runsFor([130], [100]) }))).cycles === 60, 'verifyJson / scoreJson: the same answers through JSON');
+}
+
+group('Hardware runs: the Hardware cycles board');
+{
+  const now = Date.parse('2026-01-01T12:00:00Z');
+  const status = (minutesAgo: number, queued = 0) => ({ lastSeen: now - minutesAgo * 60000, queued });
+  assert(runnerStatusText(status(1), now) === 'Devkit online' && runnerStatusText(status(10, 3), now) === 'Devkit online, 3 waiting',
+    'devkit status: online while it has checked in within 10 minutes, with its queue');
+  assert(runnerStatusText(status(11), now) === 'Devkit offline, last seen 11 minutes ago' &&
+    runnerStatusText(status(60), now) === 'Devkit offline, last seen 1 hour ago' &&
+    runnerStatusText(status(3 * 24 * 60), now) === 'Devkit offline, last seen 3 days ago', 'devkit status: offline after that, with when it was last seen');
+
+  assert(submissionStatusText(undefined).includes('Sending') && submissionStatusText(null).includes("couldn't be sent") &&
+    submissionStatusText({ status: 'measured', cycles: 1234 }).includes('takes 1234 cycles') &&
+    submissionStatusText({ status: 'rejected', detail: 'it uses s_setpc_b64' }).endsWith(': it uses s_setpc_b64'),
+    'submission status: sending, missing, measured with its cycles, and why it was rejected');
+  const states = ['pending', 'running', 'measured', 'failed', 'unstable', 'rejected', 'stale', 'hung'] as const;
+  const texts = states.map(s => submissionStatusText({ status: s }));
+  assert(new Set(texts).size === states.length && !texts.includes(submissionStatusText(null)), 'submission status: each state has its own text');
+
+  const entries = Array.from({ length: 12 }, (_, i) => ({ id: `e${i}`, name: i === 1 ? '<b>Ann</b>' : `P${i}`, cycles: 100 + i, isMine: i >= 10 }));
+  const html = hardwareTableHtml(entries, status(1, 2), 'e11', now);
+  assert(html.includes('leaderboard-table-section--wide') && html.includes('Devkit online, 2 waiting') &&
+    html.includes('<td>&#60;b&#62;Ann&#60;/b&#62;</td>') && !html.includes('<b>'), 'hardware table: full width, with the devkit status and escaped names');
+  assert(html.includes('<tr class="leaderboard-row--highlight leaderboard-row--mine"><td>12</td><td>P11</td><td>111</td></tr>') &&
+    html.includes('<tr class="leaderboard-row--mine"><td>11</td><td>P10</td><td>110</td></tr>') &&
+    html.includes('<td>🥇</td><td>P0</td><td>100</td>') && !html.includes('<td>P7</td>') && (html.match(/leaderboard-separator/g) ?? []).length === 1,
+    'hardware table: the podium, then a gap and my entries, the one just submitted highlighted');
+  assert(hardwareTableHtml([], status(30), undefined, now).includes('No solutions timed yet'), 'hardware table: empty');
+
+  const repeats = [
+    { id: 'a', name: 'Ann', cycles: 40, isMine: false }, { id: 'm1', name: 'Me', cycles: 41, isMine: true },
+    { id: 'b', name: 'Bob', cycles: 41, isMine: false }, { id: 'm2', name: 'Me', cycles: 41, isMine: true },
+    { id: 'm3', name: 'Me', cycles: 42, isMine: true },
+  ];
+  const repeatHtml = hardwareTableHtml(repeats, status(1), 'm2', now);
+  assert((repeatHtml.match(/<td>Me<\/td><td>41<\/td>/g) ?? []).length === 1 &&
+    repeatHtml.includes('<tr class="leaderboard-row--highlight leaderboard-row--mine"><td>🥈</td><td>Me</td><td>41</td></tr>') &&
+    repeatHtml.includes('<tr><td>🥉</td><td>Bob</td><td>41</td></tr>') && repeatHtml.includes('<tr class="leaderboard-row--mine"><td>4</td><td>Me</td><td>42</td></tr>'),
+    'hardware table: one row per name and time (the first), highlighted when the entry just submitted repeats it');
+  assert(hardwareTableHtml([{ id: 'x', name: 'Bob', cycles: 9, isMine: false }, { id: 'y', name: 'Bob', cycles: 9, isMine: true }], status(1), undefined, now)
+    .includes('<tr class="leaderboard-row--mine"><td>🥇</td><td>Bob</td><td>9</td></tr>'), 'hardware table: a row is mine if any entry it stands for is');
 }
 
 // ════════════════════════════════════════════
