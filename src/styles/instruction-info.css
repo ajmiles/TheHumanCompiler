@@ -444,7 +444,7 @@
   color: var(--text-muted);
 }
 
-/* ── Modifier picker (CLAMP, OMOD, OP_SEL, ABS and NEG of the VOP3 encodings) ── */
+/* ── Modifier picker (CLAMP, OMOD, OP_SEL, OP_SEL_HI, ABS, NEG and NEG_HI of the VOP3 and VOP3P encodings) ── */
 
 .mod-picker {
   width: 420px;

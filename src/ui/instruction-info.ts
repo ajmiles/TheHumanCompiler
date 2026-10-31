@@ -79,10 +79,36 @@ const MODIFIER_INTRO: Record<ModifierField, string> = {
   clamp: 'Clamp the result, after any output modifier',
   omod: 'Output modifier: scale a floating-point result before it is clamped',
   op_sel: 'Which 16-bit half each operand uses: hi reads the high half of a source, or writes the high half of the destination',
+  op_sel_hi: 'Which half of each source feeds the high half of the result',
   abs: 'Take the absolute value of a source (before NEG)',
   neg: 'Negate a source (after ABS)',
+  neg_hi: 'Negate the half of each source that feeds the high half of the result',
 };
 const PERMLANE_OP_SEL_INTRO = 'v_permlane16_b32 and v_permlanex16_b32 keep their FI and BOUND_CTRL flags in OP_SEL';
+/** v_fma_mix* reads each source as an f32, or as an f16 half, and NEG_HI is its abs. */
+const MIX_INTRO: Partial<Record<ModifierField, string>> = {
+  op_sel: 'Which half of each f16 source is read',
+  op_sel_hi: 'Whether each source is an f32, or an f16 whose half OP_SEL picks',
+  neg: 'Negate a source (after NEG_HI)',
+  neg_hi: 'Take the absolute value of a source: for v_fma_mix, NEG_HI is abs',
+};
+
+/** What a modifier field does for this instruction. */
+function modifierIntro(mod: ModifierField, info: OpcodeInfo): string {
+  const m = info.mnemonic;
+  if (mod === 'op_sel' && (m === 'v_permlane16_b32' || m === 'v_permlanex16_b32')) return PERMLANE_OP_SEL_INTRO;
+  if (info.format !== InstructionFormat.VOP3P || mod === 'clamp') return MODIFIER_INTRO[mod];
+  if (m.startsWith('v_fma_mix')) return MIX_INTRO[mod] ?? MODIFIER_INTRO[mod];
+  // Packed math works on two halves; the dot products multiply two pairs
+  const [first, second] = info.dot ? ['the first product', 'the second product'] : ['the low half of the result', 'the high half of the result'];
+  const f32Src2 = info.dot === 'f16';
+  switch (mod) {
+    case 'op_sel': return `Which half of each source feeds ${first}`;
+    case 'op_sel_hi': return `Which half of each source feeds ${second}`;
+    case 'neg': return `neg_lo: negate the half of each source that feeds ${first}${f32Src2 ? ' (src2, an f32, is negated)' : ''}`;
+    default: return `neg_hi: negate the half of each source that feeds ${second}${f32Src2 ? ' (src2, an f32, takes its absolute value)' : ''}`;
+  }
+}
 
 /** Fixed encoding bits that identify the format. */
 const fixed = (hi: number, lo: number): BitField => field('ENC', hi, lo, COLOR.encoding, v => hexVal(v, 1));
@@ -150,8 +176,8 @@ function e32Fields(ctx: LayoutContext): BitField[] {
 
 function vop3SourceFields(ctx: LayoutContext, vop3p: boolean): BitField[] {
   return [
-    vop3p ? field('NEG', 31, 29, COLOR.neg, binary(3)) : modField('NEG', 31, 29, COLOR.neg, binary(3), 'neg'),
-    vop3p ? field('OP_SEL_HI', 28, 27, COLOR.select, binary(2)) : modField('OMOD', 28, 27, COLOR.modifier, v => OMOD[v], 'omod'),
+    modField('NEG', 31, 29, COLOR.neg, binary(3), 'neg'),
+    vop3p ? modField('OP_SEL_HI', 28, 27, COLOR.select, binary(2), 'op_sel_hi') : modField('OMOD', 28, 27, COLOR.modifier, v => OMOD[v], 'omod'),
     field('SRC2', 26, 18, COLOR.src2, valuSource(ctx, 2), 'src2'),
     field('SRC1', 17, 9, COLOR.src1, valuSource(ctx, 1), 'src1'),
     field('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0), 'src0'),
@@ -255,9 +281,9 @@ function layoutFor(ctx: LayoutContext, words: number[]): DwordLayout[] {
       push('VOP3B', vop3SourceFields(ctx, false));
       break;
     case 'VOP3P':
-      push('VOP3P', [fixed(31, 23), opField(22, 16, ctx), field('CLAMP', 15, 15, COLOR.modifier),
-        field('OP_SEL_HI[2]', 14, 14, COLOR.select), field('OP_SEL', 13, 11, COLOR.select, binary(3)),
-        field('NEG_HI', 10, 8, COLOR.neg, binary(3)), vop3Vdst]);
+      push('VOP3P', [fixed(31, 23), opField(22, 16, ctx), modField('CLAMP', 15, 15, COLOR.modifier, v => String(v), 'clamp'),
+        modField('OP_SEL_HI[2]', 14, 14, COLOR.select, v => String(v), 'op_sel_hi'), modField('OP_SEL', 13, 11, COLOR.select, binary(3), 'op_sel'),
+        modField('NEG_HI', 10, 8, COLOR.neg, binary(3), 'neg_hi'), vop3Vdst]);
       push('VOP3P', vop3SourceFields(ctx, true));
       break;
     case 'SOP1':
@@ -605,20 +631,27 @@ export class InstructionInfo {
       return;
     }
     const choices = this.modifierChoices(shown.lineText, mod);
-    if (!choices) return;
+    const info = lookupByMnemonic(shown.instr.mnemonic);
+    if (!choices || !info) return;
 
     const { line, lineText } = shown;
-    const permlane = shown.instr.mnemonic === 'v_permlane16_b32' || shown.instr.mnemonic === 'v_permlanex16_b32';
+    const name = cell.dataset.name ?? mod.toUpperCase();
+    const mix = info.mnemonic.startsWith('v_fma_mix');
+    const permlane = info.mnemonic === 'v_permlane16_b32' || info.mnemonic === 'v_permlanex16_b32';
+    // Words for a clear and a set bit: which half of an operand is used, or (v_fma_mix's op_sel_hi) its type
+    const states: [string, string] | undefined = mod === 'op_sel_hi' ? (mix ? ['f32', 'f16'] : ['lo', 'hi'])
+      : mod === 'op_sel' && !permlane ? ['lo', 'hi'] : undefined;
     this.picker.close();
     cell.classList.add('instr-info-bit--active');
     this.modPicker.open({
       anchor: cell,
-      title: cell.dataset.name ?? mod.toUpperCase(),
+      // OP_SEL_HI[2] and OP_SEL_HI both open the whole of op_sel_hi
+      title: mod === 'op_sel_hi' ? 'OP_SEL_HI' : name,
       color: cell.dataset.color ?? COLOR.modifier,
-      intro: mod === 'op_sel' && permlane ? PERMLANE_OP_SEL_INTRO : MODIFIER_INTRO[mod],
+      intro: modifierIntro(mod, info),
       kind: choices.kind,
       options: choices.options,
-      states: mod === 'op_sel' && !permlane ? ['lo', 'hi'] : undefined,
+      states,
       bytes: shown.bytes,
       focus,
       apply: (option, index) => {
@@ -628,7 +661,8 @@ export class InstructionInfo {
         handler({ line, span, text, lineText });
         // The edit re-rendered the panel: keep switching bits on the field as it is now
         if (choices.kind === 'toggles') {
-          const next = this.bodyEl.querySelector<HTMLElement>(`.instr-info-bit--editable[data-mod="${mod}"]`);
+          const next = [...this.bodyEl.querySelectorAll<HTMLElement>(`.instr-info-bit--editable[data-mod="${mod}"]`)]
+            .find(c => c.dataset.name === name);
           if (next) this.openModifier(next, mod, index);
         }
       },

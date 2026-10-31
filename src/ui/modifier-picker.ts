@@ -1,8 +1,8 @@
 // ── Modifier picker ──
-// Popup that the Instruction Info panel opens on a modifier field of a VOP3 instruction. CLAMP and OMOD list
-// their values; ABS, NEG and OP_SEL have a switch per operand, and the panel reopens the picker after each
-// switch so that several can be flipped in turn. Each row previews the line it produces, and a row that
-// cannot be chosen says why.
+// Popup that the Instruction Info panel opens on a modifier field of a VOP3 or VOP3P instruction. CLAMP and
+// OMOD list their values; ABS, NEG, NEG_HI, OP_SEL and OP_SEL_HI have a switch per operand, and the panel
+// reopens the picker after each switch so that several can be flipped in turn. Each row previews the line it
+// produces, and a row that cannot be chosen says why.
 
 import { ModifierOption } from '../assembler/operand-edit';
 import { AnchoredPopup, escapeHtml, previewHtml } from './operand-picker';
