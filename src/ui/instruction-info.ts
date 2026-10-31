@@ -7,7 +7,7 @@ import {
   SourceSpan,
 } from '../isa/types';
 import { lookupByMnemonic } from '../isa/opcodes';
-import { decodeBinary, describeDppCtrl, encodeInstruction, scalarRegName, sourceFieldName } from '../isa/encoding';
+import { decodeBinary, describeDppCtrl, dppCtrlMeaning, encodeInstruction, scalarRegName, sourceFieldName } from '../isa/encoding';
 import { OperandRole, operandRegCount, valuSourceCount, hasPackedModifiers } from '../isa/operands';
 import { VCC_LO } from '../isa/constants';
 import { checkLine, editChoices, labelsIn, lineEdit, ModifierChoices, ModifierField, modifierOptions, replaceSpan } from '../assembler/operand-edit';
@@ -26,8 +26,12 @@ interface BitField {
   show: (value: number, words: number[]) => string;
   /** The part of the source the field encodes, which clicking the field changes. */
   slot?: OperandSlot;
-  /** The VOP3 modifier the field encodes, which clicking the field changes. */
+  /** The modifier the field encodes, which clicking the field changes. */
   mod?: ModifierField;
+  /** For a modifier bit of one source (S0 NEG, S1 SEXT, …): that source, whose switch the picker starts on. */
+  source?: number;
+  /** For a DPP8 lane selector: the lane. */
+  lane?: number;
 }
 
 interface DwordLayout {
@@ -69,9 +73,14 @@ function field(
   return { name, hi, lo, color, show, slot };
 }
 
-/** A VOP3 modifier field (CLAMP, OMOD, OP_SEL, ABS or NEG). */
+/** A modifier field (CLAMP, OMOD, OP_SEL, ROW_MASK, DST_SEL, …). */
 function modField(name: string, hi: number, lo: number, color: string, show: BitField['show'], mod: ModifierField): BitField {
   return { ...field(name, hi, lo, color, show), mod };
+}
+
+/** A one-bit modifier of one source in a DPP16 or SDWA dword (S0 ABS, S1 NEG, S0 SEXT, …). */
+function sourceModField(name: string, bit: number, color: string, mod: ModifierField, source: number): BitField {
+  return { ...field(name, bit, bit, color), mod, source };
 }
 
 /** What each modifier field does, shown at the top of its picker. */
@@ -83,6 +92,22 @@ const MODIFIER_INTRO: Record<ModifierField, string> = {
   abs: 'Take the absolute value of a source (before NEG)',
   neg: 'Negate a source (after ABS)',
   neg_hi: 'Negate the half of each source that feeds the high half of the result',
+  row_mask: 'Which rows of 16 lanes are written (a wave32 has rows 0 and 1)',
+  bank_mask: 'Which banks of 4 lanes in each row are written',
+  bound_ctrl: 'What a lane gets when the lane it reads is outside its row, or inactive',
+  fi: 'Fetch inactive: whether lanes that are inactive can be read',
+  dpp8: 'Which lane of its group of 8 this lane reads',
+  src0_sel: 'Which part of SRC0 is read (zero-extended, or sign-extended with SEXT)',
+  src1_sel: 'Which part of SRC1 is read (zero-extended, or sign-extended with SEXT)',
+  dst_sel: 'Which part of VDST the result is written to',
+  dst_unused: 'What happens to the bits of VDST outside DST_SEL',
+  sext: 'Sign-extend the part of a source that SRC0_SEL / SRC1_SEL picks (integer operations)',
+};
+/** Picker titles, which cover a whole modifier (S0 NEG and S1 NEG both open NEG). */
+const MODIFIER_TITLE: Record<ModifierField, string> = {
+  clamp: 'CLAMP', omod: 'OMOD', op_sel: 'OP_SEL', op_sel_hi: 'OP_SEL_HI', abs: 'ABS', neg: 'NEG', neg_hi: 'NEG_HI',
+  row_mask: 'ROW_MASK', bank_mask: 'BANK_MASK', bound_ctrl: 'BOUND_CTRL', fi: 'FI', dpp8: 'SEL',
+  src0_sel: 'SRC0_SEL', src1_sel: 'SRC1_SEL', dst_sel: 'DST_SEL', dst_unused: 'DST_UNUSED', sext: 'SEXT',
 };
 const PERMLANE_OP_SEL_INTRO = 'v_permlane16_b32 and v_permlanex16_b32 keep their FI and BOUND_CTRL flags in OP_SEL';
 /** v_fma_mix* reads each source as an f32, or as an f16 half, and NEG_HI is its abs. */
@@ -93,9 +118,10 @@ const MIX_INTRO: Partial<Record<ModifierField, string>> = {
   neg_hi: 'Take the absolute value of a source: for v_fma_mix, NEG_HI is abs',
 };
 
-/** What a modifier field does for this instruction. */
-function modifierIntro(mod: ModifierField, info: OpcodeInfo): string {
+/** What a modifier field does for this instruction (`lane` is the lane of a DPP8 selector). */
+function modifierIntro(mod: ModifierField, info: OpcodeInfo, lane = 0): string {
   const m = info.mnemonic;
+  if (mod === 'dpp8') return `Which lane of its group of 8 lane ${lane} reads (for lanes ${lane}, ${lane + 8}, ${lane + 16} and ${lane + 24} of the wave)`;
   if (mod === 'op_sel' && (m === 'v_permlane16_b32' || m === 'v_permlanex16_b32')) return PERMLANE_OP_SEL_INTRO;
   if (info.format !== InstructionFormat.VOP3P || mod === 'clamp') return MODIFIER_INTRO[mod];
   if (m.startsWith('v_fma_mix')) return MIX_INTRO[mod] ?? MODIFIER_INTRO[mod];
@@ -159,10 +185,12 @@ function vsrc1(ctx: LayoutContext): BitField['show'] {
 }
 
 function e32Fields(ctx: LayoutContext): BitField[] {
-  // With DPP or SDWA, SRC0 holds a marker and the real source is in the extra dword
+  // With DPP or SDWA, SRC0 holds a marker and the real source is in the extra dword; DPP8's marker says if FI is set
   const extra = ctx.decoded.extra;
   const src0Slot = extra === 'DPP16' || extra === 'DPP8' || extra === 'SDWA' ? undefined : 'src0';
-  const src0 = field('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0), src0Slot);
+  const src0 = extra === 'DPP8'
+    ? modField('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0), 'fi')
+    : field('SRC0', 8, 0, COLOR.src0, valuSource(ctx, 0), src0Slot);
   switch (ctx.decoded.encoding) {
     case 'VOP1':
       return [fixed(31, 25), field('VDST', 24, 17, COLOR.dst, vdst(ctx), 'dst'), opField(16, 9, ctx), src0];
@@ -186,20 +214,22 @@ function vop3SourceFields(ctx: LayoutContext, vop3p: boolean): BitField[] {
 
 function dpp16Fields(): BitField[] {
   return [
-    field('ROW_MASK', 31, 28, COLOR.select, v => hexVal(v, 1)),
-    field('BANK_MASK', 27, 24, COLOR.select, v => hexVal(v, 1)),
-    field('S1 ABS', 23, 23, COLOR.abs), field('S1 NEG', 22, 22, COLOR.neg),
-    field('S0 ABS', 21, 21, COLOR.abs), field('S0 NEG', 20, 20, COLOR.neg),
-    field('BC', 19, 19, COLOR.modifier), field('FI', 18, 18, COLOR.modifier),
+    modField('ROW_MASK', 31, 28, COLOR.select, v => hexVal(v, 1), 'row_mask'),
+    modField('BANK_MASK', 27, 24, COLOR.select, v => hexVal(v, 1), 'bank_mask'),
+    sourceModField('S1 ABS', 23, COLOR.abs, 'abs', 1), sourceModField('S1 NEG', 22, COLOR.neg, 'neg', 1),
+    sourceModField('S0 ABS', 21, COLOR.abs, 'abs', 0), sourceModField('S0 NEG', 20, COLOR.neg, 'neg', 0),
+    modField('BC', 19, 19, COLOR.modifier, v => String(v), 'bound_ctrl'), modField('FI', 18, 18, COLOR.modifier, v => String(v), 'fi'),
     reserved(17, 17),
-    field('DPP_CTRL', 16, 8, COLOR.select, v => describeDppCtrl(v)),
+    field('DPP_CTRL', 16, 8, COLOR.select, v => describeDppCtrl(v), 'dpp'),
     field('SRC0', 7, 0, COLOR.src0, v => vgprName(v), 'src0'),
   ];
 }
 
 function dpp8Fields(): BitField[] {
   const fields: BitField[] = [];
-  for (let lane = 7; lane >= 0; lane--) fields.push(field(`SEL${lane}`, 10 + lane * 3, 8 + lane * 3, COLOR.select));
+  for (let lane = 7; lane >= 0; lane--) {
+    fields.push({ ...modField(`SEL${lane}`, 10 + lane * 3, 8 + lane * 3, COLOR.select, v => String(v), 'dpp8'), lane });
+  }
   fields.push(field('SRC0', 7, 0, COLOR.src0, v => vgprName(v), 'src0'));
   return fields;
 }
@@ -207,15 +237,18 @@ function dpp8Fields(): BitField[] {
 function sdwaFields(ctx: LayoutContext): BitField[] {
   const format = ctx.info.format;
   const sel = (v: number) => SDWA_SEL[v];
+  // S0 / S1 say whether a source is a VGPR or a scalar; they follow the operand, as SD follows SDST
   const fields: BitField[] = format === InstructionFormat.VOP1 ? [reserved(31, 24)] : [
     field('S1', 31, 31, COLOR.src1), reserved(30, 30),
-    field('S1 ABS', 29, 29, COLOR.abs), field('S1 NEG', 28, 28, COLOR.neg), field('S1 SEXT', 27, 27, COLOR.modifier),
-    field('SRC1_SEL', 26, 24, COLOR.select, sel),
+    sourceModField('S1 ABS', 29, COLOR.abs, 'abs', 1), sourceModField('S1 NEG', 28, COLOR.neg, 'neg', 1),
+    sourceModField('S1 SEXT', 27, COLOR.modifier, 'sext', 1),
+    modField('SRC1_SEL', 26, 24, COLOR.select, sel, 'src1_sel'),
   ];
   fields.push(
     field('S0', 23, 23, COLOR.src0), reserved(22, 22),
-    field('S0 ABS', 21, 21, COLOR.abs), field('S0 NEG', 20, 20, COLOR.neg), field('S0 SEXT', 19, 19, COLOR.modifier),
-    field('SRC0_SEL', 18, 16, COLOR.select, sel),
+    sourceModField('S0 ABS', 21, COLOR.abs, 'abs', 0), sourceModField('S0 NEG', 20, COLOR.neg, 'neg', 0),
+    sourceModField('S0 SEXT', 19, COLOR.modifier, 'sext', 0),
+    modField('SRC0_SEL', 18, 16, COLOR.select, sel, 'src0_sel'),
   );
   if (format === InstructionFormat.VOPC) {
     fields.push(
@@ -224,10 +257,10 @@ function sdwaFields(ctx: LayoutContext): BitField[] {
     );
   } else {
     fields.push(
-      field('OMOD', 15, 14, COLOR.modifier, v => OMOD[v]),
-      field('CLAMP', 13, 13, COLOR.modifier),
-      field('DST_UNUSED', 12, 11, COLOR.select, v => SDWA_UNUSED[v]),
-      field('DST_SEL', 10, 8, COLOR.select, sel),
+      modField('OMOD', 15, 14, COLOR.modifier, v => OMOD[v], 'omod'),
+      modField('CLAMP', 13, 13, COLOR.modifier, v => String(v), 'clamp'),
+      modField('DST_UNUSED', 12, 11, COLOR.select, v => SDWA_UNUSED[v], 'dst_unused'),
+      modField('DST_SEL', 10, 8, COLOR.select, sel, 'dst_sel'),
     );
   }
   fields.push(field('SRC0', 7, 0, COLOR.src0, (v, w) => ((w[1] >>> 23) & 1 ? sourceFieldName(v) : vgprName(v)), 'src0'));
@@ -400,27 +433,13 @@ function buildFormula(info: OpcodeInfo, instr: ParsedInstruction): string {
   return formula;
 }
 
-/** Plain-language meaning of a DPP16 control value. */
-function dppMeaning(ctrl: number): string {
-  const n = ctrl & 0xF;
-  if (ctrl <= 0xFF) return 'each lane reads the lane of its quad chosen by the quad_perm selector';
-  if (ctrl >= 0x101 && ctrl <= 0x10F) return `lane i reads lane i+${n} of its row`;
-  if (ctrl >= 0x111 && ctrl <= 0x11F) return `lane i reads lane i−${n} of its row`;
-  if (ctrl >= 0x121 && ctrl <= 0x12F) return `lane i reads lane (i−${n}) mod 16 of its row`;
-  if (ctrl === 0x140) return 'lane i reads lane 15−i of its row';
-  if (ctrl === 0x141) return 'lane i reads lane 7−i of its half-row';
-  if (ctrl >= 0x150 && ctrl <= 0x15F) return `every lane reads lane ${n} of its row`;
-  if (ctrl >= 0x160 && ctrl <= 0x16F) return `lane i reads lane i XOR ${n} of its row`;
-  return 'reserved control value';
-}
-
 /** One-line summary of the DPP / SDWA / packed-math modifiers, or '' when there are none. */
 function modifierSummary(d: DecodedInstruction, info: OpcodeInfo): string {
   if (d.extra === 'DPP16') {
     const ctrl = d.dppCtrl ?? 0;
     const masks = `row_mask:${hexVal(d.rowMask ?? 0xF, 1)} bank_mask:${hexVal(d.bankMask ?? 0xF, 1)}`;
     const flags = `${d.boundCtrl ? ' bound_ctrl:1' : ''}${d.fetchInactive ? ' fi:1' : ''}`;
-    return `DPP16 ${describeDppCtrl(ctrl)} ${masks}${flags} — ${dppMeaning(ctrl)}`;
+    return `DPP16 ${describeDppCtrl(ctrl)} ${masks}${flags} — ${dppCtrlMeaning(ctrl)}`;
   }
   if (d.extra === 'DPP8') {
     return `DPP8 [${(d.dpp8 ?? []).join(',')}]${d.fetchInactive ? ' fi:1' : ''} — lane i reads lane sel[i mod 8] of its group of 8`;
@@ -482,7 +501,7 @@ export class InstructionInfo {
   private modPicker = new ModifierPicker();
   /** Options of the modifier fields of `modLine`, which every refresh of the panel would otherwise recompute. */
   private modLine = '';
-  private modOptions = new Map<ModifierField, ModifierChoices | null>();
+  private modOptions = new Map<string, ModifierChoices | null>();
   private editHandler: ((edit: OperandEdit) => void) | null = null;
 
   constructor(container: HTMLElement) {
@@ -568,21 +587,23 @@ export class InstructionInfo {
     this.modPicker.close();
   }
 
-  /** The options of a modifier field of the instruction on `lineText` (remembered for the line on show). */
-  private modifierChoices(lineText: string, mod: ModifierField): ModifierChoices | null {
+  /** The options of a modifier field (of DPP8 lane `lane`) of the instruction on `lineText`, remembered for the line on show. */
+  private modifierChoices(lineText: string, mod: ModifierField, lane = 0): ModifierChoices | null {
     if (lineText !== this.modLine) {
       this.modLine = lineText;
       this.modOptions.clear();
     }
-    if (!this.modOptions.has(mod)) this.modOptions.set(mod, modifierOptions(lineText, mod));
-    return this.modOptions.get(mod)!;
+    const key = `${mod}:${lane}`;
+    if (!this.modOptions.has(key)) this.modOptions.set(key, modifierOptions(lineText, mod, lane));
+    return this.modOptions.get(key)!;
   }
 
   /** Open the picker on an editable field (or close it if it is already open there). */
   private openField(cell: HTMLElement): void {
     const mod = cell.dataset.mod as ModifierField | undefined;
     if (mod) {
-      this.openModifier(cell, mod);
+      const number = (v: string | undefined) => (v === undefined ? undefined : Number(v));
+      this.openModifier(cell, mod, number(cell.dataset.source), number(cell.dataset.lane));
       return;
     }
     const shown = this.shown;
@@ -607,7 +628,7 @@ export class InstructionInfo {
       current: lineText.slice(span.start - 1, span.end - 1),
       bytes: shown.bytes,
       choices: editChoices(lineText, slot, labels),
-      layout: slot === 'mnemonic' ? 'list' : 'grid',
+      layout: slot === 'mnemonic' || slot === 'dpp' ? 'list' : 'grid',
       check: text => {
         const changed = replaceSpan(lineText, span, text);
         const result = checkLine(changed, labels);
@@ -619,10 +640,10 @@ export class InstructionInfo {
   }
 
   /**
-   * Open the modifier picker on a CLAMP, OMOD, OP_SEL, ABS or NEG field (or close it if it is open there),
-   * with row `focus` focused.
+   * Open the modifier picker on a modifier field (or close it if it is open there), with row `focus` focused;
+   * `lane` is the lane of a DPP8 selector.
    */
-  private openModifier(cell: HTMLElement, mod: ModifierField, focus?: number): void {
+  private openModifier(cell: HTMLElement, mod: ModifierField, focus?: number, lane?: number): void {
     const shown = this.shown;
     const handler = this.editHandler;
     if (!shown || !handler) return;
@@ -630,7 +651,7 @@ export class InstructionInfo {
       this.modPicker.close();
       return;
     }
-    const choices = this.modifierChoices(shown.lineText, mod);
+    const choices = this.modifierChoices(shown.lineText, mod, lane);
     const info = lookupByMnemonic(shown.instr.mnemonic);
     if (!choices || !info) return;
 
@@ -645,10 +666,10 @@ export class InstructionInfo {
     cell.classList.add('instr-info-bit--active');
     this.modPicker.open({
       anchor: cell,
-      // OP_SEL_HI[2] and OP_SEL_HI both open the whole of op_sel_hi
-      title: mod === 'op_sel_hi' ? 'OP_SEL_HI' : name,
+      // A picker covers a whole modifier: S0 NEG and S1 NEG both open NEG, OP_SEL_HI[2] all of OP_SEL_HI
+      title: mod === 'dpp8' ? name : MODIFIER_TITLE[mod],
       color: cell.dataset.color ?? COLOR.modifier,
-      intro: modifierIntro(mod, info),
+      intro: modifierIntro(mod, info, lane),
       kind: choices.kind,
       options: choices.options,
       states,
@@ -663,7 +684,7 @@ export class InstructionInfo {
         if (choices.kind === 'toggles') {
           const next = [...this.bodyEl.querySelectorAll<HTMLElement>(`.instr-info-bit--editable[data-mod="${mod}"]`)]
             .find(c => c.dataset.name === name);
-          if (next) this.openModifier(next, mod, index);
+          if (next) this.openModifier(next, mod, index, lane);
         }
       },
       onClose: () => cell.classList.remove('instr-info-bit--active'),
@@ -747,17 +768,21 @@ export class InstructionInfo {
         let canEdit = editable && !!f.slot && !!instr.spans?.[f.slot];
         let why = '';
         if (editable && f.mod) {
-          // A modifier field can be clicked when one of its other values assembles; otherwise the tip says why not
-          const options = this.modifierChoices(lineText, f.mod)?.options ?? [];
-          canEdit = options.some(o => o.line !== undefined && o.line !== lineText);
-          if (!canEdit) why = (options.find(o => o.error && o.operand !== '—') ?? options.find(o => o.error))?.error ?? '';
+          // A modifier field can be clicked when one of its other values assembles (for a bit of one source, that
+          // source's); otherwise the tip says why not
+          const options = this.modifierChoices(lineText, f.mod, f.lane)?.options ?? [];
+          const own = f.source === undefined ? options : options.slice(f.source, f.source + 1);
+          canEdit = own.some(o => o.line !== undefined && o.line !== lineText);
+          if (!canEdit) why = (own.find(o => o.error && o.operand !== '—') ?? own.find(o => o.error))?.error ?? '';
         }
         anyEditable ||= canEdit;
         const tip = `${f.name || 'reserved'} [${f.hi}:${f.lo}] = ${hexVal(value, 1)}${canEdit ? ' — click to change' : why ? ` — ${why}` : ''}`;
         const style = `flex:${width};--field-color:${f.color};--field-bg:${f.color}15;--field-hover:${f.color}38;border-color:${f.color}`;
+        const data = f.mod
+          ? `data-mod="${f.mod}"${f.source !== undefined ? ` data-source="${f.source}"` : ''}${f.lane !== undefined ? ` data-lane="${f.lane}"` : ''}`
+          : `data-slot="${f.slot}"`;
         html += canEdit
-          ? `<div class="instr-info-bit instr-info-bit--editable" style="${style}" ` +
-            `${f.mod ? `data-mod="${f.mod}"` : `data-slot="${f.slot}"`} ` +
+          ? `<div class="instr-info-bit instr-info-bit--editable" style="${style}" ${data} ` +
             `data-name="${escapeHtml(f.name)}" data-color="${f.color}" title="${escapeHtml(tip)}" ` +
             `tabindex="0" role="button" aria-haspopup="dialog">`
           : `<div class="instr-info-bit" style="${style}" title="${escapeHtml(tip)}">`;

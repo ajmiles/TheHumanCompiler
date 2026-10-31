@@ -3,7 +3,7 @@
 // changed to, keeping only the choices that still assemble, so the Instruction Info panel can rewrite the
 // source line in place.
 
-import { decodeBinary, encodeInstruction, EncodingError } from '../isa/encoding';
+import { decodeBinary, dppCtrlMeaning, encodeInstruction, EncodingError, planEncoding } from '../isa/encoding';
 import { getAllOpcodes, lookupByMnemonic } from '../isa/opcodes';
 import { isFloatType, operandRegCount, valuSourceCount, vopTypes } from '../isa/operands';
 import { NUM_VGPRS, SGPR_MAX } from '../isa/constants';
@@ -66,7 +66,7 @@ export interface EditChoice {
   bytes: number;
   /** The instruction has this value now. */
   current: boolean;
-  /** First line of a mnemonic's description. */
+  /** First line of a mnemonic's description, or what a DPP lane control does. */
   detail?: string;
 }
 
@@ -80,6 +80,31 @@ const GROUP_ORDER = ['VGPR', 'SGPR', 'Special', 'Constant', 'Label'];
 const SPECIAL_32 = ['vcc_lo', 'vcc_hi', 'exec_lo', 'exec_hi', 'm0', 'null', 'scc', 'vccz', 'execz'];
 const SPECIAL_64 = ['vcc', 'exec'];
 const INLINE_FLOATS = ['0.5', '-0.5', '1.0', '-1.0', '2.0', '-2.0', '4.0', '-4.0'];
+
+const sentence = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+/** The DPP16 lane controls offered for DPP_CTRL: [text, group, what it does]. */
+const DPP16_CONTROLS: Array<[string, string, string]> = (() => {
+  const quads: Array<[number[], string]> = [
+    [[0, 1, 2, 3], 'Every lane reads itself'],
+    [[1, 0, 3, 2], 'Swap neighbouring lanes'],
+    [[2, 3, 0, 1], 'Swap the two halves of each quad'],
+    [[3, 2, 1, 0], 'Reverse each quad'],
+    [[1, 2, 3, 0], 'Lane i reads lane i+1 of its quad, wrapping round'],
+    [[3, 0, 1, 2], 'Lane i reads lane i−1 of its quad, wrapping round'],
+    ...[0, 1, 2, 3].map((k): [number[], string] => [[k, k, k, k], `Every lane reads lane ${k} of its quad`]),
+  ];
+  const list = quads.map(([sel, what]): [string, string, string] => [`quad_perm:[${sel.join(',')}]`, 'Quad permute', what]);
+  const add = (text: string, group: string, ctrl: number) => list.push([text, group, sentence(dppCtrlMeaning(ctrl))]);
+  for (let n = 1; n <= 15; n++) add(`row_shl:${n}`, 'Row shift', 0x100 + n);
+  for (let n = 1; n <= 15; n++) add(`row_shr:${n}`, 'Row shift', 0x110 + n);
+  for (let n = 1; n <= 15; n++) add(`row_ror:${n}`, 'Row rotate', 0x120 + n);
+  add('row_mirror', 'Row mirror', 0x140);
+  add('row_half_mirror', 'Row mirror', 0x141);
+  for (let n = 0; n <= 15; n++) add(`row_share:${n}`, 'Row share', 0x150 + n);
+  for (let n = 0; n <= 15; n++) add(`row_xmask:${n}`, 'Row xmask', 0x160 + n);
+  return list;
+})();
 
 function slotOperand(instr: ParsedInstruction, slot: OperandSlot): Operand | undefined {
   switch (slot) {
@@ -140,6 +165,21 @@ export function editChoices(lineText: string, slot: OperandSlot, labels: Readonl
   }
   if (slot === 'k') return choices;
 
+  if (slot === 'dpp') {
+    // The DPP16 lane controls, with what each does; a DPP8 selection or another quad_perm is typed
+    if (instr.dppCtrl === undefined) return choices;
+    for (const [text, group, detail] of DPP16_CONTROLS) {
+      const line = replaceSpan(lineText, span, text);
+      const result = checkLine(line, labels);
+      if (result.words) choices.push({ text, group, line, bytes: result.words.length * 4, current: result.instr?.dppCtrl === instr.dppCtrl, detail });
+    }
+    if (!choices.some(c => c.current)) {
+      choices.unshift({ text: currentText, group: 'Quad permute', line: lineText, bytes: now.words.length * 4, current: true,
+        detail: sentence(dppCtrlMeaning(instr.dppCtrl)) });
+    }
+    return choices;
+  }
+
   const op = slotOperand(instr, slot);
   const info = lookupByMnemonic(instr.mnemonic);
   const regs = op?.regCount ?? (info && slot !== 'sdst' ? operandRegCount(info, slot) : 1);
@@ -161,20 +201,23 @@ export function editChoices(lineText: string, slot: OperandSlot, labels: Readonl
 // ── Modifier fields ──
 
 /**
- * A modifier field of the VOP3A, VOP3B and VOP3P encodings. NEG is the same field in all three (NEG_LO in
- * VOP3P); OP_SEL_HI and NEG_HI exist only in VOP3P, ABS and OMOD only in VOP3A / VOP3B.
+ * A modifier field of an encoding. CLAMP and OMOD (VOP3A/B, SDWA); OP_SEL (VOP3A, VOP3P); OP_SEL_HI and NEG_HI
+ * (VOP3P); ABS and NEG of each source (VOP3A/B, DPP16, SDWA, and NEG as VOP3P's NEG_LO); ROW_MASK, BANK_MASK,
+ * BOUND_CTRL and FI (DPP16, and FI of DPP8); DPP8's lane selectors; and SDWA's SRC0_SEL, SRC1_SEL, DST_SEL,
+ * DST_UNUSED and SEXT.
  */
-export type ModifierField = 'clamp' | 'omod' | 'op_sel' | 'op_sel_hi' | 'abs' | 'neg' | 'neg_hi';
+export type ModifierField = 'clamp' | 'omod' | 'op_sel' | 'op_sel_hi' | 'abs' | 'neg' | 'neg_hi'
+  | 'row_mask' | 'bank_mask' | 'bound_ctrl' | 'fi' | 'dpp8' | 'src0_sel' | 'src1_sel' | 'dst_sel' | 'dst_unused' | 'sext';
 
 /** One value of a modifier field, or one of its bits, which can be switched on or off. */
 export interface ModifierOption {
-  /** For a bit, what it applies to ('src0'…'src2', 'dst', 'fi' or 'bound_ctrl'); for a value, the field's value. */
+  /** For a bit, what it applies to ('src0'…'src2', 'dst', 'fi', 'bound_ctrl', 'row0'…, 'bank0'…); for a value, the field's value. */
   key: string;
-  /** Short name: SRC0, DST, off, mul:2, … */
+  /** Short name: SRC0, DST, ROW 1, off, mul:2, BYTE_0, … */
   label: string;
-  /** For a bit of ABS, NEG or OP_SEL: the operand it applies to, as written now. */
+  /** For a bit of ABS, NEG, NEG_HI, OP_SEL, OP_SEL_HI or SEXT: the operand it applies to, as written now. */
   operand?: string;
-  /** What the value or bit does (CLAMP, OMOD and the flags of v_permlane*'s OP_SEL). */
+  /** What the value or bit does. */
   detail?: string;
   /** The bit is set, or the field holds this value. */
   on: boolean;
@@ -186,7 +229,10 @@ export interface ModifierOption {
 }
 
 export interface ModifierChoices {
-  /** 'toggles': each option switches one bit (ABS, NEG, NEG_HI, OP_SEL, OP_SEL_HI). 'choice': the options are the values (CLAMP, OMOD). */
+  /**
+   * 'toggles': each option switches one bit (ABS, NEG, NEG_HI, OP_SEL, OP_SEL_HI, ROW_MASK, BANK_MASK, SEXT).
+   * 'choice': the options are the field's values (CLAMP, OMOD, BOUND_CTRL, FI, a DPP8 selector, the SDWA selectors).
+   */
   kind: 'toggles' | 'choice';
   options: ModifierOption[];
 }
@@ -197,8 +243,27 @@ const OMOD_SYNTAX = ['', 'mul:2', 'mul:4', 'div:2'];
 const OMOD_MEANING = [
   'The result is written as computed', 'Multiply the result by 2', 'Multiply the result by 4', 'Divide the result by 2',
 ];
-/** The order LLVM prints these modifiers in; a new one is written in its place among them. */
-const MODIFIER_RANK: Record<string, number> = { op_sel: 0, op_sel_hi: 1, neg_lo: 2, neg_hi: 3, clamp: 4, mul: 5, div: 5 };
+/** SDWA selectors in encoding order, with the bits each picks. */
+const SDWA_SELS: Array<[string, string]> = [
+  ['BYTE_0', 'Bits 7:0'], ['BYTE_1', 'Bits 15:8'], ['BYTE_2', 'Bits 23:16'], ['BYTE_3', 'Bits 31:24'],
+  ['WORD_0', 'Bits 15:0'], ['WORD_1', 'Bits 31:16'], ['DWORD', 'All 32 bits'],
+];
+const SDWA_UNUSED: Array<[string, string]> = [
+  ['UNUSED_PAD', 'Fill the other bits of VDST with 0'],
+  ['UNUSED_SEXT', 'Fill the bits above the result with its sign, and those below it with 0'],
+  ['UNUSED_PRESERVE', 'Keep the other bits of VDST'],
+];
+/**
+ * The order LLVM prints these modifiers in; a new one is written in its place among them. DPP's masks and
+ * flags follow its lane control (which is always written), and SDWA's selectors come last.
+ */
+const MODIFIER_RANK: Record<string, number> = {
+  op_sel: 0, op_sel_hi: 1, neg_lo: 2, neg_hi: 3, clamp: 4, mul: 5, div: 5,
+  ...Object.fromEntries(['quad_perm', 'row_shl', 'row_shr', 'row_ror', 'row_mirror', 'row_half_mirror', 'row_share', 'row_xmask', 'dpp8']
+    .map(name => [name, 6])),
+  row_mask: 7, bank_mask: 8, bound_ctrl: 9, fi: 10,
+  dst_sel: 6, dst_unused: 7, src0_sel: 8, src0_sext: 8.5, src1_sel: 9, src1_sext: 9.5,
+};
 /** Instructions that pack two f16 results, whose clamp applies to each half. */
 const PACKED_F16_RESULT = new Set(['v_cvt_pkrtz_f16_f32', 'v_pack_b32_f16']);
 
@@ -237,12 +302,19 @@ function setModifier(lineText: string, names: string[], text: string): string {
   return text ? line.slice(0, first.column - 1) + text + line.slice(first.end - 1) : removeToken(line, tokens, first);
 }
 
-/** A source with the given abs and neg modifiers, written in the style the line uses (|x| or abs(x), -x or neg(x)). */
-function wrapSource(core: string, abs: boolean, neg: boolean, constant: boolean, written: string): string {
-  let text = /sext\s*\(/i.test(written) ? `sext(${core})` : core;
-  if (abs) text = /abs\s*\(/i.test(written) ? `abs(${text})` : `|${text}|`;
+/** The modifiers written on a source. */
+interface SourceMods {
+  abs: boolean;
+  neg: boolean;
+  sext: boolean;
+}
+
+/** A source with the given modifiers, written in the style the line uses (|x| or abs(x), -x or neg(x)). */
+function wrapSource(core: string, mods: SourceMods, constant: boolean, written: string): string {
+  let text = mods.sext ? `sext(${core})` : core;
+  if (mods.abs) text = /abs\s*\(/i.test(written) ? `abs(${text})` : `|${text}|`;
   // '-' before a constant is read as part of it (-1.0 is another constant, not 1.0 with NEG set)
-  if (neg) text = /neg\s*\(/i.test(written) || (constant && !abs) ? `neg(${text})` : `-${text}`;
+  if (mods.neg) text = /neg\s*\(/i.test(written) || (constant && !mods.abs) ? `neg(${text})` : `-${text}`;
   return text;
 }
 
@@ -252,15 +324,16 @@ function writtenOperand(lineText: string, instr: ParsedInstruction, slot: 'dst' 
   return span ? lineText.slice(span.start - 1, span.end - 1) : '—';
 }
 
-/** The line with source `slot` written with exactly the given abs and neg modifiers. */
-function withSourceModifiers(lineText: string, instr: ParsedInstruction, slot: Source, abs: boolean, neg: boolean): string | { error: string } {
+/** The line with source `slot` written with `change` made to its modifiers. */
+function withSourceModifiers(lineText: string, instr: ParsedInstruction, slot: Source, change: Partial<SourceMods>): string | { error: string } {
   const op = instr[slot];
   const core = instr.spans?.[slot];
   const wrapped = instr.wrappedSpans?.[slot];
   if (!op || !core || !wrapped) return { error: `${slot.toUpperCase()} is implicit: it is not written on this line` };
   const constant = op.type === OperandType.INLINE_INT || op.type === OperandType.INLINE_FLOAT || op.type === OperandType.LITERAL;
   const written = lineText.slice(wrapped.start - 1, wrapped.end - 1);
-  return replaceSpan(lineText, wrapped, wrapSource(lineText.slice(core.start - 1, core.end - 1), abs, neg, constant, written));
+  const mods: SourceMods = { abs: !!op.abs, neg: !!op.neg, sext: /sext\s*\(/i.test(written), ...change };
+  return replaceSpan(lineText, wrapped, wrapSource(lineText.slice(core.start - 1, core.end - 1), mods, constant, written));
 }
 
 function clampMeaning(info: OpcodeInfo): string {
@@ -272,12 +345,34 @@ function clampMeaning(info: OpcodeInfo): string {
   return 'Saturate: a result outside the integer range is clamped to it instead of wrapping';
 }
 
+/** Whether an instruction encoded as `extra` (DPP16, DPP8, SDWA, a literal or none of those) has bits for the field. */
+function hasField(field: ModifierField, info: OpcodeInfo, extra: string | undefined): boolean {
+  const vop3p = info.format === InstructionFormat.VOP3P;
+  const dpp = extra === 'DPP16' || extra === 'DPP8';
+  const sdwa = extra === 'SDWA';
+  const sdwaCompare = sdwa && info.format === InstructionFormat.VOPC;
+  switch (field) {
+    case 'op_sel': return !dpp && !sdwa;
+    case 'op_sel_hi': case 'neg_hi': return vop3p;
+    case 'clamp': return !dpp && !sdwaCompare;
+    case 'omod': return !vop3p && !dpp && !sdwaCompare;
+    case 'abs': return !vop3p && extra !== 'DPP8';
+    case 'neg': return extra !== 'DPP8';
+    case 'row_mask': case 'bank_mask': case 'bound_ctrl': return extra === 'DPP16';
+    case 'fi': return dpp;
+    case 'dpp8': return extra === 'DPP8';
+    case 'src0_sel': case 'sext': return sdwa;
+    case 'src1_sel': return sdwa && info.format !== InstructionFormat.VOP1;
+    case 'dst_sel': case 'dst_unused': return sdwa && !sdwaCompare;
+  }
+}
+
 /**
- * The options of a modifier field of the VOP3 / VOP3P instruction on `lineText`, each checked by assembling the
- * changed line: ABS, NEG, NEG_HI, OP_SEL and OP_SEL_HI switch one bit at a time, CLAMP and OMOD offer each value.
- * Null when the line does not assemble, or its encoding has no such field.
+ * The options of a modifier field of the instruction on `lineText`, each checked by assembling the changed line:
+ * the fields with a bit per source (or per row or bank) switch one bit at a time, the others offer each value.
+ * `lane` picks the selector of a DPP8 lane. Null when the line does not assemble, or its encoding has no such field.
  */
-export function modifierOptions(lineText: string, field: ModifierField): ModifierChoices | null {
+export function modifierOptions(lineText: string, field: ModifierField, lane = 0): ModifierChoices | null {
   const now = checkLine(lineText);
   const instr = now.instr;
   const info = instr && lookupByMnemonic(instr.mnemonic);
@@ -285,7 +380,8 @@ export function modifierOptions(lineText: string, field: ModifierField): Modifie
   const m = info.mnemonic;
   const nsrc = valuSourceCount(info);
   const vop3p = info.format === InstructionFormat.VOP3P;
-  if (vop3p ? field === 'abs' || field === 'omod' : field === 'op_sel_hi' || field === 'neg_hi') return null;
+  const extra = planEncoding(instr, info).extra;
+  if (!hasField(field, info, extra)) return null;
 
   const option = (key: string, label: string, about: Pick<ModifierOption, 'operand' | 'detail'>, on: boolean,
     line: string | { error: string }): ModifierOption => {
@@ -301,16 +397,65 @@ export function modifierOptions(lineText: string, field: ModifierField): Modifie
       ? option(slot, slot.toUpperCase(), { operand: writtenOperand(lineText, instr, slot) }, !!((bits >> i) & 1), line(i, slot))
       : option(slot, slot.toUpperCase(), { operand: '—' }, false, { error: `${m} reads ${nsrc === 1 ? 'one source' : `${nsrc} sources`}` }))),
   });
+  /** One option per value, each written as `text(value)` (the value now leaves the line as it is). */
+  const values = (names: Array<[string, string]>, current: number, text: (v: number) => string): ModifierChoices => ({
+    kind: 'choice',
+    options: names.map(([label, detail], v) => option(String(v), label, { detail }, v === current, v === current ? lineText : text(v))),
+  });
 
-  if (field === 'clamp') {
-    return { kind: 'choice', options: [
-      option('0', 'off', { detail: 'The result is written as computed' }, !instr.clamp, setModifier(lineText, ['clamp'], '')),
-      option('1', 'on', { detail: clampMeaning(info) }, !!instr.clamp, setModifier(lineText, ['clamp'], 'clamp')),
-    ] };
-  }
-  if (field === 'omod') {
-    return { kind: 'choice', options: OMOD_SYNTAX.map((text, v) => option(String(v), text || 'none', { detail: OMOD_MEANING[v] },
-      (instr.omod ?? 0) === v, setModifier(lineText, ['mul', 'div'], text))) };
+  switch (field) {
+    case 'clamp':
+      return values([['off', 'The result is written as computed'], ['on', clampMeaning(info)]], instr.clamp ? 1 : 0,
+        v => setModifier(lineText, ['clamp'], v ? 'clamp' : ''));
+    case 'omod':
+      return values(OMOD_SYNTAX.map((text, v) => [text || 'none', OMOD_MEANING[v]]), instr.omod ?? 0,
+        v => setModifier(lineText, ['mul', 'div'], OMOD_SYNTAX[v]));
+    case 'row_mask':
+    case 'bank_mask': {
+      // A bit per row of 16 lanes, or per bank of 4 lanes in each row; an unwritten mask is 0xf
+      const rows = field === 'row_mask';
+      const mask = (rows ? instr.rowMask : instr.bankMask) ?? 0xF;
+      return { kind: 'toggles', options: [0, 1, 2, 3].map(b => {
+        const next = mask ^ (1 << b);
+        const detail = rows ? `Lanes ${16 * b}–${16 * b + 15}${b > 1 ? ' (wave64 only)' : ''}` : `Lanes ${4 * b}–${4 * b + 3} of each row`;
+        return option(`${rows ? 'row' : 'bank'}${b}`, `${rows ? 'ROW' : 'BANK'} ${b}`, { detail }, !!((mask >> b) & 1),
+          setModifier(lineText, [field], next === 0xF ? '' : `${field}:0x${next.toString(16)}`));
+      }) };
+    }
+    case 'bound_ctrl':
+      return values([['off', 'A lane whose source is outside its row, or inactive, is not written'],
+        ['on', 'A lane whose source is outside its row, or inactive, reads 0']], instr.boundCtrl ? 1 : 0,
+      v => setModifier(lineText, ['bound_ctrl'], v ? 'bound_ctrl:1' : ''));
+    case 'fi':
+      return values([['off', extra === 'DPP8' ? 'Reading an inactive lane gives 0' : 'Reading an inactive lane counts as reading outside the row'],
+        ['on', 'Inactive lanes are read like active ones']], instr.fetchInactive ? 1 : 0,
+      v => setModifier(lineText, ['fi'], v ? 'fi:1' : ''));
+    case 'dpp8': {
+      // Which lane of its group of 8 lane `lane` reads
+      const sel = instr.dpp8 ?? [0, 1, 2, 3, 4, 5, 6, 7];
+      const names = sel.map((_, k): [string, string] => [String(k), k === lane ? `Lane ${lane} reads itself` : `Lane ${lane} reads lane ${k} of its group of 8`]);
+      return values(names, sel[lane], k => setModifier(lineText, ['dpp8'], `dpp8:[${sel.map((s, j) => (j === lane ? k : s)).join(',')}]`));
+    }
+    case 'src0_sel':
+    case 'src1_sel':
+    case 'dst_sel': {
+      // Written even at DWORD, the default, since the last SDWA modifier gone would make it a plain VOP1/VOP2
+      const sel = (field === 'src0_sel' ? instr.sdwaSrc0Sel : field === 'src1_sel' ? instr.sdwaSrc1Sel : instr.sdwaDstSel) ?? 6;
+      return values(SDWA_SELS, sel, v => setModifier(lineText, [field], `${field}:${SDWA_SELS[v][0]}`));
+    }
+    case 'dst_unused':
+      return values(SDWA_UNUSED, instr.sdwaDstUnused ?? 0, v => setModifier(lineText, ['dst_unused'], `dst_unused:${SDWA_UNUSED[v][0]}`));
+    case 'sext': {
+      // sext(x) on the source; a src0_sext / src1_sext flag (as the disassembler writes it) is removed too
+      const flags = (instr.sdwaSrc0Sext ? 1 : 0) | (instr.sdwaSrc1Sext ? 2 : 0);
+      return sourceToggles(flags, (i, slot) => {
+        const on = !!((flags >> i) & 1);
+        const line = withSourceModifiers(lineText, instr, slot, { sext: !on });
+        return typeof line === 'string' && on ? setModifier(line, [`src${i}_sext`], '') : line;
+      });
+    }
+    default:
+      break;
   }
   if (vop3p) return packedOptions(lineText, instr, info, field, now.words, sourceToggles);
 
@@ -344,7 +489,7 @@ export function modifierOptions(lineText: string, field: ModifierField): Modifie
   const flags = SOURCES.reduce((b, slot, i) => b | (instr[slot]?.[field === 'abs' ? 'abs' : 'neg'] ? 1 << i : 0), 0);
   return sourceToggles(flags, (_, slot) => {
     const op = instr[slot];
-    return withSourceModifiers(lineText, instr, slot, field === 'abs' ? !op?.abs : !!op?.abs, field === 'neg' ? !op?.neg : !!op?.neg);
+    return withSourceModifiers(lineText, instr, slot, field === 'abs' ? { abs: !op?.abs } : { neg: !op?.neg });
   });
 }
 
@@ -403,7 +548,7 @@ function packedOptions(
       }
     }
     let line: string | { error: string } = lineText;
-    if (neg !== !!op.neg || abs !== !!op.abs) line = withSourceModifiers(lineText, instr, slot, abs, neg);
+    if (neg !== !!op.neg || abs !== !!op.abs) line = withSourceModifiers(lineText, instr, slot, { abs, neg });
     if (typeof line !== 'string') return line;
     if (lo !== (instr.negLo ?? 0)) line = setModifier(line, ['neg_lo'], lo & all ? list('neg_lo', lo) : '');
     if (hi !== (instr.negHi ?? 0)) line = setModifier(line, ['neg_hi'], hi & all ? list('neg_hi', hi) : '');

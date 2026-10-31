@@ -468,8 +468,9 @@ function rejectModifiers(mods: Modifiers, allowed: string[], mnemonic: string): 
   }
 }
 
-const DPP_MODS = ['row_shl', 'row_shr', 'row_ror', 'row_share', 'row_xmask', 'row_mirror', 'row_half_mirror',
-  'quad_perm', 'dpp8', 'row_mask', 'bank_mask', 'bound_ctrl', 'fi'];
+/** The DPP modifiers that choose which lane each lane reads. */
+const DPP_CONTROLS = ['row_shl', 'row_shr', 'row_ror', 'row_share', 'row_xmask', 'row_mirror', 'row_half_mirror', 'quad_perm', 'dpp8'];
+const DPP_MODS = [...DPP_CONTROLS, 'row_mask', 'bank_mask', 'bound_ctrl', 'fi'];
 const SDWA_MODS = ['dst_sel', 'dst_unused', 'src0_sel', 'src1_sel', 'src0_sext', 'src1_sext'];
 
 function bits(list: number[] | undefined): number | undefined {
@@ -632,6 +633,7 @@ function parseVALU(
 
   const instr: ParsedInstruction = { ...base, dst: NULL_OPERAND(), src0: NULL_OPERAND() };
   const isCmpx = info.format === InstructionFormat.VOPC && m.startsWith('v_cmpx_');
+  mark(instr, 'dpp', [...mods.seen].find(([name]) => DPP_CONTROLS.includes(name))?.[1]);
   layout.forEach((slot, i) => {
     const g = groups[i];
     const role = slot as OperandRole;

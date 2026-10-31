@@ -130,7 +130,7 @@
   border-right: none;
 }
 
-/* Fields that change the source when clicked: OP, the operands, SIMM16, literals and the VOP3 modifiers */
+/* Fields that change the source when clicked: OP, the operands, SIMM16, literals, DPP_CTRL and the modifiers */
 .instr-info-bit--editable {
   cursor: pointer;
   transition: background-color 0.12s, box-shadow 0.12s;
@@ -444,7 +444,7 @@
   color: var(--text-muted);
 }
 
-/* ── Modifier picker (CLAMP, OMOD, OP_SEL, OP_SEL_HI, ABS, NEG and NEG_HI of the VOP3 and VOP3P encodings) ── */
+/* ── Modifier picker (the modifier fields of the VOP3, VOP3P, DPP and SDWA encodings) ── */
 
 .mod-picker {
   width: 420px;

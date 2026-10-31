@@ -2,7 +2,7 @@
 
 import { assemble } from '../src/assembler/assembler';
 import { Emulator } from '../src/emulator/emulator';
-import { decodeBinary, disassemble } from '../src/isa/encoding';
+import { decodeBinary, describeDppCtrl, disassemble, dppCtrlMeaning } from '../src/isa/encoding';
 import { getAllOpcodes, lookupByOpcode, lookupByMnemonic } from '../src/isa/opcodes';
 import { f16ToF32, f32ToF16 } from '../src/isa/float16';
 import { getPuzzleById, ALL_PUZZLES } from '../src/puzzle/puzzles';
@@ -6683,7 +6683,7 @@ group('Instruction Info editing: VOP3 and VOP3P modifier fields');
     'v_pk_add_f16 v0, v1, v2', 'v_pk_fma_f16 v0, -v1, v2, v3 neg_hi:[0,0,1] clamp', 'v_pk_mad_u16 v0, v1, v2, v3 op_sel_hi:[1,0,1]',
     'v_pk_mul_f16 v0, v1, 1.0 neg_lo:[1,1]', 'v_fma_mix_f32 v0, -v1, |v2|, v3 op_sel:[0,1,0] op_sel_hi:[0,1,1]', 'v_fma_mixlo_f16 v0, v1, v2, v3 clamp',
     'v_dot2_f32_f16 v0, v1, v2, -|v3| op_sel:[1,0,0]', 'v_dot2_i32_i16 v0, v1, v2, v3 op_sel_hi:[0,1,1]', 'v_dot4_i32_i8 v0, v1, v2, v3'];
-  const fields: ModifierField[] = ['clamp', 'omod', 'op_sel', 'op_sel_hi', 'abs', 'neg', 'neg_hi'];
+  const fields = ['clamp', 'omod', 'op_sel', 'op_sel_hi', 'abs', 'neg', 'neg_hi'] as const;
   const bitsOf = (d: ReturnType<typeof decodeBinary>[number]) => ({
     abs: (d.src0Abs ? 1 : 0) | (d.src1Abs ? 2 : 0) | (d.src2Abs ? 4 : 0), neg: (d.src0Neg ? 1 : 0) | (d.src1Neg ? 2 : 0) | (d.src2Neg ? 4 : 0),
     neg_hi: d.negHi ?? 0, op_sel: d.opSel ?? 0, op_sel_hi: d.opSelHi ?? 0, clamp: d.clamp ? 1 : 0, omod: d.omod ?? 0,
@@ -6735,6 +6735,154 @@ group('Instruction Info editing: VOP3 and VOP3P modifier fields');
   assert(negs.every(r => r.same) && negs[0].text === 'v_add_f32_e64 v0, neg(1.0), v1' && negs[1].text === 'v_add_f32_e64 v0, neg(-2.0), v1',
     `disassembly: a negated constant is written neg(…) and round-trips (${negs.filter(r => !r.same).map(r => r.text).join('; ')})`);
   assert(back('v_add_f32_e64 v0, -s1, -|v2|').text === 'v_add_f32_e64 v0, -s1, -|v2|', 'disassembly: registers keep the - form');
+}
+
+group('Instruction Info editing: DPP and SDWA fields');
+{
+  const written = (src: string, slot: OperandSlot): string | undefined => {
+    const span = assemble(src).instructions[0]?.spans?.[slot];
+    return span ? src.slice(span.start - 1, span.end - 1) : undefined;
+  };
+  const find = (list: EditChoice[], text: string) => list.find(c => c.text === text);
+  const opts = (line: string, field: ModifierField, lane = 0) => modifierOptions(line, field, lane)!;
+  const lineOf = (line: string, field: ModifierField, key: string) => opts(line, field).options.find(o => o.key === key)?.line;
+  const errorOf = (line: string, field: ModifierField, key: string) => opts(line, field).options.find(o => o.key === key)?.error ?? '';
+  const states = (line: string, field: ModifierField) => opts(line, field).options.map(o => `${o.label}:${o.on}`).join();
+
+  // DPP_CTRL: the lane control is picked from a list of every DPP16 control, or typed
+  const dppLine = 'v_add_f32 v0, -v1, v2 row_shr:1 bank_mask:0x3';
+  assert(written(dppLine, 'dpp') === 'row_shr:1' && written('v_mov_b32 v0, v1 dpp8:[7,6,5,4,3,2,1,0] fi:1', 'dpp') === 'dpp8:[7,6,5,4,3,2,1,0]' &&
+    written('v_add_f32 v0, v1, v2', 'dpp') === undefined, 'spans: the DPP lane control');
+  const ctrls = editChoices(dppLine, 'dpp');
+  assert(ctrls.length === 89 && [...new Set(ctrls.map(c => c.group))].join() === 'Quad permute,Row shift,Row rotate,Row mirror,Row share,Row xmask' &&
+    ctrls.filter(c => c.current).map(c => c.text).join() === 'row_shr:1', 'DPP_CTRL: every DPP16 lane control, grouped, the current one marked');
+  assert(find(ctrls, 'row_ror:4')?.line === 'v_add_f32 v0, -v1, v2 row_ror:4 bank_mask:0x3' && find(ctrls, 'row_ror:4')?.bytes === 8 &&
+    find(ctrls, 'row_ror:4')?.detail === 'Lane i reads lane (i−4) mod 16 of its row' && find(ctrls, 'quad_perm:[1,0,3,2]')?.detail === 'Swap neighbouring lanes',
+    'DPP_CTRL: each choice carries its line, size and what it does');
+  const ownQuad = editChoices('v_mov_b32 v0, v1 quad_perm:[2,2,1,0]', 'dpp');
+  assert(ownQuad.length === 90 && ownQuad[0].current && ownQuad[0].text === 'quad_perm:[2,2,1,0]' && ownQuad[0].group === 'Quad permute' &&
+    ownQuad[0].detail === 'Lanes 0, 1, 2 and 3 of each quad read lanes 2, 2, 1 and 0 of that quad', 'DPP_CTRL: a quad_perm of its own is listed first');
+  assert(dppCtrlMeaning(0x1B) === 'lanes 0, 1, 2 and 3 of each quad read lanes 3, 2, 1 and 0 of that quad' &&
+    dppCtrlMeaning(0x141) === 'lane i reads lane 7−i of its half-row', 'dppCtrlMeaning: what a control value does');
+  assert(editChoices('v_mov_b32 v0, v1 dpp8:[7,6,5,4,3,2,1,0]', 'dpp').length === 0 && editChoices('v_mov_b32 v0, v1', 'dpp').length === 0,
+    'DPP_CTRL: DPP8 has its lane selectors instead, and other encodings no lane control');
+
+  // DPP16: a switch per row or bank of lanes, BOUND_CTRL and FI, written in LLVM's order after the lane control
+  assert(states(dppLine, 'bank_mask') === 'BANK 0:true,BANK 1:true,BANK 2:false,BANK 3:false' &&
+    states(dppLine, 'row_mask') === 'ROW 0:true,ROW 1:true,ROW 2:true,ROW 3:true' && /wave64 only/.test(opts(dppLine, 'row_mask').options[2].detail ?? ''),
+    'ROW_MASK / BANK_MASK: a switch per row or bank of lanes, unwritten masks all on');
+  assert(lineOf(dppLine, 'row_mask', 'row0') === 'v_add_f32 v0, -v1, v2 row_shr:1 row_mask:0xe bank_mask:0x3' &&
+    lineOf(dppLine, 'bank_mask', 'bank2') === 'v_add_f32 v0, -v1, v2 row_shr:1 bank_mask:0x7' &&
+    lineOf('v_add_f32 v0, v1, v2 row_shr:1 bank_mask:0x7', 'bank_mask', 'bank3') === 'v_add_f32 v0, v1, v2 row_shr:1',
+    'ROW_MASK / BANK_MASK: written after the lane control, and left out once back at 0xf');
+  assert(lineOf(dppLine, 'bound_ctrl', '1') === 'v_add_f32 v0, -v1, v2 row_shr:1 bank_mask:0x3 bound_ctrl:1' &&
+    lineOf('v_add_f32 v0, v1, v2 row_shr:1 fi:1', 'bound_ctrl', '1') === 'v_add_f32 v0, v1, v2 row_shr:1 bound_ctrl:1 fi:1' &&
+    lineOf('v_add_f32 v0, v1, v2 row_shr:1 bound_ctrl:1 fi:1', 'fi', '0') === 'v_add_f32 v0, v1, v2 row_shr:1 bound_ctrl:1' &&
+    states('v_add_f32 v0, v1, v2 row_shr:1 bound_ctrl:0', 'bound_ctrl') === 'off:true,on:false', 'BOUND_CTRL / FI: written bound_ctrl:1 and fi:1');
+  assert(lineOf(dppLine, 'neg', 'src1') === 'v_add_f32 v0, -v1, -v2 row_shr:1 bank_mask:0x3' &&
+    lineOf(dppLine, 'abs', 'src0') === 'v_add_f32 v0, -|v1|, v2 row_shr:1 bank_mask:0x3', 'DPP16: ABS and NEG per source');
+  assert(['clamp', 'omod', 'op_sel', 'src0_sel', 'dst_unused', 'sext', 'dpp8'].every(f => modifierOptions(dppLine, f as ModifierField) === null),
+    'DPP16: no CLAMP, OMOD, OP_SEL, SDWA or DPP8 fields');
+
+  // DPP8: each lane's selector picks a lane of its group of 8; FI is the DPP8FI form of the SRC0 marker
+  const d8Line = 'v_mov_b32 v0, v1 dpp8:[7,6,5,4,3,2,1,0]';
+  const lane2 = opts(d8Line, 'dpp8', 2);
+  assert(lane2.kind === 'choice' && lane2.options.length === 8 && lane2.options.filter(o => o.on).map(o => o.key).join() === '5' &&
+    opts(d8Line, 'dpp8').options.filter(o => o.on).map(o => o.key).join() === '7', 'DPP8: a choice of 8 lanes for each lane, the current one on');
+  assert(lane2.options[0].line === 'v_mov_b32 v0, v1 dpp8:[7,6,0,4,3,2,1,0]' && lane2.options[2].detail === 'Lane 2 reads itself' &&
+    lane2.options[6].detail === 'Lane 2 reads lane 6 of its group of 8', 'DPP8: a lane choice rewrites its entry of dpp8:[…]');
+  assert(lineOf(d8Line, 'fi', '1') === 'v_mov_b32 v0, v1 dpp8:[7,6,5,4,3,2,1,0] fi:1' && /gives 0/.test(opts(d8Line, 'fi').options[0].detail ?? '') &&
+    checkLine('v_mov_b32 v0, v1 dpp8:[7,6,5,4,3,2,1,0] fi:1').words![0] === (checkLine(d8Line).words![0] + 1), 'DPP8 FI: SRC0 becomes the DPP8FI marker');
+  assert(['row_mask', 'bank_mask', 'bound_ctrl', 'abs', 'neg', 'clamp', 'omod', 'src0_sel'].every(f => modifierOptions(d8Line, f as ModifierField) === null),
+    'DPP8: no masks, BOUND_CTRL, source or output modifiers');
+
+  // SDWA: each selector offers its 7 values and is always written (the last gone would leave a plain VOP1 / VOP2)
+  const sdwaLine = 'v_add_nc_u32 v2, sext(v0), v1 dst_sel:WORD_1 src0_sel:BYTE_0';
+  const src0Sel = opts(sdwaLine, 'src0_sel');
+  assert(src0Sel.kind === 'choice' && src0Sel.options.map(o => o.label).join() === 'BYTE_0,BYTE_1,BYTE_2,BYTE_3,WORD_0,WORD_1,DWORD' &&
+    src0Sel.options[0].on && src0Sel.options[0].line === sdwaLine && src0Sel.options[6].bytes === 8 &&
+    src0Sel.options[6].line === 'v_add_nc_u32 v2, sext(v0), v1 dst_sel:WORD_1 src0_sel:DWORD', 'SRC0_SEL: replaced in place; DWORD is written out');
+  assert(states(sdwaLine, 'src1_sel').endsWith('DWORD:true') && states(sdwaLine, 'dst_unused') === 'UNUSED_PAD:true,UNUSED_SEXT:false,UNUSED_PRESERVE:false',
+    'SDWA: unwritten selectors are DWORD, an unwritten DST_UNUSED is UNUSED_PAD');
+  assert(lineOf(sdwaLine, 'src1_sel', '1') === 'v_add_nc_u32 v2, sext(v0), v1 dst_sel:WORD_1 src0_sel:BYTE_0 src1_sel:BYTE_1' &&
+    lineOf(sdwaLine, 'dst_unused', '2') === 'v_add_nc_u32 v2, sext(v0), v1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE src0_sel:BYTE_0' &&
+    lineOf(sdwaLine, 'clamp', '1') === 'v_add_nc_u32 v2, sext(v0), v1 clamp dst_sel:WORD_1 src0_sel:BYTE_0' &&
+    lineOf('v_mul_f32 v0, v1, v2 clamp src1_sel:WORD_0', 'omod', '1') === 'v_mul_f32 v0, v1, v2 clamp mul:2 src1_sel:WORD_0',
+    'SDWA: new modifiers go in LLVM\'s order (clamp, omod, dst_sel, dst_unused, src0_sel, src1_sel)');
+  assert(states(sdwaLine, 'sext') === 'SRC0:true,SRC1:false,SRC2:false' && lineOf(sdwaLine, 'sext', 'src0') === 'v_add_nc_u32 v2, v0, v1 dst_sel:WORD_1 src0_sel:BYTE_0' &&
+    lineOf(sdwaLine, 'sext', 'src1') === 'v_add_nc_u32 v2, sext(v0), sext(v1) dst_sel:WORD_1 src0_sel:BYTE_0' &&
+    lineOf('v_and_b32 v0, v1, v2 src0_sext src1_sel:WORD_1', 'sext', 'src0') === 'v_and_b32 v0, v1, v2 src1_sel:WORD_1',
+    'SEXT: a switch per source writing sext(x); a src0_sext flag is removed too');
+  assert(/only valid on integer operands/.test(errorOf('v_mul_f32 v0, v1, v2 src1_sel:BYTE_2', 'sext', 'src0')) &&
+    lineOf('v_cmp_class_f32_sdwa vcc_lo, -v1, v2 src0_sel:BYTE_2', 'sext', 'src1') !== undefined &&
+    assemble('v_add_f32_sdwa v0, sext(v1), v2\ns_endpgm').errors.length === 1 &&
+    assemble('v_mul_f32 v0, v1, v2 src0_sext src1_sel:BYTE_2\ns_endpgm').errors.length === 1 &&
+    assemble('v_cmp_class_f32_sdwa vcc_lo, -v1, sext(v2) src0_sel:BYTE_2 src1_sel:WORD_0\ns_endpgm').errors.length === 0,
+    'SEXT is for integer operands only, as in LLVM (the class mask of v_cmp_class_f32 is one)');
+  const cndmask = 'v_cndmask_b32_sdwa v5, -v1, v2, vcc_lo src1_sel:BYTE_1';
+  assert(/take abs\/neg instead/.test(assemble('v_cndmask_b32_sdwa v5, v1, sext(v2), vcc_lo src0_sel:BYTE_0\ns_endpgm').errors[0]?.message ?? '') &&
+    opts(cndmask, 'sext').options.every(o => o.error) && lineOf(cndmask, 'abs', 'src1') === 'v_cndmask_b32_sdwa v5, -v1, |v2|, vcc_lo src1_sel:BYTE_1',
+    'SEXT: the sources of v_cndmask_b32 take ABS and NEG instead, as in LLVM');
+  const sdwaCompare = 'v_cmp_lt_f32_sdwa vcc_lo, v1, v2 src0_sel:WORD_1';
+  assert(['dst_sel', 'dst_unused', 'clamp', 'omod', 'op_sel'].every(f => modifierOptions(sdwaCompare, f as ModifierField) === null) &&
+    modifierOptions(sdwaCompare, 'src1_sel') !== null && modifierOptions('v_cvt_f32_u32 v0, v1 src0_sel:BYTE_3', 'src1_sel') === null &&
+    modifierOptions(sdwaLine, 'row_mask') === null && modifierOptions('v_add_f32_e64 v0, v1, v2', 'src0_sel') === null,
+    'SDWA: compares have no DST_SEL, DST_UNUSED, CLAMP or OMOD, VOP1 no SRC1_SEL');
+
+  // Every option that assembles changes just its own field of the DPP or SDWA encoding
+  const lines = ['v_add_f32 v0, -v1, |v2| row_shr:1 bank_mask:0x3', 'v_mov_b32 v0, v1 quad_perm:[1,0,3,2] row_mask:0xa bound_ctrl:1 fi:1',
+    'v_sub_f32 v3, |v1|, -v2 row_half_mirror row_mask:0x3 bank_mask:0xc fi:1', 'v_add_nc_u32 v0, v1, v2 row_xmask:5 row_mask:0x1',
+    'v_mov_b32 v0, v1 dpp8:[7,6,5,4,3,2,1,0]', 'v_add_nc_u32 v0, v1, v2 dpp8:[1,0,3,2,5,4,7,6] fi:1',
+    'v_add_nc_u32 v2, sext(v0), v1 dst_sel:WORD_1 src0_sel:BYTE_0', 'v_cvt_f32_u32 v0, v1 clamp dst_sel:WORD_1 src0_sel:BYTE_3',
+    'v_mul_f32 v0, -v1, |v2| mul:2 dst_sel:BYTE_0 dst_unused:UNUSED_SEXT src0_sel:WORD_1 src1_sel:WORD_0',
+    'v_cmp_class_f32_sdwa vcc_lo, -v1, sext(v2) src0_sel:BYTE_2 src1_sel:WORD_0', 'v_and_b32 v0, v1, s2 src0_sext src1_sel:WORD_1',
+    'v_cndmask_b32_sdwa v5, -v1, |v2|, vcc_lo dst_sel:WORD_0 src1_sel:BYTE_1'];
+  const fields: ModifierField[] = ['clamp', 'omod', 'abs', 'neg', 'sext', 'row_mask', 'bank_mask', 'bound_ctrl', 'fi',
+    'src0_sel', 'src1_sel', 'dst_sel', 'dst_unused'];
+  const perBit = new Set<ModifierField>(['abs', 'neg', 'sext', 'row_mask', 'bank_mask']);
+  const bitsOf = (d: ReturnType<typeof decodeBinary>[number]): Record<string, number | number[]> => ({
+    abs: (d.src0Abs ? 1 : 0) | (d.src1Abs ? 2 : 0), neg: (d.src0Neg ? 1 : 0) | (d.src1Neg ? 2 : 0), sext: (d.sdwaSrc0Sext ? 1 : 0) | (d.sdwaSrc1Sext ? 2 : 0),
+    clamp: d.clamp ? 1 : 0, omod: d.omod ?? 0, row_mask: d.rowMask ?? 0, bank_mask: d.bankMask ?? 0, bound_ctrl: d.boundCtrl ? 1 : 0,
+    fi: d.fetchInactive ? 1 : 0, dpp8: d.dpp8 ?? [], src0_sel: d.sdwaSrc0Sel ?? 0, src1_sel: d.sdwaSrc1Sel ?? 0,
+    dst_sel: d.sdwaDstSel ?? 0, dst_unused: d.sdwaDstUnused ?? 0,
+  });
+  // Bits that hold these fields: DPP16's masks and flags, the DPP8 lane selectors and SRC0 marker, SDWA's selectors and source modifiers
+  const fieldBits = (d: ReturnType<typeof decodeBinary>[number]) => (d.extra === 'DPP16' ? [0, 0xFFFC0000] : d.extra === 'DPP8' ? [0x1FF, 0xFFFFFF00]
+    : d.format === InstructionFormat.VOPC ? [0, 0x3F3F0000] : [0, 0x3F3FFF00]);
+  const wrong: string[] = [];
+  let checkedOptions = 0;
+  for (const line of lines) {
+    const before = checkLine(line).words!;
+    const d0 = decodeBinary(Uint32Array.from(before))[0];
+    const rest = (w: number[]) => w.map((x, i) => (x & ~(fieldBits(d0)[i] ?? 0)) >>> 0).join();
+    const tries = [...fields.map(f => [f, 0] as const), ...[0, 1, 2, 3, 4, 5, 6, 7].map(lane => ['dpp8', lane] as const)];
+    for (const [field, lane] of tries) {
+      for (const [i, o] of (modifierOptions(line, field, lane)?.options ?? []).entries()) {
+        if (o.line === undefined || o.line === line) continue;
+        checkedOptions++;
+        const edit = lineEdit(line, o.line);
+        if (replaceSpan(line, edit.span, edit.text) !== o.line) wrong.push(`lineEdit: ${o.line}`);
+        const after = checkLine(o.line).words!;
+        const d1 = decodeBinary(Uint32Array.from(after))[0];
+        const want = bitsOf(d0);
+        if (field === 'dpp8') want.dpp8 = (want.dpp8 as number[]).map((s, j) => (j === lane ? Number(o.key) : s));
+        else want[field] = perBit.has(field) ? (want[field] as number) ^ (1 << i) : Number(o.key);
+        if (d1.extra !== d0.extra || JSON.stringify(bitsOf(d1)) !== JSON.stringify(want) || rest(after) !== rest(before)) {
+          wrong.push(`${field}${field === 'dpp8' ? lane : ''} ${o.label}: ${o.line}`);
+        }
+      }
+    }
+    // Each DPP_CTRL choice changes just the 9-bit control, to the one it names
+    for (const c of editChoices(line, 'dpp')) {
+      if (c.current) continue;
+      checkedOptions++;
+      const after = checkLine(c.line).words!;
+      if (describeDppCtrl(decodeBinary(Uint32Array.from(after))[0].dppCtrl!) !== c.text || after[0] !== before[0] ||
+        ((after[1] ^ before[1]) & ~0x1FF00) !== 0) wrong.push(`dpp ${c.text}: ${c.line}`);
+    }
+  }
+  assert(checkedOptions > 600 && wrong.length === 0,
+    `each of ${checkedOptions} DPP and SDWA options changes only its own field${wrong.length ? `; e.g. ${wrong[0]} (${wrong.length} wrong)` : ''}`);
 }
 
 group('16-bit integer VOP3, dot products and pack conversions');

@@ -321,15 +321,21 @@ export function planEncoding(instr: ParsedInstruction, info = lookupByMnemonic(i
   }
 }
 
+/**
+ * Whether source `i` takes the floating-point modifiers ABS and NEG, or else SDWA's integer SEXT, as in LLVM.
+ * v_cndmask_b32 is a bitwise select, but its two sources take ABS and NEG, which act on the sign bit.
+ */
+function takesFloatModifiers(info: OpcodeInfo, i: number): boolean {
+  return isFloatType(vopTypes(info).s[i]) || (info.mnemonic === 'v_cndmask_b32' && i < 2);
+}
+
 function checkSourceModifiers(info: OpcodeInfo, instr: ParsedInstruction): void {
   const types = vopTypes(info);
   if (info.mnemonic === 'v_pk_fmac_f16' && sources(instr).some(s => s?.abs || s?.neg)) {
     fail('abs/neg modifiers are not supported on the packed sources of v_pk_fmac_f16');
   }
   sources(instr).forEach((s, i) => {
-    if (!s || !(s.abs || s.neg)) return;
-    if (info.mnemonic === 'v_cndmask_b32' && i < 2) return; // bitwise select, but VOP3 abs/neg act on the sign bit
-    if (!isFloatType(types.s[i])) {
+    if (s && (s.abs || s.neg) && !takesFloatModifiers(info, i)) {
       fail(`abs/neg modifiers are only valid on floating-point operands (operand ${i + 1} of ${info.mnemonic} is an integer)`);
     }
   });
@@ -485,6 +491,13 @@ function encodeSDWA(info: OpcodeInfo, instr: ParsedInstruction): number[] {
   checkImplicitVccForms(info, instr, 'SDWA');
   checkClamp(info, instr);
   checkSourceModifiers(info, instr);
+  // SEXT is the integer counterpart of ABS / NEG: a source that takes those cannot take it
+  [instr.sdwaSrc0Sext, instr.sdwaSrc1Sext].forEach((sext, i) => {
+    if (!sext || !takesFloatModifiers(info, i)) return;
+    fail(isFloatType(vopTypes(info).s[i])
+      ? `sext() is only valid on integer operands (operand ${i + 1} of ${m} is a float)`
+      : `sext() is not valid on the sources of ${m}, which take abs/neg instead`);
+  });
   if (isVOPC && (instr.clamp || instr.omod || instr.sdwaDstSel !== undefined || instr.sdwaDstUnused !== undefined)) {
     fail('SDWA compares do not support clamp, output modifiers, dst_sel or dst_unused');
   }
@@ -1259,6 +1272,23 @@ function dppCtrlText(ctrl: number): string {
 /** Human-readable name of a DPP16 control value. */
 export function describeDppCtrl(ctrl: number): string {
   return dppCtrlText(ctrl);
+}
+
+/** Plain-language meaning of a DPP16 control value. */
+export function dppCtrlMeaning(ctrl: number): string {
+  const n = ctrl & 0xF;
+  if (ctrl <= 0xFF) {
+    const sel = [0, 1, 2, 3].map(i => (ctrl >> (2 * i)) & 3);
+    return `lanes 0, 1, 2 and 3 of each quad read lanes ${sel.slice(0, 3).join(', ')} and ${sel[3]} of that quad`;
+  }
+  if (ctrl >= 0x101 && ctrl <= 0x10F) return `lane i reads lane i+${n} of its row`;
+  if (ctrl >= 0x111 && ctrl <= 0x11F) return `lane i reads lane i−${n} of its row`;
+  if (ctrl >= 0x121 && ctrl <= 0x12F) return `lane i reads lane (i−${n}) mod 16 of its row`;
+  if (ctrl === 0x140) return 'lane i reads lane 15−i of its row';
+  if (ctrl === 0x141) return 'lane i reads lane 7−i of its half-row';
+  if (ctrl >= 0x150 && ctrl <= 0x15F) return `every lane reads lane ${n} of its row`;
+  if (ctrl >= 0x160 && ctrl <= 0x16F) return `lane i reads lane i XOR ${n} of its row`;
+  return 'reserved control value';
 }
 
 /** Short name of a 9-bit VALU (or 8-bit SALU) source field value, for encoding diagrams. */

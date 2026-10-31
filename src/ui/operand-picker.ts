@@ -1,6 +1,6 @@
 // ── Operand picker ──
-// Popup that the Instruction Info panel opens on a bit field, to change the instruction's mnemonic or one
-// of its operands. It lists the choices that still assemble and also accepts a typed value.
+// Popup that the Instruction Info panel opens on a bit field, to change the instruction's mnemonic, one of its
+// operands or its DPP lane control. It lists the choices that still assemble and also accepts a typed value.
 
 import { EditChoice } from '../assembler/operand-edit';
 
@@ -318,7 +318,8 @@ export class OperandPicker extends AnchoredPopup<PickerRequest> {
       e.preventDefault();
       e.stopPropagation();
       const typed = this.input.value.trim();
-      if (req.layout === 'grid' && this.query() && !req.check(typed).error) this.apply(typed);
+      // A typed value: in a grid always, in a list when nothing listed matches it (e.g. a quad_perm of one's own)
+      if (this.query() && (req.layout === 'grid' || this.shown.length === 0) && !req.check(typed).error) this.apply(typed);
       else if (this.shown[this.hot]) this.apply(this.shown[this.hot].text);
       else if (!this.query()) this.close(true);
     } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && req.layout === 'list' && this.shown.length) {
