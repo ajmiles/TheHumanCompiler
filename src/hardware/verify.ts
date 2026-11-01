@@ -10,7 +10,7 @@ import { runPuzzle, vgprsUsed } from '../puzzle/runner';
 import { Puzzle } from '../puzzle/types';
 import { validatePuzzle } from '../puzzle/validator';
 import { hardwareProblems } from './checks';
-import { invocationPrograms, resultBytes } from './harness';
+import { INPUT_OFFSET, inputWords, jobPrograms, resultBytes } from './harness';
 import { codeHash, puzzleHash, SANDBOX } from './hash';
 import { HW_HARNESS, HW_PROTOCOL, HW_REQUIREMENTS, HwJob, HwJobRuns, HwScore, HwStatus } from './protocol';
 
@@ -47,8 +47,10 @@ function buildJob(puzzle: Puzzle | null, binary: Uint32Array, vgprs: number, emu
     codeHash: codeHash(binary),
     runs,
     resultBytes: resultBytes(puzzle),
+    inputOffset: INPUT_OFFSET,
     requirements: { ...HW_REQUIREMENTS },
-    invocations: emulatorOutputs.map((outputs, inv) => ({ ...invocationPrograms(puzzle, binary, vgprs, inv), emulatorOutputs: outputs })),
+    ...jobPrograms(puzzle, binary, vgprs),
+    invocations: emulatorOutputs.map((outputs, inv) => ({ inputWords: inputWords(puzzle, inv), emulatorOutputs: outputs })),
   };
 }
 

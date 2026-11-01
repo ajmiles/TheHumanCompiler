@@ -1,7 +1,9 @@
 // ── Hardware runs: protocol ──
 // What the devkit runner gets and gives back. The runner is a GDK title: it loads each program's machine code as a
-// wave32 compute shader, runs it and returns the raw results. Everything else (checking a solution, generating the
-// programs, scoring the runs) is in src/hardware, which the title runs in QuickJS (see verifier.ts).
+// wave32 compute shader, runs it and returns the raw results. Before every run of a program for an invocation, it
+// copies that invocation's input block into the result buffer, which the program loads its registers from: so one
+// program serves every invocation. Everything else (checking a solution, generating the programs, scoring the runs)
+// is in src/hardware, which the title runs in QuickJS (see verifier.ts).
 //
 // Bump HW_PROTOCOL when these shapes change, and HW_HARNESS whenever the generated code changes: measurements made
 // with another harness are out of date.
@@ -23,8 +25,8 @@
 //      board, where ties go to the earliest submittedAt (kept when the entry is timed again). The batch only goes
 //      through if neither document has changed since step 3; if the entry has, the submission is 'rejected'.
 
-export const HW_PROTOCOL = 1;
-export const HW_HARNESS = 1;
+export const HW_PROTOCOL = 2;
+export const HW_HARNESS = 2;
 
 /** How the runner must set up the compute shader the programs are patched into. */
 export const HW_REQUIREMENTS = {
@@ -57,10 +59,12 @@ export interface HwProgram {
 }
 
 export interface HwInvocationJob {
-  /** The solution, wrapped in the harness. */
-  solution: HwProgram;
-  /** The same harness around just s_endpgm: its time is subtracted from the solution's. */
-  baseline: HwProgram;
+  /**
+   * The invocation's input block, little-endian dwords: before each run of either program for this invocation, the
+   * runner copies it to the result address + the job's inputOffset. (It's every VGPR's start value for each lane,
+   * four registers a lane at a time, then the SGPR inputs: see harness.ts.)
+   */
+  inputWords: number[];
   /** The output registers' bits in the emulator: 32 lanes of each output, in the puzzle's order. */
   emulatorOutputs: number[];
 }
@@ -73,14 +77,20 @@ export interface HwJob {
   puzzleHash: string;
   codeHash: string;
   /**
-   * How many times to time each program. Each timed run must follow an untimed run of the same program with nothing
-   * but a UAV barrier between them, so its instruction cache is warm (resource transitions invalidate it).
-   * The score uses the most common duration.
+   * How many times to time each program for each invocation. Each timed run must follow an untimed run of the same
+   * program and input block with nothing but a UAV barrier between them, so its instruction cache is warm (resource
+   * transitions invalidate it). The score uses the most common duration.
    */
   runs: number;
   /** Bytes each run writes at the result address. */
   resultBytes: number;
+  /** Bytes from the result address to where an invocation's inputWords go: past the record. */
+  inputOffset: number;
   requirements: typeof HW_REQUIREMENTS;
+  /** The solution, wrapped in the harness: the same program for every invocation. */
+  solution: HwProgram;
+  /** The same harness around just s_endpgm: its time is subtracted from the solution's. */
+  baseline: HwProgram;
   invocations: HwInvocationJob[];
 }
 

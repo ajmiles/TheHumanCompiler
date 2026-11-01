@@ -15,8 +15,8 @@ import { twoOverPiTable } from '../src/isa/float64';
 import { checkLine, EditChoice, editChoices, labelsIn, lineEdit, ModifierField, modifierOptions, replaceSpan } from '../src/assembler/operand-edit';
 import { highestNamedRegister, loadInvocationInputs, runPuzzle as runPuzzleBinary, vgprsUsed } from '../src/puzzle/runner';
 import { hardwareProblems } from '../src/hardware/checks';
-import { globalStore, invocationPrograms, pickScratch, resultBytes, setupSource, sMemtime } from '../src/hardware/harness';
-import { HwJobRuns } from '../src/hardware/protocol';
+import { globalLoad, globalStore, INPUT_OFFSET, inputWords, jobPrograms, pickScratch, resultBytes, setupSource, sLoadDword, sMemtime, VGPR_BLOCK_DWORDS, vgprWord } from '../src/hardware/harness';
+import { HW_HARNESS, HwJobRuns } from '../src/hardware/protocol';
 import { codeHash, hash64, puzzleHash } from '../src/hardware/hash';
 import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
@@ -7522,20 +7522,33 @@ group('LDS results arrive later: s_waitcnt lgkmcnt');
 
 group('Hardware runs: the harness');
 {
-  // s_memtime and the global stores are hand-encoded: these are LLVM's GFX10 encodings
+  // s_memtime and the memory instructions are hand-encoded: these are LLVM's GFX10 encodings
   assert(same(sMemtime(100), [0xF4901900, 0]) && same(sMemtime(10), [0xF4900280, 0]), 'encoding (LLVM): s_memtime s[100:101], s_memtime s[10:11]');
   assert(same(globalStore(1, 3, 1, 2), [0xDC708000, 0x00020103]) && same(globalStore(1, 3, 1, 2, 24), [0xDC708018, 0x00020103]) &&
     same(globalStore(1, 3, 1, 2, -8), [0xDC708FF8, 0x00020103]) && same(globalStore(2, 3, 1, 0x7D), [0xDC748000, 0x007D0103]),
     'encoding (LLVM): global_store_dword v3, v1, s[2:3] (offset:24, offset:-8), global_store_dwordx2 v[3:4], v[1:2], off');
+  assert(same(globalLoad(1, 1, 3, 2), [0xDC308000, 0x01020003]) && same(globalLoad(1, 1, 3, 2, 24), [0xDC308018, 0x01020003]) &&
+    same(globalLoad(1, 1, 3, 2, -8), [0xDC308FF8, 0x01020003]) && same(globalLoad(4, 1, 3, 0x7D), [0xDC388000, 0x017D0003]),
+    'encoding (LLVM): global_load_dword v1, v3, s[2:3] (offset:24, offset:-8), global_load_dwordx4 v[1:4], v[3:4], off');
+  assert(same(sLoadDword(5, 2, 0), [0xF4000141, 0xFA000000]) && same(sLoadDword(5, 2, 0x1234), [0xF4000141, 0xFA001234]),
+    'encoding (LLVM): s_load_dword s5, s[2:3], 0x0 and 0x1234 (without glc dlc)');
 
-  // From any registers and LDS, the setup leaves exactly what the emulator starts the invocation with
+  // From any registers and LDS, the setup leaves exactly what the emulator starts the invocation with. The emulator
+  // runs its ALU part; its loads (which the emulator can't run) are applied as the program's own words say
   let seed = 1;
   const random = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0);
   const different: string[] = [];
-  for (const id of ['smooth-clamp', 'rng-iterate', 'byte-sort']) {
-    const puzzle = getPuzzleById(id)!;
+  // Also one whose harness registers move: an SGPR input in s104, and v255 (the loads' address register) an input
+  const smoothClamp = getPuzzleById('smooth-clamp')!;
+  const moved: Puzzle = { ...smoothClamp, id: 'moved', inputs: [{ ...smoothClamp.inputs[0], register: 255 }, ...smoothClamp.inputs.slice(1),
+    { name: 'S', register: 104, values: [7, 9], isInteger: true, isSGPR: true }] };
+  for (const puzzle of [...['smooth-clamp', 'rng-iterate', 'byte-sort'].map(id => getPuzzleById(id)!), moved]) {
+    const id = puzzle.id;
+    const a = pickScratch(puzzle, 1).scratch.address;
+    const program = jobPrograms(puzzle, Uint32Array.of(0xBF810000), 1).solution.code;
+    const addAddress = assemble(`s_add_u32 s${a}, s${a}, 0x800`).binary[0];
     for (const inv of [0, 1]) {
-      const binary = assemble([...setupSource(puzzle, inv).filter(l => !l.startsWith('s_setreg_imm32_b32')), 's_endpgm'].join('\n')).binary;
+      const binary = assemble([...setupSource(puzzle).filter(l => !l.startsWith('s_setreg_imm32_b32')), 's_endpgm'].join('\n')).binary;
       const dirty = new Emulator();
       dirty.load(binary);
       for (const reg of dirty.state.vgprs) for (let lane = 0; lane < 32; lane++) reg[lane] = random();
@@ -7543,17 +7556,54 @@ group('Hardware runs: the harness');
       for (let i = 0; i < dirty.state.lds.length; i++) dirty.state.lds[i] = random();
       dirty.state.scc = 1;
       dirty.run();
+
+      const block = inputWords(puzzle, inv);
+      const loaded = new Array<number>(256).fill(0);
+      let base = 0; // bytes from the result address
+      let wrong = '';
+      for (const d of decodeBinary(Uint32Array.from(program))) {
+        const [w0, w1] = [program[d.address], program[d.address + 1]];
+        if (d.format === InstructionFormat.SMEM && d.opcode === 0x24) break; // s_memtime: the timer
+        if (w0 === addAddress) base += w1;
+        if (d.format === InstructionFormat.FLAT && d.opcode === 0x0E) {
+          const [offset, vaddr, saddr, vdst] = [(w0 << 20) >> 20, w1 & 0xFF, (w1 >>> 16) & 0x7F, w1 >>> 24];
+          for (let lane = 0; lane < 32; lane++) {
+            const word = (base - INPUT_OFFSET + dirty.state.vgprs[vaddr][lane] + offset) / 4;
+            if (saddr !== a || word < 0 || word + 4 > VGPR_BLOCK_DWORDS) wrong ||= `a load from word ${word}`;
+            for (let k = 0; k < 4; k++) dirty.state.vgprs[vdst + k][lane] = block[word + k];
+          }
+          for (let k = 0; k < 4; k++) loaded[vdst + k]++;
+        } else if (d.format === InstructionFormat.SMEM && d.opcode === 0) {
+          dirty.state.sgprs[d.dst] = block[(base - INPUT_OFFSET + d.offset!) / 4];
+        }
+      }
       const clean = new Emulator();
       clean.load(binary);
       loadInvocationInputs(clean.state, puzzle, inv);
       const vgprs = dirty.state.vgprs.every((reg, r) => reg.every((v, lane) => v === clean.state.vgprs[r][lane]));
       const sgprs = [...Array(128).keys()].every(s => (s >= TTMP_MIN && s <= TTMP_MAX) || dirty.state.readSGPR(s) === clean.state.readSGPR(s));
-      if (dirty.fault || !vgprs || !sgprs || dirty.state.scc !== 0 || dirty.state.lds.some(v => v !== 0)) different.push(`${id} ${inv + 1}`);
+      if (dirty.fault || wrong || loaded.some(n => n !== 1) || !vgprs || !sgprs || dirty.state.scc !== 0 || dirty.state.lds.some(v => v !== 0)) {
+        different.push(`${id} ${inv + 1}${wrong ? ` (${wrong})` : ''}`);
+      }
     }
   }
-  assert(different.length === 0, `setup: from random registers and LDS, each invocation starts as in the emulator${different.length ? `; not ${different.join(', ')}` : ''}`);
-  assert(setupSource(null, 0).includes('s_setreg_imm32_b32 0x4801, 0x1f0'),
+  assert(different.length === 0, `setup: from random registers and LDS, each invocation starts as in the emulator, every VGPR loaded once${different.length ? `; not ${different.join(', ')}` : ''}`);
+  assert(setupSource(null).includes('s_setreg_imm32_b32 0x4801, 0x1f0'),
     'setup: the float mode as the emulator behaves (round to nearest even, denormals kept, DX10 clamp, IEEE off)');
+  const rng = getPuzzleById('rng-iterate')!;
+  const rngBlock = inputWords(rng, 1);
+  assert(rngBlock.length === VGPR_BLOCK_DWORDS + 1 && rngBlock[VGPR_BLOCK_DWORDS] === rng.inputs.find(p => p.isSGPR)!.values[1] &&
+    vgprWord(0, 0) === 0 && vgprWord(3, 0) === 3 && vgprWord(0, 1) === 4 && vgprWord(4, 0) === 128 && vgprWord(255, 31) === VGPR_BLOCK_DWORDS - 1,
+    'input block: four VGPRs a lane at a time (as global_load_dwordx4 loads them), then the SGPR inputs');
+  const manyOutputs: Puzzle = { ...smoothClamp, outputs: Array.from({ length: 32 }, (_, r) => ({ ...smoothClamp.outputs[0], register: r })) };
+  let overlap = '';
+  try {
+    jobPrograms(manyOutputs, Uint32Array.of(0xBF810000), 1);
+  } catch (e) {
+    overlap = (e as Error).message;
+  }
+  assert(pickScratch(moved, 1).scratch.address === 102 && resultBytes(manyOutputs) > INPUT_OFFSET && overlap === 'The record would run into the input block',
+    'input block: a record that would reach it is refused (32 outputs)');
 
   // The program: setup, timer, the solution on a cache line with s_endpgm branching to the epilogue (also on one)
   const solution = Array.from(assemble(SMOOTH_CLAMP).binary);
@@ -7564,43 +7614,52 @@ group('Hardware runs: the harness');
   };
   const branchTarget = (code: number[], at: number) => at + 1 + ((code[at] << 16) >> 16);
   const wrong: string[] = [];
-  job.invocations.forEach(({ solution: sol, baseline: base }, i) => {
+  {
+    const { solution: sol, baseline: base } = job;
     const at = find(sol.code, solution.slice(0, -1));
     const end = at + solution.length - 1;
     const epilogue = branchTarget(sol.code, end);
-    if (at <= 0 || at % 16 !== 0 || sol.code[end] >>> 16 !== 0xBF82 || epilogue % 16 !== 0) wrong.push(`${i}: layout`);
-    if (!same(sol.code.slice(epilogue, epilogue + 2), sMemtime(102)) || find(sol.code, sMemtime(102)) !== find(sol.code, sMemtime(102), at - 16)) wrong.push(`${i}: timers`);
+    if (at <= 0 || at % 16 !== 0 || sol.code[end] >>> 16 !== 0xBF82 || epilogue % 16 !== 0) wrong.push('layout');
+    if (!same(sol.code.slice(epilogue, epilogue + 2), sMemtime(102)) || find(sol.code, sMemtime(102)) !== find(sol.code, sMemtime(102), at - 16)) wrong.push('timers');
     if (find(sol.code, globalStore(2, 253, 254, 104, 0)) > at || find(sol.code, globalStore(1, 253, 3, 104, 16)) < epilogue ||
-      find(sol.code, globalStore(2, 253, 254, 104, 8)) < epilogue) wrong.push(`${i}: stores`);
-    if (sol.code.slice(0, at).includes(0xBBFD0000)) wrong.push(`${i}: waits in the timed part`);
+      find(sol.code, globalStore(2, 253, 254, 104, 8)) < epilogue) wrong.push('stores');
+    if (sol.code.slice(0, at).includes(0xBBFD0000)) wrong.push('waits in the timed part');
+    // The loads are all in the setup, waited for before the timer starts
+    const lastLoad = find(sol.code, globalLoad(4, 252, 255, 104, 3 * 512));
+    const loadsDone = sol.code.indexOf(assemble('s_waitcnt vmcnt(0)').binary[0], lastLoad);
+    if (lastLoad < 0 || loadsDone < 0 || loadsDone > find(sol.code, sMemtime(102))) wrong.push('loads');
     // The baseline: the same setup and timer, s_endpgm alone (branching a line on) and the same epilogue
     if (!same(base.code.slice(0, at), sol.code.slice(0, at)) || branchTarget(base.code, at) !== at + 16 ||
-      !same(base.code.slice(at + 16), sol.code.slice(epilogue))) wrong.push(`${i}: baseline`);
+      !same(base.code.slice(at + 16), sol.code.slice(epilogue))) wrong.push('baseline');
+    // The input block's address, the timer's and the epilogue's: all the result address, which the runner patches in
     const relocs = sol.relocations.map(r => `${r.value}:${sol.code[r.dword].toString(16)}`).join();
-    if (relocs !== 'resultAddressLo:dead0000,resultAddressHi:dead0001,resultAddressLo:dead0000,resultAddressHi:dead0001' ||
-      JSON.stringify(base.relocations) !== JSON.stringify(sol.relocations)) wrong.push(`${i}: relocations ${relocs}`);
-  });
+    if (relocs !== Array(3).fill('resultAddressLo:dead0000,resultAddressHi:dead0001').join() ||
+      JSON.stringify(base.relocations) !== JSON.stringify(sol.relocations)) wrong.push(`relocations ${relocs}`);
+  }
   assert(wrong.length === 0, `program: the solution and its epilogue on cache lines, the baseline the same around s_endpgm${wrong.length ? `; ${wrong.join('; ')}` : ''}`);
   const run = runPuzzleBinary(getPuzzleById('smooth-clamp')!, assemble(SMOOTH_CLAMP).binary);
-  assert(job.resultBytes === 144 && job.invocations.every((inv, i) => same(inv.emulatorOutputs, run.invocations[i].outputBits.flat())) &&
+  assert(job.resultBytes === 144 && job.inputOffset === INPUT_OFFSET && job.inputOffset >= job.resultBytes &&
+    job.invocations.every((inv, i) => same(inv.emulatorOutputs, run.invocations[i].outputBits.flat()) && same(inv.inputWords, inputWords(getPuzzleById('smooth-clamp')!, i))) &&
     JSON.stringify(JSON.parse(JSON.stringify(job))) === JSON.stringify(job) &&
-    job.invocations.every(inv => inv.solution.code.every(w => Number.isInteger(w) && w >= 0 && w <= 0xFFFFFFFF)),
-    'job: plain JSON, with the result size and the emulator\'s output bits');
+    [job.solution.code, job.baseline.code, ...job.invocations.map(inv => inv.inputWords)].every(ws => ws.every(w => Number.isInteger(w) && w >= 0 && w <= 0xFFFFFFFF)),
+    'job: plain JSON: one program for every invocation, each invocation\'s input block and the emulator\'s output bits');
 
   // Every s_endpgm branches to the epilogue
   const early = ['s_cmp_eq_u32 s0, 0', 's_cbranch_scc1 done', 'v_mov_b32 v0, 1', 's_endpgm', 'done:', 'v_mov_b32 v0, 2', 's_endpgm'].join('\n');
   const earlyBinary = Array.from(assemble(early).binary);
   const sandbox = verifySandbox(early).job!;
-  const code = sandbox.invocations[0].solution.code;
+  const code = sandbox.solution.code;
   const start = find(code, earlyBinary.slice(0, 3));
   const targets = [3, 5].map(k => branchTarget(code, start + k));
   assert(targets[0] === targets[1] && targets[0] % 16 === 0 && same(code.slice(targets[0], targets[0] + 2), sMemtime(102)) &&
-    sandbox.resultBytes === 16 && sandbox.puzzleId === 'sandbox', 'program: each s_endpgm becomes a branch to the same epilogue');
+    sandbox.resultBytes === 16 && sandbox.puzzleId === 'sandbox' && sandbox.invocations.length === 1 &&
+    sandbox.invocations[0].inputWords.length === VGPR_BLOCK_DWORDS && sandbox.invocations[0].inputWords.every(w => w === 0),
+    'program: each s_endpgm becomes a branch to the same epilogue (a sandbox program starts from all zeros)');
 
   // Scratch registers: the highest that are no input or output; the timer waits for its store if the solution may use them
   const smooth = getPuzzleById('smooth-clamp')!;
   const twoOutputs: Puzzle = { ...smooth, outputs: [{ ...smooth.outputs[0], register: 4 }, { ...smooth.outputs[0], register: 5 }] };
-  const stores = invocationPrograms(twoOutputs, Uint32Array.of(0xBF810000), 6, 0).solution.code;
+  const stores = jobPrograms(twoOutputs, Uint32Array.of(0xBF810000), 6).solution.code;
   assert(find(stores, globalStore(1, 253, 4, 104, 16)) > 0 && find(stores, globalStore(1, 253, 5, 104, 144)) > 0 && resultBytes(twoOutputs) === 272,
     'epilogue: 32 lanes of each output, one after the other after the timestamps');
   assert(JSON.stringify(pickScratch(smooth, 4)) === '{"scratch":{"time":102,"address":104,"offset":253,"data":254},"sharedWithSolution":false}' &&
@@ -7608,9 +7667,9 @@ group('Hardware runs: the harness');
   const crowded: Puzzle = { ...smooth, inputs: [{ ...smooth.inputs[0], register: 255 }, { name: 'S', register: 104, values: [1, 2], isInteger: true, isSGPR: true }],
     outputs: [{ ...smooth.outputs[0], register: 254 }] };
   assert(JSON.stringify(pickScratch(crowded, 4).scratch) === '{"time":100,"address":102,"offset":251,"data":252}', 'scratch: inputs and outputs are kept clear of');
-  const highJob = verify(`v_mov_b32 v255, 0\n${SMOOTH_CLAMP}`, 'smooth-clamp').job!.invocations[0];
+  const highJob = verify(`v_mov_b32 v255, 0\n${SMOOTH_CLAMP}`, 'smooth-clamp').job!;
   const waits = (code: number[]) => code.filter(w => w === 0xBBFD0000).length;
-  assert(waits(highJob.solution.code) === 2 && waits(highJob.baseline.code) === 2 && waits(job.invocations[0].solution.code) === 1,
+  assert(waits(highJob.solution.code) === 2 && waits(highJob.baseline.code) === 2 && waits(job.solution.code) === 1,
     'timer: s_waitcnt_vscnt after the store when the solution uses the scratch VGPRs (GFX10 LDS/branch/VMEM hazard), in the baseline too');
 }
 
@@ -7652,7 +7711,7 @@ group('Hardware runs: scoring the devkit runs');
   // As on a devkit: nearly every run agrees, with the odd one a couple of cycles short and a few much longer
   const measured = score(job, runsFor([125, 123, 125, 131, 125, 125, 170], [100, 100, 100, 104, 100, 100]));
   assert(measured.status === 'measured' && measured.cycles === 50 && measured.perInvocation?.join() === '25,25' &&
-    measured.emulatorMismatches === undefined && measured.harness === 1,
+    measured.emulatorMismatches === undefined && measured.harness === HW_HARNESS,
     'score: each invocation\'s most common duration less its baseline\'s (not the fastest), summed');
   assert(score(job, runsFor([126, 125, 126, 125], [100])).perInvocation?.join() === '25,25', 'score: a tie goes to the shorter duration');
   assert(score(job, runsFor([125, 126, 127, 140], [100])).status === 'unstable' && score(job, runsFor([125], [100, 101, 102])).status === 'unstable',

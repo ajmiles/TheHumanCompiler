@@ -8,8 +8,9 @@
 // Options:
 //   --runs N       how many times to run each program (default 100)
 //   --out FILE     write the JSON there instead of to stdout
-//   --bin DIR      also write each program's code to DIR/<name>-<invocation>-<solution|baseline>.bin (little-endian,
-//                  relocations still to patch: see src/hardware/protocol.ts)
+//   --bin DIR      also write each program's code to DIR/<name>-<solution|baseline>.bin (little-endian, relocations
+//                  still to patch) and each invocation's input block to DIR/<name>-<invocation>-inputs.bin: see
+//                  src/hardware/protocol.ts
 //
 // The output is a VerifyResult (src/hardware/verify.ts) per program, its job ready for the runner when `ok`.
 
@@ -63,10 +64,12 @@ function main(argv: string[]): void {
   if (bin) {
     mkdirSync(bin, { recursive: true });
     for (const [name, result] of Object.entries(results)) {
-      result.job?.invocations.forEach((inv, i) => {
-        for (const which of ['solution', 'baseline'] as const) {
-          writeFileSync(join(bin, `${name}-${i}-${which}.bin`), new Uint8Array(Uint32Array.from(inv[which].code).buffer));
-        }
+      if (!result.job) continue;
+      for (const which of ['solution', 'baseline'] as const) {
+        writeFileSync(join(bin, `${name}-${which}.bin`), new Uint8Array(Uint32Array.from(result.job[which].code).buffer));
+      }
+      result.job.invocations.forEach((inv, i) => {
+        writeFileSync(join(bin, `${name}-${i}-inputs.bin`), new Uint8Array(Uint32Array.from(inv.inputWords).buffer));
       });
     }
   }

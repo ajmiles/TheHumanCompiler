@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import variant from '@jitl/quickjs-ng-wasmfile-release-sync';
 import { newQuickJSWASMModuleFromVariant } from 'quickjs-emscripten-core';
-import { HwJobRuns } from '../src/hardware/protocol';
+import { HW_HARNESS, HW_PROTOCOL, HwJobRuns } from '../src/hardware/protocol';
 import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { VERSION } from '../src/version';
 
@@ -33,7 +33,7 @@ function evaluate(expression: string): string {
 vm.unwrapResult(vm.evalCode(bundle, 'verifier.js')).dispose();
 console.log(`verifier.js: ${(bundle.length / 1024).toFixed(0)} KB`);
 check(evaluate('typeof console') === 'object' && evaluate('HumanCompilerVerifier.version') === VERSION &&
-  evaluate('String(HumanCompilerVerifier.protocol) + "," + HumanCompilerVerifier.harness') === '1,1',
+  evaluate('String(HumanCompilerVerifier.protocol) + "," + HumanCompilerVerifier.harness') === `${HW_PROTOCOL},${HW_HARNESS}`,
   'the bundle defines HumanCompilerVerifier, of this version, and a console where the engine has none');
 check(evaluate('[BigInt.asUintN(64, -5n), BigInt.asUintN(64, 0xe71fa2190541574bn), BigInt.asUintN(32, -5n), BigInt.asIntN(64, 0xe71fa2190541574bn)].join()') ===
   [BigInt.asUintN(64, -5n), BigInt.asUintN(64, 0xe71fa2190541574bn), BigInt.asUintN(32, -5n), BigInt.asIntN(64, 0xe71fa2190541574bn)].join(),

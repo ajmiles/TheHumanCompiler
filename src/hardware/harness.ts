@@ -1,8 +1,10 @@
 // ── Hardware harness ──
 // Wraps a solution's machine code in a program that times it when the devkit runs it as a wave32 compute shader:
 //
-//   setup     turn whatever the wave starts with into the emulator's start state (registers and LDS zero, EXEC all
-//             ones, SCC 0, the emulator's float mode), then write the invocation's inputs
+//   setup     turn whatever the wave starts with into the emulator's start state for an invocation: LDS, SGPRs, VCC
+//             and M0 zeroed, EXEC all ones, the emulator's float mode; then every VGPR, and any SGPR inputs, loaded
+//             from the invocation's input block (inputWords), which the runner copies into the result buffer before
+//             each run. So a job has one solution program and one baseline for every invocation. SCC ends at 0.
 //   timer     s_memtime gives T_start, which goes out through a store: the solution may use every register and all
 //             of LDS, and there are no scalar stores. The registers this borrows are then put back to 0.
 //   solution  unchanged, except that each s_endpgm becomes s_branch epilogue (the same size)
@@ -10,7 +12,8 @@
 //
 // T_end − T_start, less the same for an empty solution (the baseline), is what the solution costs. The solution
 // and the epilogue each start on a 64-byte instruction cache line, so the setup's length doesn't move them. Apart
-// from s_memtime and the global stores, which the assembler leaves out, the harness is assembled like a solution.
+// from s_memtime and the memory instructions, which the assembler leaves out, the harness is assembled like a
+// solution.
 
 import { assemble } from '../assembler/assembler';
 import { decodeProgram } from '../emulator/decoder';
@@ -33,6 +36,13 @@ export const EMULATOR_MODE = 0x1F0;
 /** The s_setreg selector of MODE[9:0]: hwreg(HW_REG_MODE, 0, 10). */
 const MODE_BITS_9_0 = (9 << 11) | 1;
 
+/** Bytes from the result address to the input block (HwJob.inputOffset): past the record, on a 4 KB boundary. */
+export const INPUT_OFFSET = 4096;
+/** An input block's bytes for four VGPRs: 16 a lane, as one global_load_dwordx4 loads them. */
+const GROUP_BYTES = WAVE_WIDTH * 16;
+/** The input block's VGPR part, in dwords: every VGPR's 32 lanes. The SGPR inputs follow it. */
+export const VGPR_BLOCK_DWORDS = NUM_VGPRS * WAVE_WIDTH;
+
 /** s_memtime sdst: the 64-bit core-clock counter (LLVM's GFX10 encoding). */
 export function sMemtime(sdst: number): number[] {
   return [(0xF4900000 | (sdst << 6)) >>> 0, 0];
@@ -43,6 +53,19 @@ export function globalStore(dwords: 1 | 2, vaddr: number, vdata: number, saddr: 
   if (offset < -2048 || offset > 2047) throw new Error(`A global store offset must fit in 12 bits (${offset})`);
   const op = dwords === 1 ? 0x1C : 0x1D;
   return [(0xDC000000 | (op << 18) | (2 << 14) | (offset & 0xFFF)) >>> 0, (vaddr | (vdata << 8) | (saddr << 16)) >>> 0];
+}
+
+/** global_load_dword(x4) vdst, vaddr, saddr offset:…, which loads from saddr + vaddr + offset (LLVM's GFX10 encoding). */
+export function globalLoad(dwords: 1 | 4, vdst: number, vaddr: number, saddr: number, offset = 0): number[] {
+  if (offset < -2048 || offset > 2047) throw new Error(`A global load offset must fit in 12 bits (${offset})`);
+  const op = dwords === 1 ? 0x0C : 0x0E;
+  return [(0xDC000000 | (op << 18) | (2 << 14) | (offset & 0xFFF)) >>> 0, (vaddr | (saddr << 16) | (vdst << 24)) >>> 0];
+}
+
+/** s_load_dword sdst, s[sbase:sbase+1], offset, with no offset register (LLVM's GFX10 encoding). */
+export function sLoadDword(sdst: number, sbase: number, offset: number): number[] {
+  if (offset < 0 || offset > 0xFFFFF) throw new Error(`An s_load offset must fit in 20 bits (${offset})`);
+  return [(0xF4000000 | (sdst << 6) | (sbase >> 1)) >>> 0, (0xFA000000 | offset) >>> 0];
 }
 
 /** s_branch to `offset` dwords after the instruction that follows it. */
@@ -91,49 +114,79 @@ export function pickScratch(puzzle: Puzzle | null, vgprsUsed: number): { scratch
   return { scratch: { time: pairs[1], address: pairs[0], offset, data }, sharedWithSolution: Math.min(offset, data) < vgprsUsed };
 }
 
-/** The start state every invocation shares: LDS, VGPRs, SGPRs, VCC, M0, EXEC and the float mode. */
+/** The start state's ALU part, the same in every program: EXEC, LDS, SGPRs, VCC, M0 and the float mode. */
 function startStateLines(): string[] {
   const lines = ['s_mov_b32 exec_lo, -1', 's_mov_b32 exec_hi, 0'];
-  // LDS: each lane zeroes one dword in each half of each 256-byte block (ds_write2st64 offsets count 256 bytes)
+  // LDS: each lane zeroes one dword in each half of each 256-byte block (ds_write2st64 offsets count 256 bytes).
+  // v0-v2 are only borrowed: every VGPR is loaded afterwards.
   lines.push('v_mbcnt_lo_u32_b32 v0, -1, 0', 'v_lshlrev_b32 v0, 2, v0', 'v_add_nc_u32 v1, 0x80, v0', 'v_mov_b32 v2, 0');
   for (const base of ['v0', 'v1']) {
     for (let block = 0; block < 256; block += 2) lines.push(`ds_write2st64_b32 ${base}, v2, v2 offset0:${block} offset1:${block + 1}`);
   }
   lines.push('s_waitcnt lgkmcnt(0)');
-  for (let v = 0; v < NUM_VGPRS; v++) lines.push(`v_mov_b32 v${v}, 0`);
   for (let s = 0; s <= SGPR_MAX; s++) lines.push(`s_mov_b32 s${s}, 0`);
   lines.push('s_mov_b32 vcc_lo, 0', 's_mov_b32 vcc_hi, 0', 's_mov_b32 m0, 0');
   lines.push(`s_setreg_imm32_b32 ${hex(MODE_BITS_9_0)}, ${hex(EMULATOR_MODE)}`);
   return lines;
 }
 
-/** One invocation's inputs, as the app loads them: one EXEC mask per value a register holds (0s are already there). */
-function inputLines(puzzle: Puzzle | null, invocation: number): string[] {
-  const lines: string[] = [];
-  for (const input of puzzle?.inputs ?? []) {
-    if (input.isSGPR) {
-      const value = invocation < input.values.length ? input.values[invocation] >>> 0 : 0;
-      if (value !== 0) lines.push(`s_mov_b32 s${input.register}, ${hex(value)}`);
-      continue;
-    }
-    const lanes = new Map<number, number>();
-    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
-      const idx = invocation * WAVE_WIDTH + lane;
-      const bits = valueBits(idx < input.values.length ? input.values[idx] : 0, input.isInteger);
-      if (bits !== 0) lanes.set(bits, ((lanes.get(bits) ?? 0) | (1 << lane)) >>> 0);
-    }
-    for (const [bits, mask] of lanes) lines.push(`s_mov_b32 exec_lo, ${hex(mask)}`, `v_mov_b32 v${input.register}, ${hex(bits)}`);
-  }
-  lines.push('s_mov_b32 exec_lo, -1', 's_cmp_eq_u32 0, 1'); // SCC = 0
-  return lines;
+const sgprInputs = (puzzle: Puzzle | null) => puzzle?.inputs.filter(p => p.isSGPR) ?? [];
+
+/** Where VGPR `reg`'s value for `lane` is in an input block, in dwords: four registers a lane at a time. */
+export function vgprWord(reg: number, lane: number): number {
+  return (reg >> 2) * (GROUP_BYTES / 4) + lane * 4 + (reg & 3);
 }
 
 /**
- * The setup's assembly: whatever the wave starts with becomes the emulator's start state for one invocation. (Its
- * s_setreg_imm32_b32 sets the float mode, which the emulator doesn't run.)
+ * An invocation's input block: every VGPR's start value for each lane (an input's, or 0), as the emulator loads
+ * them, then each SGPR input's value, in the puzzle's order.
  */
-export function setupSource(puzzle: Puzzle | null, invocation: number): string[] {
-  return [...startStateLines(), ...inputLines(puzzle, invocation)];
+export function inputWords(puzzle: Puzzle | null, invocation: number): number[] {
+  const sgprs = sgprInputs(puzzle);
+  const words: number[] = new Array(VGPR_BLOCK_DWORDS + sgprs.length).fill(0);
+  for (const input of puzzle?.inputs ?? []) {
+    if (input.isSGPR) continue;
+    for (let lane = 0; lane < WAVE_WIDTH; lane++) {
+      const idx = invocation * WAVE_WIDTH + lane;
+      words[vgprWord(input.register, lane)] = valueBits(idx < input.values.length ? input.values[idx] : 0, input.isInteger);
+    }
+  }
+  sgprs.forEach((input, k) => {
+    words[VGPR_BLOCK_DWORDS + k] = invocation < input.values.length ? input.values[invocation] >>> 0 : 0;
+  });
+  return words;
+}
+
+/** A line of the harness's assembly, or hand-encoded words (an instruction the assembler leaves out). */
+type Part = string | number[];
+
+/**
+ * Load the registers from the input block, which the runner puts at the result address + INPUT_OFFSET: the SGPR
+ * inputs, then every VGPR, four at a time. v255 holds each lane's offset in the block until the last load, which
+ * loads it too. The address pair goes back to 0, and SCC to 0.
+ */
+function loadParts(puzzle: Puzzle | null, s: Scratch): Part[] {
+  const a = s.address;
+  const parts: Part[] = [`s_mov_b32 s${a}, ${hex(RESULT_LO)}`, `s_mov_b32 s${a + 1}, ${hex(RESULT_HI)}`,
+    `s_add_u32 s${a}, s${a}, ${hex(INPUT_OFFSET)}`, `s_addc_u32 s${a + 1}, s${a + 1}, 0`];
+  sgprInputs(puzzle).forEach((input, k) => parts.push(sLoadDword(input.register, a, (VGPR_BLOCK_DWORDS + k) * 4)));
+  // Wait for those before the address moves on
+  parts.push('s_waitcnt lgkmcnt(0)', 'v_mbcnt_lo_u32_b32 v255, -1, 0', 'v_lshlrev_b32 v255, 4, v255');
+  for (let group = 0; group < NUM_VGPRS / 4; group++) {
+    // A load's offset has 12 bits (to 2047), so the address moves on 2 KB every four loads
+    if (group > 0 && group % 4 === 0) parts.push(`s_add_u32 s${a}, s${a}, 0x800`, `s_addc_u32 s${a + 1}, s${a + 1}, 0`);
+    parts.push(globalLoad(4, 4 * group, 255, a, (group % 4) * GROUP_BYTES));
+  }
+  parts.push('s_waitcnt vmcnt(0)', `s_mov_b32 s${a}, 0`, `s_mov_b32 s${a + 1}, 0`, 's_cmp_eq_u32 0, 1'); // SCC = 0
+  return parts;
+}
+
+/**
+ * The setup's assembly, without its loads (the emulator runs no memory instructions), for tests. (Its
+ * s_setreg_imm32_b32 sets the float mode, which the emulator doesn't run either.)
+ */
+export function setupSource(puzzle: Puzzle | null, vgprsUsed = 1): string[] {
+  return [...startStateLines(), ...loadParts(puzzle, pickScratch(puzzle, vgprsUsed).scratch).filter((p): p is string => typeof p === 'string')];
 }
 
 /** Machine code built from assembled harness lines and hand-encoded instructions. */
@@ -160,6 +213,21 @@ class CodeBuilder {
     return this;
   }
 
+  /** Append parts, assembling each run of lines together. */
+  parts(parts: Part[]): this {
+    let lines: string[] = [];
+    for (const part of parts) {
+      if (typeof part === 'string') {
+        lines.push(part);
+        continue;
+      }
+      if (lines.length > 0) this.asm(lines);
+      lines = [];
+      this.raw(part);
+    }
+    return lines.length > 0 ? this.asm(lines) : this;
+  }
+
   /** Pad with s_nop 0 until the next `ahead` dwords would end on a cache line. */
   alignEnd(ahead: number): this {
     while ((this.code.length + ahead) % LINE_DWORDS !== 0) this.code.push(S_NOP_0);
@@ -168,12 +236,6 @@ class CodeBuilder {
 }
 
 let startState: number[] | null = null;
-
-/** The setup's machine code (the start state is the same for every program, so it's assembled once). */
-function setupCode(puzzle: Puzzle | null, invocation: number): number[] {
-  startState ??= new CodeBuilder().asm(startStateLines()).code;
-  return [...startState, ...new CodeBuilder().asm(inputLines(puzzle, invocation)).code];
-}
 
 /** Start the timer; the code after this begins on a cache line. */
 function startTimer(b: CodeBuilder, s: Scratch, waitForStore: boolean): void {
@@ -205,8 +267,10 @@ function epilogue(b: CodeBuilder, s: Scratch, outputs: readonly number[]): void 
 }
 
 /** One program: setup, timer, the solution's code (each s_endpgm branching to the epilogue) and epilogue. */
-function harnessProgram(setup: number[], solution: Uint32Array, s: Scratch, waitForStore: boolean, outputs: readonly number[]): HwProgram {
-  const b = new CodeBuilder().raw(setup);
+function harnessProgram(puzzle: Puzzle | null, solution: Uint32Array, s: Scratch, waitForStore: boolean, outputs: readonly number[]): HwProgram {
+  // The start state's ALU part is the same in every program, so it's assembled once
+  startState ??= new CodeBuilder().asm(startStateLines()).code;
+  const b = new CodeBuilder().raw(startState).parts(loadParts(puzzle, s));
   startTimer(b, s, waitForStore);
   const at = b.code.length;
   const epilogueAt = Math.ceil((at + solution.length) / LINE_DWORDS) * LINE_DWORDS;
@@ -226,15 +290,15 @@ export function resultBytes(puzzle: Puzzle | null): number {
 }
 
 /**
- * The two programs to time for one invocation: the solution, and the baseline (the same harness around just
- * s_endpgm). `vgprsUsed` is how many VGPRs the solution uses.
+ * The two programs to time: the solution, and the baseline (the same harness around just s_endpgm). They're the
+ * same for every invocation; only the input block differs. `vgprsUsed` is how many VGPRs the solution uses.
  */
-export function invocationPrograms(puzzle: Puzzle | null, solution: Uint32Array, vgprsUsed: number, invocation: number): { solution: HwProgram; baseline: HwProgram } {
+export function jobPrograms(puzzle: Puzzle | null, solution: Uint32Array, vgprsUsed: number): { solution: HwProgram; baseline: HwProgram } {
+  if (resultBytes(puzzle) > INPUT_OFFSET) throw new Error('The record would run into the input block');
   const { scratch, sharedWithSolution } = pickScratch(puzzle, vgprsUsed);
-  const setup = setupCode(puzzle, invocation);
   const outputs = puzzle?.outputs.map(o => o.register) ?? [];
   return {
-    solution: harnessProgram(setup, solution, scratch, sharedWithSolution, outputs),
-    baseline: harnessProgram(setup, Uint32Array.of(S_ENDPGM), scratch, sharedWithSolution, outputs),
+    solution: harnessProgram(puzzle, solution, scratch, sharedWithSolution, outputs),
+    baseline: harnessProgram(puzzle, Uint32Array.of(S_ENDPGM), scratch, sharedWithSolution, outputs),
   };
 }
