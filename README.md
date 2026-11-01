@@ -41,9 +41,13 @@ puzzle sends the solution's source to it, privately, as the player's own run
 shows its Hardware cycles beside the simulated ones, Pending until the devkit
 has timed it. Submitting a score uploads the source again, under
 `submissions/{entryId}`, and the leaderboards show a Hardware cycles board of
-the entries the devkit has timed. While it's offline the site shows no board and
-uploads nothing. The devkit signs in with an Email/Password account of its own,
-whose UID is in `isRunner()` in [`firestore.rules`](firestore.rules).
+the entries the devkit has timed. While it's offline (no heartbeat for 10
+minutes), the board says when it was last seen, solutions submitted with scores
+wait for it (it times them, oldest first, when it's back), and the Puzzle
+Complete screen says Offline rather than sending a run. Before the devkit's
+first check-in there's no board, and nothing is uploaded. The devkit signs in
+with an Email/Password account of its own, whose UID is in `isRunner()` in
+[`firestore.rules`](firestore.rules).
 
 The simulated cycles (the Speed board) are one per instruction run, not counting
 the `s_endpgm` that ends the program: the devkit doesn't time it either. (Before
