@@ -9,15 +9,19 @@
 // In Firestore, where firestore.rules lets only the runner's account do these, the runner:
 //   1. Keeps runner/status up to date: { heartbeat: server time, queued: submissions waiting, harness: HW_HARNESS,
 //      version: the verifier's }. While it exists, the site shows the Hardware cycles board and sends solutions.
-//   2. Takes the submissions/{entryId} whose status is 'pending', oldest createdAt first, and sets 'running'.
+//   2. Takes the submissions/{entryId} whose status is 'pending', oldest createdAt first, and sets 'running' if the
+//      submission hasn't changed since it was read. One from a newer appVersion than the verifier waits for the live
+//      verifier to catch up, without holding up those behind it; still unknown after 30 minutes, it's 'rejected'.
 //   3. Sets 'stale' if the submission's puzzleHash isn't the puzzle's any more (puzzleHashOf() in verifier.ts).
 //      Otherwise it verify()s the source, with the stats that leaderboards/{puzzleId}/entries/{entryId} claims: if
-//      that isn't ok, it sets 'rejected', with the reason as detail.
+//      that isn't ok, or the entry has gone (or isn't the submission's uid's: the id was used again), it sets
+//      'rejected', with the reason as detail.
 //   4. Times the job and score()s the runs, recording the status, detail, cycles, claimMismatches and harness ('hung'
 //      if the GPU doesn't finish), and updatedAt: server time.
 //   5. When measured, adds hw: { cycles, perInvocation, emulatorMismatches, harness, measuredAt: server time,
 //      submittedAt: the submission's createdAt } to the entry, in the same batch as step 4: that puts the entry on the
-//      board, where ties go to the earliest submittedAt (kept when the entry is timed again).
+//      board, where ties go to the earliest submittedAt (kept when the entry is timed again). The batch only goes
+//      through if neither document has changed since step 3; if the entry has, the submission is 'rejected'.
 
 export const HW_PROTOCOL = 1;
 export const HW_HARNESS = 1;
