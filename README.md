@@ -38,14 +38,10 @@ makes jobs by hand, including a set of calibration programs (see
 While the devkit is online (it keeps `runner/status` up to date), submitting a
 score also uploads the solution's source, privately, to `submissions/{entryId}`,
 and the leaderboards show a Hardware cycles board of the entries it has timed.
-Until then the site shows neither, and uploads nothing. To launch it:
-
-1. In the Firebase console, enable the Email/Password sign-in provider
-   (Authentication > Sign-in method; it's off now), add an email/password user
-   for the devkit, and put its UID in `isRunner()` in
-   [`firestore.rules`](firestore.rules).
-2. Deploy the rules and indexes (below).
-3. Start the devkit's runner.
+Until then the site shows neither, and uploads nothing. The project is ready for
+it: Email/Password sign-in is on, the devkit has an account of its own (its UID
+is in `isRunner()` in [`firestore.rules`](firestore.rules)), and the rules and
+indexes are deployed. Starting the devkit's runner launches it.
 
 ## Online leaderboard rules
 

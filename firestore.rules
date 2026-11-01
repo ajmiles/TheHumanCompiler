@@ -51,10 +51,10 @@ service cloud.firestore {
       allow write: if isRunner();
     }
 
-    // The devkit's account: an email/password user made in the Firebase
-    // console. Put its UID here before deploying; until then nobody is the runner.
+    // The devkit's account: an email/password user (devkit-runner@human-compiler.invalid),
+    // made for the runner on 1 November 2026. Nobody else is the runner.
     function isRunner() {
-      return request.auth != null && request.auth.uid == 'SET-THE-RUNNER-UID';
+      return request.auth != null && request.auth.uid == 'XuEZIuVLMGYbBfPNWOSHRAZbOIE2';
     }
 
     // Puzzle ids are slugs such as 'signal-boost' (see src/puzzle/puzzles.ts).
