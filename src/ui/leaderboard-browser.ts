@@ -1,7 +1,7 @@
 // ── Leaderboard Browser ──
 // Shows leaderboards for all completed puzzles in a single overlay.
 
-import { LeaderboardEntryWithOwner, LeaderboardCategory, HardwareBoard, getRankedEntries, clearLeaderboard, computeVisibleRows } from '../puzzle/leaderboard';
+import { LeaderboardEntryWithOwner, LeaderboardCategory, HardwareBoard, getRankedEntries, clearLeaderboard } from '../puzzle/leaderboard';
 import { fetchOnlineLeaderboard, fetchHardwareBoard, isOnlineEnabled, deleteMyOnlineScores } from '../firebase/online-leaderboard';
 import { Puzzle } from '../puzzle/types';
 import { hardwareTableHtml } from './hardware-board';
@@ -143,8 +143,6 @@ export class LeaderboardBrowser {
       const entries = [...merged.values()]
         .sort((a, b) => a[cat.key] - b[cat.key]);
 
-      const { indices, separatorBefore } = computeVisibleRows(entries);
-
       html += `<div class="leaderboard-table-section">`;
       html += `<div class="leaderboard-table-title">${cat.icon} ${cat.label} (${cat.unit})</div>`;
       html += `<table class="leaderboard-table"><thead><tr><th>#</th><th>Name</th><th>${cat.unit}</th></tr></thead><tbody>`;
@@ -152,11 +150,8 @@ export class LeaderboardBrowser {
       if (entries.length === 0) {
         html += `<tr><td colspan="3" class="leaderboard-empty">No entries</td></tr>`;
       } else {
-        for (const idx of indices) {
+        for (let idx = 0; idx < entries.length; idx++) {
           const entry = entries[idx];
-          if (separatorBefore.has(idx)) {
-            html += `<tr class="leaderboard-separator"><td colspan="3">···</td></tr>`;
-          }
           const mineClass = entry.isMine ? ' class="leaderboard-row--mine"' : '';
           const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`;
           html += `<tr${mineClass}><td>${medal}</td><td>${this.esc(entry.name)}</td><td>${entry[cat.key]}</td></tr>`;

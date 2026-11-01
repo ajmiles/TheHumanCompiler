@@ -2,7 +2,7 @@
 // The leaderboard of solutions timed on a real RDNA2 GPU by the devkit, for the leaderboard overlay and browser.
 // It shows once there's a devkit (it has checked in at least once), and lists the entries it has measured.
 
-import { computeVisibleRows, HardwareEntry, RunnerStatus, SubmissionState } from '../puzzle/leaderboard';
+import { HardwareEntry, RunnerStatus, SubmissionState } from '../puzzle/leaderboard';
 
 /** A devkit that hasn't checked in for this long counts as offline. */
 const OFFLINE_AFTER_MS = 10 * 60 * 1000;
@@ -65,23 +65,20 @@ function rowsOf(entries: HardwareEntry[], highlightId: string | undefined): Row[
 }
 
 /**
- * The Hardware cycles table, across the width of the other boards, from entries in board order. `highlightId` marks
- * the entry just submitted.
+ * The Hardware cycles table, across the width of the other boards, from entries in board order: every row, like the
+ * other boards. `highlightId` marks the entry just submitted.
  */
 export function hardwareTableHtml(entries: HardwareEntry[], status: RunnerStatus, highlightId?: string, now = Date.now()): string {
   const rows = rowsOf(entries, highlightId);
-  const { indices, separatorBefore } = computeVisibleRows(rows);
   let html = '<div class="leaderboard-table-section leaderboard-table-section--wide">';
   html += '<div class="leaderboard-table-title">⏱️ Hardware cycles (timed on an RDNA2 GPU)';
   html += `<span class="leaderboard-table-status">${escapeHtml(runnerStatusText(status, now))}</span></div>`;
   html += '<table class="leaderboard-table"><thead><tr><th>#</th><th>Name</th><th>cycles</th></tr></thead><tbody>';
   if (rows.length === 0) html += '<tr><td colspan="3" class="leaderboard-empty">No solutions timed yet</td></tr>';
-  for (const idx of indices) {
-    const row = rows[idx];
-    if (separatorBefore.has(idx)) html += '<tr class="leaderboard-separator"><td colspan="3">···</td></tr>';
+  rows.forEach((row, idx) => {
     const classes = [row.highlight ? 'leaderboard-row--highlight' : '', row.isMine ? 'leaderboard-row--mine' : ''].filter(Boolean);
     const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`;
     html += `<tr${classes.length > 0 ? ` class="${classes.join(' ')}"` : ''}><td>${medal}</td><td>${escapeHtml(row.name)}</td><td>${row.cycles}</td></tr>`;
-  }
+  });
   return `${html}</tbody></table></div>`;
 }

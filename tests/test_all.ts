@@ -7773,8 +7773,9 @@ group('Hardware runs: the Hardware cycles board');
     html.includes('<td>&#60;b&#62;Ann&#60;/b&#62;</td>') && !html.includes('<b>'), 'hardware table: full width, with the devkit status and escaped names');
   assert(html.includes('<tr class="leaderboard-row--highlight leaderboard-row--mine"><td>12</td><td>P11</td><td>111</td></tr>') &&
     html.includes('<tr class="leaderboard-row--mine"><td>11</td><td>P10</td><td>110</td></tr>') &&
-    html.includes('<td>🥇</td><td>P0</td><td>100</td>') && !html.includes('<td>P7</td>') && (html.match(/leaderboard-separator/g) ?? []).length === 1,
-    'hardware table: the podium, then a gap and my entries, the one just submitted highlighted');
+    html.includes('<td>🥇</td><td>P0</td><td>100</td>') && html.includes('<tr><td>8</td><td>P7</td><td>107</td></tr>') &&
+    (html.match(/<tr[ >]/g) ?? []).length === 13 && !html.includes('···'),
+    'hardware table: every row (the header and all 12), mine marked, the one just submitted highlighted');
   assert(hardwareTableHtml([], status(30), undefined, now).includes('No solutions timed yet'), 'hardware table: empty');
 
   const repeats = [

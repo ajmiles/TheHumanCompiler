@@ -8,7 +8,6 @@ import {
   getRankedEntries,
   addLeaderboardEntry,
   clearLeaderboard,
-  computeVisibleRows,
 } from '../puzzle/leaderboard';
 import {
   submitOnlineScore,
@@ -241,8 +240,6 @@ export class LeaderboardOverlay {
       const entries = [...merged.values()]
         .sort((a, b) => a[cat.key] - b[cat.key]);
 
-      const { indices, separatorBefore } = computeVisibleRows(entries);
-
       html += `
         <div class="leaderboard-table-section">
           <div class="leaderboard-table-title">${cat.icon} ${cat.label} (${cat.unit})</div>
@@ -260,11 +257,8 @@ export class LeaderboardOverlay {
       if (entries.length === 0) {
         html += `<tr><td colspan="3" class="leaderboard-empty">No entries yet</td></tr>`;
       } else {
-        for (const idx of indices) {
+        for (let idx = 0; idx < entries.length; idx++) {
           const entry = entries[idx];
-          if (separatorBefore.has(idx)) {
-            html += `<tr class="leaderboard-separator"><td colspan="3">···</td></tr>`;
-          }
           const isCurrentScore = justSubmitted &&
             entry[cat.key] === stats[cat.key] &&
             entry.timestamp === stats.codeSize; // rough match
