@@ -226,6 +226,33 @@ export function watchSubmission(entryId: string, onChange: (state: SubmissionSta
   }, () => onChange(null));
 }
 
+/**
+ * Run a solution on the devkit without a score, so that it goes on no board. A player has one such run
+ * (submissions/trial-{uid}), which the next replaces. Its id, to follow with watchSubmission(), or null if it couldn't
+ * be sent.
+ */
+export async function runOnDevkit(puzzleId: string, solution: SubmittedSolution): Promise<string | null> {
+  const ok = await ensureInit();
+  const uid = getUid();
+  if (!ok || !db || !uid) return null;
+  const id = `trial-${uid}`;
+  try {
+    await setDoc(doc(db, 'submissions', id), {
+      uid,
+      puzzleId,
+      source: solution.source,
+      appVersion: VERSION,
+      puzzleHash: solution.puzzleHash,
+      createdAt: serverTimestamp(),
+      status: 'pending',
+    });
+    return id;
+  } catch (e) {
+    console.warn('Failed to send the solution to the devkit:', e);
+    return null;
+  }
+}
+
 /** Check if online leaderboards are available. */
 export function isOnlineEnabled(): boolean {
   return FIREBASE_ENABLED;

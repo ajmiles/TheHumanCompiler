@@ -20,7 +20,7 @@ import { HW_HARNESS, HwJobRuns } from '../src/hardware/protocol';
 import { codeHash, hash64, puzzleHash } from '../src/hardware/hash';
 import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
-import { hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
+import { devkitOnline, devkitRunStat, hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -7464,8 +7464,17 @@ group('Hardware runs: the shared puzzle runner');
   const smooth = getPuzzleById('smooth-clamp')!;
   const asm = assemble(SMOOTH_CLAMP);
   const run = runPuzzleBinary(smooth, asm.binary);
-  assert(run.result.pass && run.invocations.length === 2 && run.invocations.every(i => i.cycles === 10) && run.cycles === 20,
-    'runPuzzle: each invocation runs the 10 instructions, s_endpgm included: 20 for the Speed board');
+  assert(run.result.pass && run.invocations.length === 2 && run.invocations.every(i => i.cycles === 9) && run.cycles === 18,
+    'runPuzzle: each invocation runs the 9 instructions before s_endpgm, which is not counted: 18 for the Speed board');
+  const cyclesOf = (src: string) => {
+    const e = new Emulator();
+    e.load(assemble(src).binary);
+    e.run();
+    return e.fault ?? e.getCycleCount();
+  };
+  assert(cyclesOf('v_mov_b32 v1, v0\ns_endpgm') === 1 && cyclesOf('s_endpgm') === 0 &&
+    cyclesOf('s_branch end\nv_mov_b32 v1, v0\nend: s_endpgm') === 1 && cyclesOf('s_mov_b32 s0, 2\nloop: s_sub_u32 s0, s0, 1\ns_cmp_eq_u32 s0, 0\ns_cbranch_scc0 loop\ns_endpgm') === 7,
+    "cycles: one per instruction run, but not the s_endpgm that ends the program (the devkit doesn't time it)");
   assert(run.invocations.every(i => i.outputBits.length === 1 && i.outputBits[0].length === 32) && run.invocations[1].outputBits[0][0] === 0x3F800000,
     'runPuzzle: the bits of all 32 lanes of each output register');
   const crashed = runPuzzleBinary(smooth, assemble('v_mov_b32 v3, 0').binary);
@@ -7675,10 +7684,10 @@ group('Hardware runs: the harness');
 
 group('Hardware runs: checking a submission');
 {
-  const ok = verify(SMOOTH_CLAMP, 'smooth-clamp', { codeSize: 56, vgprsUsed: 4, cycles: 20 });
-  assert(ok.ok && JSON.stringify(ok.stats) === '{"codeSize":56,"vgprsUsed":4,"cycles":20}' && ok.claimMismatches === undefined && ok.job?.runs === 100,
+  const ok = verify(SMOOTH_CLAMP, 'smooth-clamp', { codeSize: 56, vgprsUsed: 4, cycles: 18 });
+  assert(ok.ok && JSON.stringify(ok.stats) === '{"codeSize":56,"vgprsUsed":4,"cycles":18}' && ok.claimMismatches === undefined && ok.job?.runs === 100,
     'verify: a correct solution with the stats it claims');
-  assert(verify(SMOOTH_CLAMP, 'smooth-clamp', { codeSize: 40, cycles: 20 }).claimMismatches?.join() === 'codeSize: claimed 40, actually 56',
+  assert(verify(SMOOTH_CLAMP, 'smooth-clamp', { codeSize: 40, cycles: 18 }).claimMismatches?.join() === 'codeSize: claimed 40, actually 56',
     'verify: a claim that does not match is reported');
   assert(verify(SMOOTH_CLAMP, 'no-such-puzzle').reason === "There is no puzzle 'no-such-puzzle'" &&
     verify('v_bogus v0\ns_endpgm', 'smooth-clamp').reason?.startsWith('Line 1: ') === true, 'verify: an unknown puzzle, a line that does not assemble');
@@ -7766,6 +7775,20 @@ group('Hardware runs: the Hardware cycles board');
   const states = ['pending', 'running', 'measured', 'failed', 'unstable', 'rejected', 'stale', 'hung'] as const;
   const texts = states.map(s => submissionStatusText({ status: s }));
   assert(new Set(texts).size === states.length && !texts.includes(submissionStatusText(null)), 'submission status: each state has its own text');
+
+  assert(devkitOnline(status(10), now) && !devkitOnline(status(11), now), 'devkit online: it has checked in within 10 minutes');
+  const sent = (submission: Parameters<typeof submissionStatusText>[0]) => devkitRunStat({ state: 'sent', submission }, now);
+  assert(devkitRunStat({ state: 'none' }, now) === null && devkitRunStat({ state: 'checking' }, now)?.value === 'Pending' &&
+    sent(undefined)?.value === 'Pending' && sent({ status: 'pending' })?.value === 'Pending' && sent({ status: 'running' })?.value === 'Pending' &&
+    sent({ status: 'running' })?.note === undefined, 'hardware cycles box: Pending until the devkit has timed the run, and no box without a devkit');
+  assert(sent({ status: 'measured', cycles: 12 })?.value === '12' && sent({ status: 'measured', cycles: 12 })?.note === undefined,
+    'hardware cycles box: the cycles, once measured');
+  const offline = devkitRunStat({ state: 'offline', status: status(30) }, now);
+  assert(offline?.value === 'Offline' && offline.note === 'Devkit offline, last seen 30 minutes ago', 'hardware cycles box: offline, and when it was last seen');
+  assert(sent({ status: 'rejected', detail: 'it uses s_setpc_b64' })?.value === '✗' &&
+    sent({ status: 'rejected', detail: 'it uses s_setpc_b64' })?.note === "✗ The devkit can't time this solution: it uses s_setpc_b64" &&
+    sent(null)?.note === "✗ Your solution couldn't be sent to the devkit" && sent({ status: 'hung' })?.value === '✗',
+    "hardware cycles box: ✗, and why, when it couldn't be sent or timed");
 
   const entries = Array.from({ length: 12 }, (_, i) => ({ id: `e${i}`, name: i === 1 ? '<b>Ann</b>' : `P${i}`, cycles: 100 + i, isMine: i >= 10 }));
   const html = hardwareTableHtml(entries, status(1, 2), 'e11', now);

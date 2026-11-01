@@ -28,12 +28,17 @@ service cloud.firestore {
                     && resource.data.uid == request.auth.uid;
     }
 
-    // The source of a submitted solution, under the id of its leaderboard
-    // entry: private to its author and the devkit.
-    match /submissions/{entryId} {
+    // The source of a solution for the devkit to time: private to its author
+    // and the devkit. Submitted with a score, it's under the id of its
+    // leaderboard entry. A run of the player's own, which goes on no board,
+    // is trial-{uid}: one a player, replaced by the next.
+    match /submissions/{id} {
       allow read: if request.auth != null
                   && (resource.data.uid == request.auth.uid || isRunner());
-      allow create: if isValidSubmission(entryId, request.resource.data);
+      allow create: if isValidSubmission(id, request.resource.data)
+                    || isValidTrial(id, request.resource.data);
+      // The player runs another solution: the devkit's record of the last one goes with it.
+      allow update: if isValidTrial(id, request.resource.data);
       // The devkit records how timing the solution went.
       allow update: if isRunner()
                     && request.resource.data.diff(resource.data).affectedKeys()
@@ -90,10 +95,9 @@ service cloud.firestore {
         && data.timestamp <= request.time.toMillis() + 24 * 60 * 60 * 1000;
     }
 
-    // Mirrors the submission that submitOnlineScore() in
-    // src/firebase/online-leaderboard.ts makes after the entry: the source of
-    // the author's own entry, waiting for the devkit.
-    function isValidSubmission(entryId, data) {
+    // A solution's source as src/firebase/online-leaderboard.ts uploads it,
+    // waiting for the devkit.
+    function isValidSource(data) {
       let fields = ['uid', 'puzzleId', 'source', 'appVersion', 'puzzleHash', 'createdAt', 'status'];
       return request.auth != null
         && data.keys().hasAll(fields)
@@ -109,8 +113,18 @@ service cloud.firestore {
         && data.puzzleHash is string
         && data.puzzleHash.matches('[0-9a-f]{16}')
         && data.createdAt == request.time
-        && data.status == 'pending'
-        && isOwnEntry(data.puzzleId, entryId);
+        && data.status == 'pending';
+    }
+
+    // The source that submitOnlineScore() uploads after the entry: the
+    // author's own entry's.
+    function isValidSubmission(entryId, data) {
+      return isValidSource(data) && isOwnEntry(data.puzzleId, entryId);
+    }
+
+    // The player's own run (runOnDevkit()), which goes on no board.
+    function isValidTrial(id, data) {
+      return isValidSource(data) && id == 'trial-' + request.auth.uid;
     }
 
     function isOwnEntry(puzzleId, entryId) {

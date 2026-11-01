@@ -51,9 +51,10 @@
   background: var(--bg-tertiary);
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  padding: 12px 20px;
+  padding: 12px;
   text-align: center;
   flex: 1;
+  min-width: 0;
   max-width: 160px;
 }
 
@@ -66,9 +67,15 @@
 .leaderboard-stat__value {
   display: block;
   font-size: 24px;
+  line-height: 30px;
   font-weight: 700;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+}
+
+/* A word in place of a number ("Pending"), the same height */
+.leaderboard-stat__value--text {
+  font-size: 18px;
 }
 
 .leaderboard-stat__label {

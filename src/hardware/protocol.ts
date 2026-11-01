@@ -24,6 +24,11 @@
 //      submittedAt: the submission's createdAt } to the entry, in the same batch as step 4: that puts the entry on the
 //      board, where ties go to the earliest submittedAt (kept when the entry is timed again). The batch only goes
 //      through if neither document has changed since step 3; if the entry has, the submission is 'rejected'.
+//
+// A player can also run a solution on the devkit without a score: submissions/trial-{uid}, one a player, which the
+// next replaces (runOnDevkit() in src/firebase/online-leaderboard.ts). The runner takes it in its turn and does steps
+// 2-4 without an entry: there are no claims to check and no hw, so it goes on no board, and the result recorded on it
+// is all there is. A trial replaced while it's timed has changed, so nothing is recorded for the old solution.
 
 export const HW_PROTOCOL = 2;
 export const HW_HARNESS = 2;

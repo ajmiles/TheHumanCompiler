@@ -18,9 +18,14 @@ function duration(ms: number): string {
   return `${Math.round(hours / 24)} days`;
 }
 
+/** Whether the devkit has checked in lately enough to count as online. */
+export function devkitOnline(status: RunnerStatus, now = Date.now()): boolean {
+  return now - status.lastSeen <= OFFLINE_AFTER_MS;
+}
+
 /** Whether the devkit is online, and how many solutions are waiting for it. */
 export function runnerStatusText(status: RunnerStatus, now = Date.now()): string {
-  if (now - status.lastSeen > OFFLINE_AFTER_MS) return `Devkit offline, last seen ${duration(now - status.lastSeen)} ago`;
+  if (!devkitOnline(status, now)) return `Devkit offline, last seen ${duration(now - status.lastSeen)} ago`;
   return status.queued > 0 ? `Devkit online, ${status.queued} waiting` : 'Devkit online';
 }
 
@@ -41,6 +46,33 @@ export function submissionStatusText(state: SubmissionState | null | undefined):
     case 'stale': return '✗ The puzzle has changed since you solved it, so the devkit won\'t time this solution';
     case 'hung': return "✗ Your solution didn't finish on the devkit";
     default: return "✗ Your solution couldn't be sent to the devkit";
+  }
+}
+
+/**
+ * The player's own run of their solution on the devkit, from the Puzzle Complete screen: 'checking' while finding out
+ * whether there's a devkit; 'none' when there isn't one (or online features are off), so there's no box; 'offline'
+ * when it hasn't checked in lately, so nothing is sent; or 'sent', with the devkit's record of it (as for
+ * submissionStatusText()).
+ */
+export type DevkitRun =
+  | { state: 'checking' }
+  | { state: 'none' }
+  | { state: 'offline'; status: RunnerStatus }
+  | { state: 'sent'; submission: SubmissionState | null | undefined };
+
+/** The Hardware cycles box for a run: its value, and what went wrong if anything did. Null when there's no box. */
+export function devkitRunStat(run: DevkitRun, now = Date.now()): { value: string; note?: string } | null {
+  switch (run.state) {
+    case 'none': return null;
+    case 'checking': return { value: 'Pending' };
+    case 'offline': return { value: 'Offline', note: runnerStatusText(run.status, now) };
+    case 'sent': {
+      const s = run.submission;
+      if (s === undefined || s?.status === 'pending' || s?.status === 'running') return { value: 'Pending' };
+      if (s?.status === 'measured') return { value: String(s.cycles ?? '?') };
+      return { value: '✗', note: submissionStatusText(s) };
+    }
   }
 }
 

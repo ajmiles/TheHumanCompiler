@@ -22,7 +22,7 @@ export interface SolutionStats {
   /** Bytes of machine code. */
   codeSize: number;
   vgprsUsed: number;
-  /** Instructions executed over all invocations (the Speed board). */
+  /** Instructions executed over all invocations, not counting each one's s_endpgm (the Speed board). */
   cycles: number;
 }
 

@@ -35,12 +35,19 @@ into `dist/hw/verifier.js`, which the devkit runs in QuickJS. `npm run hw-job`
 makes jobs by hand, including a set of calibration programs (see
 [`scripts/hw-job.ts`](scripts/hw-job.ts)).
 
-While the devkit is online (it keeps `runner/status` up to date), submitting a
-score also uploads the solution's source, privately, to `submissions/{entryId}`,
-and the leaderboards show a Hardware cycles board of the entries it has timed.
-While it's offline the site shows neither, and uploads nothing. The devkit signs
-in with an Email/Password account of its own, whose UID is in `isRunner()` in
-[`firestore.rules`](firestore.rules).
+While the devkit is online (it keeps `runner/status` up to date), completing a
+puzzle sends the solution's source to it, privately, as the player's own run
+(`submissions/trial-{uid}`, which goes on no board): the Puzzle Complete screen
+shows its Hardware cycles beside the simulated ones, Pending until the devkit
+has timed it. Submitting a score uploads the source again, under
+`submissions/{entryId}`, and the leaderboards show a Hardware cycles board of
+the entries the devkit has timed. While it's offline the site shows no board and
+uploads nothing. The devkit signs in with an Email/Password account of its own,
+whose UID is in `isRunner()` in [`firestore.rules`](firestore.rules).
+
+The simulated cycles (the Speed board) are one per instruction run, not counting
+the `s_endpgm` that ends the program: the devkit doesn't time it either. (Before
+1 November 2026 it was counted; the boards were cleared then.)
 
 ## Online leaderboard rules
 

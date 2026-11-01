@@ -50,7 +50,7 @@ export function collectInvocationOutputs(state: GPUState, puzzle: Puzzle, invoca
 }
 
 export interface InvocationRun {
-  /** Instructions executed, s_endpgm included: the "cycles" of the Speed leaderboard. */
+  /** Instructions executed, not counting the s_endpgm that ends it: the "cycles" of the Speed leaderboard. */
   cycles: number;
   /** The bits of every lane of each output register at the end: outputBits[output][lane]. */
   outputBits: number[][];

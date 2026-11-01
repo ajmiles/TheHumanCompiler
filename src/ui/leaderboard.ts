@@ -13,13 +13,15 @@ import {
   submitOnlineScore,
   fetchOnlineLeaderboard,
   fetchHardwareBoard,
+  fetchRunnerStatus,
+  runOnDevkit,
   watchSubmission,
   isOnlineEnabled,
   deleteMyOnlineScores,
   SubmittedSolution,
 } from '../firebase/online-leaderboard';
 import { getLeaderboardPref } from './settings';
-import { hardwareTableHtml, submissionStatusText } from './hardware-board';
+import { DevkitRun, devkitOnline, devkitRunStat, hardwareTableHtml, submissionStatusText } from './hardware-board';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
   { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
@@ -57,6 +59,11 @@ export class LeaderboardOverlay {
   /** The devkit's record of the solution: undefined until it arrives, null if there's none. */
   private submissionState: SubmissionState | null | undefined = undefined;
   private unwatchSubmission: (() => void) | null = null;
+  /** The solution's own run on the devkit, sent as the screen shows, for the Hardware cycles box. */
+  private devkitRun: DevkitRun = { state: 'none' };
+  /** Bumped by show() and hide() (not by deleting scores, which leaves the run alone). */
+  private runGeneration = 0;
+  private unwatchRun: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
@@ -77,10 +84,15 @@ export class LeaderboardOverlay {
     });
   }
 
-  /** `solution` is what scored `stats`: with a devkit online, submitting the score sends it to be timed on hardware. */
+  /**
+   * `solution` is what scored `stats`. With online features on, it's run on the devkit straight away (for the Hardware
+   * cycles box), and submitting the score sends it too, for the board.
+   */
   show(puzzleId: string, puzzleTitle: string, stats: SolutionStats, solution?: SubmittedSolution): void {
     this.stopWatching();
+    this.stopWatchingRun();
     this.generation++;
+    this.runGeneration++;
     this.puzzleId = puzzleId;
     this.stats = stats;
     this.solution = solution ?? null;
@@ -89,15 +101,20 @@ export class LeaderboardOverlay {
     this.solutionSent = false;
     this.submittedId = null;
     this.submissionState = undefined;
+    const runIt = !!solution && isOnlineEnabled() && getLeaderboardPref() !== 'disabled';
+    this.devkitRun = runIt ? { state: 'checking' } : { state: 'none' };
     this._cachedOnlineResults = [];
     this.content.innerHTML = ''; // a new showing starts from the saved name, not what was typed last time
     this.overlay.classList.remove('puzzle-overlay--hidden');
     this.render(puzzleTitle);
+    if (runIt) this.startDevkitRun(puzzleTitle);
   }
 
   hide(): void {
     this.stopWatching();
+    this.stopWatchingRun();
     this.generation++;
+    this.runGeneration++;
     this.overlay.classList.add('puzzle-overlay--hidden');
     this.onDismissCb?.();
   }
@@ -148,12 +165,63 @@ export class LeaderboardOverlay {
     this.unwatchSubmission = null;
   }
 
+  /**
+   * Run the solution on the devkit, without a score, if the devkit is online; and follow what it makes of it in the
+   * Hardware cycles box.
+   */
+  private startDevkitRun(puzzleTitle: string): void {
+    const generation = this.runGeneration;
+    const current = () => generation === this.runGeneration;
+    const solution = this.solution!;
+    void (async () => {
+      const status = await fetchRunnerStatus();
+      if (!current()) return;
+      if (!status || !devkitOnline(status)) {
+        this.devkitRun = status ? { state: 'offline', status } : { state: 'none' };
+        this._renderInner(puzzleTitle, this._cachedOnlineResults);
+        return;
+      }
+      const id = await runOnDevkit(this.puzzleId, solution);
+      if (!current()) return;
+      this.devkitRun = { state: 'sent', submission: id ? undefined : null };
+      this._renderInner(puzzleTitle, this._cachedOnlineResults);
+      if (!id) return;
+      this.unwatchRun = watchSubmission(id, state => {
+        if (!current()) return;
+        this.devkitRun = { state: 'sent', submission: state };
+        this.showDevkitRun(puzzleTitle);
+      });
+    })();
+  }
+
+  private stopWatchingRun(): void {
+    this.unwatchRun?.();
+    this.unwatchRun = null;
+  }
+
+  /** Show how the run is going in its box, without redrawing the rest (the name being typed, say). */
+  private showDevkitRun(puzzleTitle: string): void {
+    const stat = devkitRunStat(this.devkitRun);
+    const value = this.content.querySelector('#lb-hw-stat-value');
+    const note = this.content.querySelector<HTMLElement>('#lb-hw-run-note');
+    if (!stat || !value || !note) {
+      this._renderInner(puzzleTitle, this._cachedOnlineResults);
+      return;
+    }
+    value.textContent = stat.value;
+    value.classList.toggle('leaderboard-stat__value--text', !/^\d+$/.test(stat.value));
+    note.textContent = stat.note ?? '';
+    note.hidden = !stat.note;
+  }
+
   private _cachedOnlineResults: LeaderboardEntryWithOwner[][] = [];
 
   private _renderInner(puzzleTitle: string, onlineResults: LeaderboardEntryWithOwner[][]): void {
     const stats = this.stats!;
     const pref = getLeaderboardPref();
     const justSubmitted = this.submitted;
+    const run = devkitRunStat(this.devkitRun);
+    const runSent = this.devkitRun.state === 'checking' || this.devkitRun.state === 'sent';
 
     let html = `
       <div class="leaderboard-header">
@@ -175,10 +243,22 @@ export class LeaderboardOverlay {
         <div class="leaderboard-stat">
           <span class="leaderboard-stat__icon">⚡</span>
           <span class="leaderboard-stat__value">${stats.cycles}</span>
-          <span class="leaderboard-stat__label">cycles</span>
+          <span class="leaderboard-stat__label">simulated cycles</span>
         </div>
+        ${run ? `
+        <div class="leaderboard-stat" id="lb-hw-stat">
+          <span class="leaderboard-stat__icon">⏱️</span>
+          <span class="leaderboard-stat__value${/^\d+$/.test(run.value) ? '' : ' leaderboard-stat__value--text'}" id="lb-hw-stat-value">${this.escapeHtml(run.value)}</span>
+          <span class="leaderboard-stat__label">hardware cycles</span>
+        </div>` : ''}
       </div>
     `;
+    if (run) {
+      html += `<div class="leaderboard-hw-status" id="lb-hw-run-note"${run.note ? '' : ' hidden'}>${this.escapeHtml(run.note ?? '')}</div>`;
+    }
+    if (runSent) {
+      html += `<div class="leaderboard-hw-notice">🔒 Your solution goes to the devkit to be timed on a real GPU. Only you and the devkit can read it.</div>`;
+    }
 
     if (pref === 'disabled') {
       html += `<div class="leaderboard-local-notice">Leaderboards are disabled. Change this in ⚙️ Settings.</div>`;
@@ -200,7 +280,7 @@ export class LeaderboardOverlay {
           </button>
         </div>
       `;
-      if (this.hardware && this.solution) {
+      if (this.hardware && this.solution && !runSent) {
         html += `<div class="leaderboard-hw-notice">🔒 Submitting also sends your solution to the devkit to time on a real GPU. Only you and the devkit can read it.</div>`;
       }
     } else if (pref === 'view-only' && !justSubmitted) {

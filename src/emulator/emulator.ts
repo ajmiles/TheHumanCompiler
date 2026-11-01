@@ -65,7 +65,8 @@ export class Emulator {
       this.raiseFault(e.message);
       return true;
     }
-    this.state.cycleCount++;
+    // The instruction that ends the program isn't counted: on the devkit, the timer stops when it's reached
+    if (flow?.kind !== 'halt') this.state.cycleCount++;
 
     if (!flow) {
       this.state.pc = pc + 1;

@@ -172,6 +172,35 @@ await expect('deny', 'delete one that does not exist, unauthenticated', () => de
 await expect('allow', 'delete my own', () => deleteDoc(aliceSubmission));
 await expect('allow', 'delete my own entry', () => deleteDoc(as(alice, aliceEntry)));
 
+console.log('Trial runs (trial-{uid}: a solution timed without a leaderboard entry)');
+const aliceTrial = doc(submissions(alice), 'trial-alice');
+const trial = (uid: string, over: Record<string, unknown> = {}) => submission(uid, { puzzleId: 'smooth-clamp', ...over });
+await expect('allow', 'run a solution on the devkit', () => setDoc(aliceTrial, trial('alice')));
+await expect('allow', 'run another (it replaces the last)', () => setDoc(aliceTrial, trial('alice', { source: 'v_mov_b32 v3, v2\ns_endpgm' })));
+await expect('deny', "run one under someone else's trial id", () => setDoc(doc(submissions(alice), 'trial-bob'), trial('alice')));
+await expect('deny', 'run one as someone else', () => setDoc(aliceTrial, trial('bob')));
+await expect('deny', 'run one unauthenticated', () => setDoc(doc(submissions(anon), 'trial-alice'), trial('alice')));
+for (const [label, over] of [
+  ['status measured', { status: 'measured' }], ['a client createdAt', { createdAt: Timestamp.now() }], ['a result', { cycles: 1 }],
+  ['a bad puzzle id', { puzzleId: 'no such puzzle' }], ['an empty source', { source: '' }],
+] as const) {
+  await expect('deny', `run one with ${label}`, () => setDoc(aliceTrial, trial('alice', over)));
+}
+await expect('allow', 'get my own trial', () => getDoc(aliceTrial));
+await expect('deny', "get someone else's trial", () => getDoc(as(bob, aliceTrial)));
+await expect('allow', 'the runner claims it', () => updateDoc(as(runner, aliceTrial), { status: 'running', updatedAt: serverTimestamp() }));
+await expect('allow', 'the runner records its result', () =>
+  updateDoc(as(runner, aliceTrial), { status: 'measured', cycles: 38, harness: 2, updatedAt: serverTimestamp() }));
+await expect('deny', 'the player times their own', () => updateDoc(aliceTrial, { status: 'measured', cycles: 1 }));
+await expect('deny', 'the player sets it pending again, keeping the result', () =>
+  updateDoc(aliceTrial, { status: 'pending', createdAt: serverTimestamp() }));
+await expect('allow', 'run another after that: the last result goes', async () => {
+  await setDoc(aliceTrial, trial('alice'));
+  const d = (await getDoc(aliceTrial)).data();
+  if (d?.status !== 'pending' || 'cycles' in d || 'harness' in d) throw new Error(`the last result stayed: ${JSON.stringify(d)}`);
+});
+await expect('allow', 'delete my own trial', () => deleteDoc(aliceTrial));
+
 console.log('Runner status and everything else');
 const status = (db: Firestore) => doc(db, 'runner', 'status');
 await expect('allow', 'the runner writes its status', () => setDoc(status(runner), { heartbeat: serverTimestamp(), queued: 0, harness: 1, version: '0.5.98' }));
