@@ -5,33 +5,74 @@ rules_version = '2';
 // solutions on hardware (src/hardware). Rules and indexes are deployed by hand:
 //   firebase deploy --only firestore:rules,firestore:indexes --project human-compiler
 //
-// Scores are still reported by the client: these rules only enforce the
-// document shape, plausible value ranges and ownership. The devkit re-checks a
-// submitted solution in the emulator before timing it.
+// A player has one entry on each puzzle's board, their best in each category,
+// under a name they own. Scores are still reported by the client: these rules
+// only enforce the document shape, plausible value ranges, ownership and that a
+// best never gets worse. The devkit re-checks a submitted solution in the
+// emulator before timing it.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    match /leaderboards/{puzzleId}/entries/{entryId} {
+    // A player's entry on a puzzle's board, under their uid: their best code
+    // size, VGPRs and cycles (each may come from a different solution), and the
+    // devkit's best time for them as hw.
+    match /leaderboards/{puzzleId}/entries/{uid} {
       // Leaderboards are public.
       allow read: if true;
 
-      // Signed-in (anonymous) players may add well-formed entries as themselves.
+      // The player's first score on the puzzle, under the name they own.
       allow create: if isValidPuzzleId(puzzleId)
-                    && isValidNewEntry(request.resource.data);
+                    && isOwner(uid)
+                    && isValidEntry(uid, request.resource.data)
+                    && !('hw' in request.resource.data);
 
-      // Players can't change entries; the devkit adds its timing to them as hw.
+      // A later score: no category gets worse (the client keeps the best of
+      // each), and the name is the player's (it changes when they rename).
+      allow update: if isOwner(uid)
+                    && isValidEntry(uid, request.resource.data)
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'hw'])
+                    && request.resource.data.codeSize <= resource.data.codeSize
+                    && request.resource.data.vgprsUsed <= resource.data.vgprsUsed
+                    && request.resource.data.cycles <= resource.data.cycles;
+
+      // Only the devkit adds its timing, as hw.
       allow update: if isRunner()
                     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hw'])
                     && isValidHardwareResult(request.resource.data.hw);
+
       // Players may delete only their own.
+      allow delete: if isOwner(uid);
+    }
+
+    // A player's name. The name is theirs (names/{nameKey}) in the same batch
+    // that sets it; changing it gives up the old one in that batch too.
+    match /players/{uid} {
+      allow read: if true;
+      allow create: if isOwner(uid) && isValidPlayer(uid, request.resource.data);
+      allow update: if isOwner(uid)
+                    && isValidPlayer(uid, request.resource.data)
+                    && (request.resource.data.nameKey == resource.data.nameKey
+                        || !existsAfter(/databases/$(database)/documents/names/$(resource.data.nameKey)));
+    }
+
+    // Who owns each name, under the name in lower case: names are unique
+    // whatever their case. A player claims one only with their players
+    // document naming it, and gives one up only for another.
+    match /names/{key} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.resource.data.keys().hasOnly(['uid'])
+                    && request.resource.data.uid == request.auth.uid
+                    && getAfter(/databases/$(database)/documents/players/$(request.auth.uid)).data.nameKey == key;
       allow delete: if request.auth != null
-                    && resource.data.uid == request.auth.uid;
+                    && resource.data.uid == request.auth.uid
+                    && getAfter(/databases/$(database)/documents/players/$(request.auth.uid)).data.nameKey != key;
     }
 
     // The source of a solution for the devkit to time: private to its author
-    // and the devkit. Submitted with a score, it's under the id of its
-    // leaderboard entry. A run of the player's own, which goes on no board,
-    // is trial-{uid}: one a player, replaced by the next.
+    // and the devkit. Submitted with a score, it carries the stats it scored,
+    // for the player's entry on its puzzle. A run of the player's own, which
+    // goes on no board, is trial-{uid}: one a player, replaced by the next.
     match /submissions/{id} {
       allow read: if request.auth != null
                   && (resource.data.uid == request.auth.uid || isRunner());
@@ -45,7 +86,7 @@ service cloud.firestore {
                          .hasOnly(['status', 'detail', 'cycles', 'claimMismatches', 'harness', 'updatedAt'])
                     && request.resource.data.status in ['running', 'measured', 'failed', 'unstable', 'rejected', 'stale', 'hung'];
       // Deleting one that isn't there is allowed (and does nothing), so that
-      // deleting entries can always delete their submissions too.
+      // deleting scores can always delete their submissions too.
       allow delete: if request.auth != null
                     && (resource == null || resource.data.uid == request.auth.uid);
     }
@@ -62,43 +103,70 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == 'XuEZIuVLMGYbBfPNWOSHRAZbOIE2';
     }
 
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
     // Puzzle ids are slugs such as 'signal-boost' (see src/puzzle/puzzles.ts).
     function isValidPuzzleId(id) {
       return id.matches('[A-Za-z0-9_-]{1,64}');
     }
 
-    // Mirrors submitOnlineScore(). The name limit matches the UI's
-    // <input maxlength="20"> (trimmed, non-empty) in src/ui/leaderboard.ts;
-    // codeSize is in bytes (whole 32-bit dwords); timestamp is Date.now() in
-    // milliseconds, allowing up to a day of client clock skew.
-    function isValidNewEntry(data) {
+    // A player's name: what the UI's <input maxlength="20"> takes, trimmed and
+    // not empty, and usable in lower case as a document id (no '/', not '.',
+    // '..' or __reserved__).
+    function isValidName(name) {
+      return name is string
+        && name.size() <= 20
+        && name.size() > 0
+        && name == name.trim()
+        && !name.matches('.*/.*')
+        && !name.matches('[.]{1,2}')
+        && !name.lower().matches('__.*__');
+    }
+
+    function isValidPlayer(uid, data) {
+      return data.keys().hasAll(['name', 'nameKey'])
+        && data.keys().hasOnly(['name', 'nameKey'])
+        && isValidName(data.name)
+        && data.nameKey == data.name.lower()
+        && getAfter(/databases/$(database)/documents/names/$(data.nameKey)).data.uid == uid;
+    }
+
+    // What submitOnlineScore() writes. codeSize is in bytes (whole 32-bit
+    // dwords); timestamp is Date.now() in milliseconds, allowing up to a day of
+    // client clock skew. The name is the player's, after the batch the entry
+    // comes in (which may claim it).
+    function isValidEntry(uid, data) {
       let fields = ['uid', 'name', 'codeSize', 'vgprsUsed', 'cycles', 'timestamp'];
-      return request.auth != null
-        && data.keys().hasAll(fields)
-        && data.keys().hasOnly(fields)
-        && data.uid == request.auth.uid
-        && data.name is string
-        && data.name.size() <= 20
-        && data.name.trim().size() > 0
-        && data.codeSize is int
-        && data.codeSize >= 4
-        && data.codeSize <= 65536
-        && data.codeSize % 4 == 0
-        && data.vgprsUsed is int
-        && data.vgprsUsed >= 1
-        && data.vgprsUsed <= 256
-        && data.cycles is int
-        && data.cycles >= 1
-        && data.cycles <= 10000000
+      return data.keys().hasAll(fields)
+        && data.keys().hasOnly(fields.concat(['hw']))
+        && data.uid == uid
+        && data.name == getAfter(/databases/$(database)/documents/players/$(uid)).data.name
+        && isValidStats(data)
         && data.timestamp is int
         && data.timestamp > 0
         && data.timestamp <= request.time.toMillis() + 24 * 60 * 60 * 1000;
     }
 
+    // A solution's stats, as the game measured them.
+    function isValidStats(s) {
+      return s.codeSize is int
+        && s.codeSize >= 4
+        && s.codeSize <= 65536
+        && s.codeSize % 4 == 0
+        && s.vgprsUsed is int
+        && s.vgprsUsed >= 1
+        && s.vgprsUsed <= 256
+        && s.cycles is int
+        && s.cycles >= 1
+        && s.cycles <= 10000000;
+    }
+
     // A solution's source as src/firebase/online-leaderboard.ts uploads it,
-    // waiting for the devkit.
-    function isValidSource(data) {
-      let fields = ['uid', 'puzzleId', 'source', 'appVersion', 'puzzleHash', 'createdAt', 'status'];
+    // waiting for the devkit, with any `extra` fields.
+    function isValidSource(data, extra) {
+      let fields = ['uid', 'puzzleId', 'source', 'appVersion', 'puzzleHash', 'createdAt', 'status'].concat(extra);
       return request.auth != null
         && data.keys().hasAll(fields)
         && data.keys().hasOnly(fields)
@@ -116,20 +184,21 @@ service cloud.firestore {
         && data.status == 'pending';
     }
 
-    // The source that submitOnlineScore() uploads after the entry: the
-    // author's own entry's.
-    function isValidSubmission(entryId, data) {
-      return isValidSource(data) && isOwnEntry(data.puzzleId, entryId);
+    // A scored solution (submitOnlineScore()): its source and the stats it
+    // scored, for the player's own entry on its puzzle, which must exist after
+    // the batch it comes in. Any id but a trial's.
+    function isValidSubmission(id, data) {
+      return isValidSource(data, ['stats'])
+        && !id.matches('trial-.*')
+        && data.stats is map
+        && data.stats.keys().hasOnly(['codeSize', 'vgprsUsed', 'cycles'])
+        && isValidStats(data.stats)
+        && existsAfter(/databases/$(database)/documents/leaderboards/$(data.puzzleId)/entries/$(request.auth.uid));
     }
 
     // The player's own run (runOnDevkit()), which goes on no board.
     function isValidTrial(id, data) {
-      return isValidSource(data) && id == 'trial-' + request.auth.uid;
-    }
-
-    function isOwnEntry(puzzleId, entryId) {
-      let path = /databases/$(database)/documents/leaderboards/$(puzzleId)/entries/$(entryId);
-      return exists(path) && get(path).data.uid == request.auth.uid;
+      return isValidSource(data, []) && id == 'trial-' + request.auth.uid;
     }
 
     // What the devkit adds to an entry once it has timed the solution (the

@@ -2,8 +2,11 @@
 // Syncs leaderboard entries to Firestore for global visibility.
 // Falls back gracefully to local-only when Firebase is not configured.
 
-import { initializeApp, FirebaseApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth, signInAnonymously, Auth } from 'firebase/auth';
+import { initializeApp, FirebaseApp, FirebaseError } from 'firebase/app';
+import {
+  connectAuthEmulator, getAuth, signInAnonymously, Auth, GoogleAuthProvider, linkWithPopup, signInWithCredential,
+  signInWithPopup, signOut,
+} from 'firebase/auth';
 import {
   connectFirestoreEmulator,
   getFirestore,
@@ -11,6 +14,7 @@ import {
   doc,
   setDoc,
   getDoc,
+  updateDoc,
   onSnapshot,
   serverTimestamp,
   query,
@@ -19,7 +23,9 @@ import {
   where,
   getDocs,
   deleteDoc,
+  writeBatch,
   Firestore,
+  WriteBatch,
 } from 'firebase/firestore';
 import { firebaseConfig, FIREBASE_ENABLED, FIREBASE_EMULATORS } from './config';
 import {
@@ -30,7 +36,10 @@ import {
   HardwareEntry,
   RunnerStatus,
   SubmissionState,
+  mergeBests,
+  nameKeyOf,
 } from '../puzzle/leaderboard';
+import { ALL_PUZZLES } from '../puzzle/puzzles';
 import { VERSION } from '../version';
 
 let app: FirebaseApp | null = null;
@@ -59,7 +68,9 @@ async function init(): Promise<boolean> {
       connectAuthEmulator(auth, `http://${emulators.host}:${emulators.authPort}`, { disableWarnings: true });
       connectFirestoreEmulator(db, emulators.host, emulators.firestorePort);
     }
-    await signInAnonymously(auth);
+    // A player who signed in with Google stays signed in; anyone else plays as this browser's anonymous player
+    await auth.authStateReady();
+    if (!auth.currentUser) await signInAnonymously(auth);
     return true;
   } catch (e) {
     console.warn('Firebase init failed, using local leaderboards only:', e);
@@ -67,7 +78,7 @@ async function init(): Promise<boolean> {
   }
 }
 
-/** Get the current anonymous user's UID. */
+/** The current player's uid. */
 function getUid(): string | null {
   return auth?.currentUser?.uid ?? null;
 }
@@ -84,39 +95,182 @@ export interface SubmittedSolution {
   puzzleHash: string;
 }
 
+// ── The player: their name, and their Google account ──
+
+/** The player in this browser: the name they own (null until they take one), and the Google account they use, if any. */
+export interface Player {
+  uid: string;
+  name: string | null;
+  /** The Google account's email (or name), when signed in with Google: then the player is the same on every device. */
+  google: string | null;
+}
+
+interface PlayerDoc {
+  name: string;
+  nameKey: string;
+}
+
+export async function getPlayer(): Promise<Player | null> {
+  const ok = await ensureInit();
+  const user = auth?.currentUser;
+  if (!ok || !db || !user) return null;
+  let name: string | null = null;
+  try {
+    name = ((await getDoc(doc(db, 'players', user.uid))).data() as PlayerDoc | undefined)?.name ?? null;
+  } catch {
+    // unreachable: no name for now
+  }
+  const google = user.providerData.find(p => p.providerId === 'google.com');
+  return { uid: user.uid, name, google: google ? google.email ?? google.displayName ?? 'Google' : null };
+}
+
 /**
- * Submit a score to the online leaderboard, storing the UID with the entry for ownership. With a solution, its
- * source goes up too, under the entry's id, for the devkit; a failure there doesn't lose the score.
- * Returns the entry's id, or null if it wasn't submitted.
+ * Add the writes that give the player `name` to a batch: their players doc, and names/{key} if it isn't theirs yet,
+ * giving up their old name. Whether the name is anyone else's must have been checked: then the batch fails.
+ */
+function nameWrites(batch: WriteBatch, uid: string, name: string, player: PlayerDoc | undefined, ownedByMe: boolean): void {
+  if (player?.name === name) return;
+  const key = nameKeyOf(name);
+  batch.set(doc(db!, 'players', uid), { name, nameKey: key });
+  if (!ownedByMe) batch.set(doc(db!, 'names', key), { uid });
+  if (player && player.nameKey !== key) batch.delete(doc(db!, 'names', player.nameKey));
+}
+
+/** The player's entries on other puzzles take their new name (the rules want an entry's name to be the player's). */
+async function renameEntries(uid: string, name: string): Promise<void> {
+  await Promise.all(ALL_PUZZLES.map(async p => {
+    const ref = doc(db!, 'leaderboards', p.id, 'entries', uid);
+    const snap = await getDoc(ref);
+    if (snap.exists() && snap.data().name !== name) await updateDoc(ref, { name });
+  })).catch(e => console.warn('Failed to rename entries:', e));
+}
+
+/** Whose a name is, for the player in this browser. */
+async function nameOwner(name: string, uid: string): Promise<'mine' | 'free' | 'taken'> {
+  const owner = (await getDoc(doc(db!, 'names', nameKeyOf(name)))).data()?.uid as string | undefined;
+  return owner === undefined ? 'free' : owner === uid ? 'mine' : 'taken';
+}
+
+export type NameResult = 'ok' | 'name-taken' | 'failed';
+
+/** Change the player's name (or take their first): the old one is given up, and their entries show the new one. */
+export async function renamePlayer(newName: string): Promise<NameResult> {
+  const ok = await ensureInit();
+  const uid = getUid();
+  const name = newName.trim();
+  if (!ok || !db || !uid || !name) return 'failed';
+  try {
+    const owner = await nameOwner(name, uid);
+    if (owner === 'taken') return 'name-taken';
+    const player = (await getDoc(doc(db, 'players', uid))).data() as PlayerDoc | undefined;
+    const batch = writeBatch(db);
+    nameWrites(batch, uid, name, player, owner === 'mine');
+    await batch.commit();
+    await renameEntries(uid, name);
+    return 'ok';
+  } catch (e) {
+    console.warn('Failed to rename:', e);
+    return (await nameOwner(name, uid).catch(() => 'free')) === 'taken' ? 'name-taken' : 'failed';
+  }
+}
+
+export type SignInResult = 'linked' | 'switched' | 'cancelled' | 'blocked' | 'failed';
+
+/**
+ * Sign in with Google. This browser's anonymous player becomes the account's (keeping their name and scores), so that
+ * signing in elsewhere is the same player: 'linked'. If the account already has a player, this browser plays as them
+ * from now on, and its anonymous player is left as it was: 'switched'.
+ */
+export async function signInWithGoogle(): Promise<SignInResult> {
+  // No waiting before the popup, which browsers allow only straight from a click: a player has been shown, so this
+  // browser has signed in already
+  const user = auth?.currentUser;
+  if (!auth || !user) return 'failed';
+  const provider = new GoogleAuthProvider();
+  try {
+    if (!user.isAnonymous) {
+      await signInWithPopup(auth, provider);
+      return 'switched';
+    }
+    await linkWithPopup(user, provider);
+    return 'linked';
+  } catch (e) {
+    const code = (e as FirebaseError).code;
+    if (code === 'auth/credential-already-in-use') {
+      const credential = GoogleAuthProvider.credentialFromError(e as FirebaseError);
+      if (credential) {
+        await signInWithCredential(auth, credential);
+        return 'switched';
+      }
+    }
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return 'cancelled';
+    if (code === 'auth/popup-blocked') return 'blocked';
+    console.warn('Google sign-in failed:', e);
+    return 'failed';
+  }
+}
+
+/** What to tell the player when signing in with Google didn't work (null when it did, or they stopped it). */
+export function signInProblem(result: SignInResult): string | null {
+  return result === 'blocked' ? 'Your browser blocked the Google sign-in window: allow pop-ups for this site, then try again.'
+    : result === 'failed' ? 'Signing in with Google failed.' : null;
+}
+
+/** Sign out of Google: this browser then plays as a new anonymous player, with no name yet. */
+export async function signOutPlayer(): Promise<void> {
+  if (!(await ensureInit()) || !auth) return;
+  await signOut(auth);
+  await signInAnonymously(auth);
+}
+
+// ── Scores ──
+
+export type SubmitOutcome =
+  | { ok: true; improved: LeaderboardCategory[]; submissionId: string | null; myUid: string }
+  | { ok: false; reason: 'name-taken' | 'failed' };
+
+/**
+ * Submit a score under `entry.name`, which the player takes (or changes to) if it's nobody else's. Their entry on the
+ * puzzle (under their uid) keeps their best in each category; `improved` says which this score bettered. With a
+ * solution, its source goes up too, as a new submission with the stats it scored, for the devkit to time; a failure
+ * there doesn't lose the score.
  */
 export async function submitOnlineScore(
   puzzleId: string,
   entry: LeaderboardEntry,
   solution?: SubmittedSolution,
-): Promise<string | null> {
+): Promise<SubmitOutcome> {
   const ok = await ensureInit();
-  if (!ok || !db) return null;
-
   const uid = getUid();
-  if (!uid) return null;
+  const name = entry.name.trim();
+  if (!ok || !db || !uid || !name) return { ok: false, reason: 'failed' };
 
-  const entryRef = doc(collection(db, 'leaderboards', puzzleId, 'entries'));
+  const entryRef = doc(db, 'leaderboards', puzzleId, 'entries', uid);
+  let improved: LeaderboardCategory[];
+  let renamed: boolean;
   try {
-    await setDoc(entryRef, {
-      uid,
-      name: entry.name,
-      codeSize: entry.codeSize,
-      vgprsUsed: entry.vgprsUsed,
-      cycles: entry.cycles,
-      timestamp: entry.timestamp,
-    });
+    const [owner, playerSnap, entrySnap] = await Promise.all([nameOwner(name, uid), getDoc(doc(db, 'players', uid)), getDoc(entryRef)]);
+    if (owner === 'taken') return { ok: false, reason: 'name-taken' };
+    const player = playerSnap.data() as PlayerDoc | undefined;
+    const merged = mergeBests(entrySnap.data() as LeaderboardEntry | undefined, entry);
+    improved = merged.improved;
+    renamed = player !== undefined && player.name !== name;
+    const batch = writeBatch(db);
+    nameWrites(batch, uid, name, player, owner === 'mine');
+    // Merged, so that the devkit's hw stays
+    batch.set(entryRef, { uid, name, ...merged.bests, timestamp: entry.timestamp }, { merge: true });
+    await batch.commit();
   } catch (e) {
     console.warn('Failed to submit online score:', e);
-    return null;
+    // The name may have gone to someone else meanwhile
+    return { ok: false, reason: (await nameOwner(name, uid).catch(() => 'free')) === 'taken' ? 'name-taken' : 'failed' };
   }
+
+  let submissionId: string | null = null;
   if (solution) {
     try {
-      await setDoc(doc(db, 'submissions', entryRef.id), {
+      const ref = doc(collection(db, 'submissions'));
+      await setDoc(ref, {
         uid,
         puzzleId,
         source: solution.source,
@@ -124,25 +278,28 @@ export async function submitOnlineScore(
         puzzleHash: solution.puzzleHash,
         createdAt: serverTimestamp(),
         status: 'pending',
+        stats: { codeSize: entry.codeSize, vgprsUsed: entry.vgprsUsed, cycles: entry.cycles },
       });
+      submissionId = ref.id;
     } catch (e) {
       console.warn('Failed to upload the solution for the devkit:', e);
     }
   }
-  return entryRef.id;
+  if (renamed) await renameEntries(uid, name);
+  return { ok: true, improved, submissionId, myUid: uid };
 }
 
 /**
- * Fetch the top entries for a puzzle from Firestore, sorted by category.
- * Each entry includes an `isMine` flag based on the current user's UID.
+ * Fetch the top entries for a puzzle from Firestore, sorted by category: each player once, at their best.
+ * Each entry includes an `isMine` flag based on the current user's UID. Null if the board can't be read.
  */
 export async function fetchOnlineLeaderboard(
   puzzleId: string,
   category: LeaderboardCategory,
   maxEntries = 20,
-): Promise<LeaderboardEntryWithOwner[]> {
+): Promise<LeaderboardEntryWithOwner[] | null> {
   const ok = await ensureInit();
-  if (!ok || !db) return [];
+  if (!ok || !db) return null;
 
   const currentUid = getUid();
 
@@ -166,8 +323,15 @@ export async function fetchOnlineLeaderboard(
     return entries;
   } catch (e) {
     console.warn('Failed to fetch online leaderboard:', e);
-    return [];
+    return null;
   }
+}
+
+/** A puzzle's boards in each of `categories` (in that order), or null if any of them can't be read. */
+export async function fetchOnlineBoards(puzzleId: string, categories: readonly LeaderboardCategory[], maxEntries = 50):
+  Promise<LeaderboardEntryWithOwner[][] | null> {
+  const boards = await Promise.all(categories.map(c => fetchOnlineLeaderboard(puzzleId, c, maxEntries)));
+  return boards.every(b => b !== null) ? boards as LeaderboardEntryWithOwner[][] : null;
 }
 
 /**
@@ -216,10 +380,10 @@ export async function fetchHardwareBoard(puzzleId: string): Promise<HardwareBoar
   return status ? { status, entries: await fetchHardwareLeaderboard(puzzleId) } : null;
 }
 
-/** Follow the submission of one of my entries until the returned function is called; null when it can't be read. */
-export function watchSubmission(entryId: string, onChange: (state: SubmissionState | null) => void): () => void {
+/** Follow one of my submissions until the returned function is called; null when it can't be read. */
+export function watchSubmission(submissionId: string, onChange: (state: SubmissionState | null) => void): () => void {
   if (!db) return () => undefined;
-  return onSnapshot(doc(db, 'submissions', entryId), snap => {
+  return onSnapshot(doc(db, 'submissions', submissionId), snap => {
     if (!snap.exists() && snap.metadata.fromCache) return; // wait for the server's answer
     const d = snap.data();
     onChange(d ? { status: d.status, cycles: d.cycles, detail: d.detail } : null);
@@ -259,8 +423,8 @@ export function isOnlineEnabled(): boolean {
 }
 
 /**
- * Delete all of the current user's scores for a specific puzzle.
- * Only deletes entries matching the current anonymous UID.
+ * Delete the player's score on a puzzle: their entry, and the solutions they sent with their scores there (not their
+ * trial run, or their name). How many entries went (0 or 1).
  */
 export async function deleteMyOnlineScores(puzzleId: string): Promise<number> {
   const ok = await ensureInit();
@@ -270,20 +434,16 @@ export async function deleteMyOnlineScores(puzzleId: string): Promise<number> {
   if (!uid) return 0;
 
   try {
-    const entriesRef = collection(db, 'leaderboards', puzzleId, 'entries');
-    const q = query(entriesRef, where('uid', '==', uid));
-    const snapshot = await getDocs(q);
-
-    let deleted = 0;
-    const promises: Promise<void>[] = [];
-    snapshot.forEach((entryDoc) => {
-      promises.push(deleteDoc(entryDoc.ref));
-      // And the solution uploaded with it, if any
-      promises.push(deleteDoc(doc(entryDoc.ref.firestore, 'submissions', entryDoc.id)).catch(() => undefined));
-      deleted++;
-    });
-    await Promise.all(promises);
-    return deleted;
+    const entryRef = doc(db, 'leaderboards', puzzleId, 'entries', uid);
+    const [entry, sent] = await Promise.all([
+      getDoc(entryRef),
+      getDocs(query(collection(db, 'submissions'), where('uid', '==', uid), where('puzzleId', '==', puzzleId))),
+    ]);
+    await Promise.all([
+      deleteDoc(entryRef),
+      ...sent.docs.filter(d => !d.id.startsWith('trial-')).map(d => deleteDoc(d.ref)),
+    ]);
+    return entry.exists() ? 1 : 0;
   } catch (e) {
     console.warn('Failed to delete online scores:', e);
     return 0;

@@ -39,9 +39,9 @@ While the devkit is online (it keeps `runner/status` up to date), completing a
 puzzle sends the solution's source to it, privately, as the player's own run
 (`submissions/trial-{uid}`, which goes on no board): the Puzzle Complete screen
 shows its Hardware cycles beside the simulated ones, Pending until the devkit
-has timed it. Submitting a score uploads the source again, under
-`submissions/{entryId}`, and the leaderboards show a Hardware cycles board of
-the entries the devkit has timed. While it's offline (no heartbeat for 10
+has timed it. Submitting a score uploads the source again, as a submission
+with the stats it scored, and the leaderboards show a Hardware cycles board of
+each player's best time on the devkit. While it's offline (no heartbeat for 10
 minutes), the board says when it was last seen, solutions submitted with scores
 wait for it (it times them, oldest first, when it's back), and the Puzzle
 Complete screen says Offline rather than sending a run. Before the devkit's
@@ -52,6 +52,24 @@ with an Email/Password account of its own, whose UID is in `isRunner()` in
 The simulated cycles (the Speed board) are one per instruction run, not counting
 the `s_endpgm` that ends the program: the devkit doesn't time it either. (Before
 1 November 2026 it was counted; the boards were cleared then.)
+
+## Players and their names
+
+A player has one entry on each puzzle's boards: their best code size, VGPRs and
+cycles (each may come from a different solution), and their best time on the
+devkit. Submitting a worse score leaves it as it was. A name belongs to the
+first player to submit a score with it, whatever its case: nobody else can
+then submit under it. A player can rename themselves (in Settings, or by
+submitting under another name), which frees the old name and shows the new one
+on all their entries.
+
+Players sign in anonymously, so a player is one browser. Signing in with
+Google (Settings, or the Puzzle Complete screen) makes them that account's
+player on any device, keeping their name and scores. If the account has a
+player already, the browser switches to it, and the browser's own anonymous
+player is left as it was. Google sign-in needs the Google provider enabled in
+the Firebase project, and the site's domain among Authentication's authorised
+domains.
 
 ## Online leaderboard rules
 
@@ -66,12 +84,15 @@ with the [Firebase CLI](https://firebase.google.com/docs/cli):
 firebase deploy --only firestore:rules,firestore:indexes --project human-compiler
 ```
 
-The rules make leaderboards publicly readable, let signed-in (anonymous)
-players create entries only under their own `uid` with bounded values (name
-length, code size, VGPRs, cycles, timestamp), forbid edits, and let players
-delete only their own entries. A submitted solution can be read only by its
-author and the devkit, and only the devkit can record what it found: its
-status on the submission, and its timing (`hw`) on the entry. The scores on
+The rules make leaderboards publicly readable. A signed-in player's entry on a
+puzzle is under their `uid`, with bounded values (code size, VGPRs, cycles,
+timestamp) that may only get better, and the name the player owns. Who owns a
+name is in `names/{name in lower case}`, and a player's name in
+`players/{uid}`: the two change together in one batch, so a name can't be taken
+from its owner, and changing it frees the old one. Players can delete only
+their own entries. A submitted solution can be read only by its author and the
+devkit, and only the devkit can record what it found: its status on the
+submission, and the player's best time (`hw`) on their entry. The scores on
 the Code Size, VGPRs and Speed boards are still reported by the client, though:
 the rules bound the values and enforce ownership, but don't check them. Only
 the Hardware cycles board comes from solutions checked again away from the

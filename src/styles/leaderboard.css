@@ -124,6 +124,40 @@
   75% { transform: translateX(4px); }
 }
 
+/* What the name will do (take it, or rename the player), or why it was refused */
+.leaderboard-name-note {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: -14px 0 18px;
+}
+
+.leaderboard-name-note--error {
+  color: var(--accent-red);
+}
+
+/* Signed in with Google, or a button to */
+.leaderboard-player-line {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: -14px 0 24px;
+}
+
+.leaderboard-player-line:empty {
+  display: none;
+}
+
+.leaderboard-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-cyan);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .leaderboard-submitted {
   text-align: center;
   color: var(--accent-green);

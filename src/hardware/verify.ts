@@ -68,7 +68,7 @@ function problemSummary(problems: string[]): string {
 
 /**
  * Check a submitted solution and build its devkit job. It must assemble and pass the puzzle in the emulator, as it
- * did for the player, and use nothing that behaves differently on hardware. `claim` is the stats the entry claims.
+ * did for the player, and use nothing that behaves differently on hardware. `claim` is the stats the submission claims.
  */
 export function verify(source: string, puzzleId: string, claim?: Partial<SolutionStats>, runs = DEFAULT_RUNS): VerifyResult {
   const puzzle = getPuzzleById(puzzleId);

@@ -1,7 +1,7 @@
 // ── Settings Overlay ──
 
-import { clearLeaderboard } from '../puzzle/leaderboard';
-import { deleteAllMyOnlineScores, isOnlineEnabled } from '../firebase/online-leaderboard';
+import { clearLeaderboard, PLAYER_NAME_KEY } from '../puzzle/leaderboard';
+import { deleteAllMyOnlineScores, getPlayer, isOnlineEnabled, renamePlayer, signInProblem, signInWithGoogle, signOutPlayer } from '../firebase/online-leaderboard';
 import { ALL_PUZZLES } from '../puzzle/puzzles';
 import { MusicPlayer } from './music';
 
@@ -41,6 +41,8 @@ export class SettingsOverlay {
   private overlay: HTMLElement;
   private content: HTMLElement;
   private music: MusicPlayer;
+  /** Bumped for each showing of the player, so that one fetched earlier can't replace it. */
+  private playerGeneration = 0;
 
   constructor(container: HTMLElement, music: MusicPlayer) {
     this.music = music;
@@ -116,6 +118,15 @@ export class SettingsOverlay {
     }
 
     html += `</div>`;
+
+    // The player: the name that's theirs alone on the online boards, and their Google account
+    const showPlayer = isOnlineEnabled() && current !== 'disabled';
+    if (showPlayer) {
+      html += `<div style="margin:20px 0">`;
+      html += `<div style="color:var(--text-primary);font-weight:600;margin-bottom:12px">Your Player</div>`;
+      html += `<div id="settings-player" style="font-size:12px;color:var(--text-muted);line-height:1.6">Loading…</div>`;
+      html += `</div>`;
+    }
 
     // Credits (the music's Creative Commons licence requires this attribution), each with a switch
     // that puts the track in the playlist or takes it out
@@ -201,6 +212,8 @@ export class SettingsOverlay {
     const closeBtn = this.content.querySelector('#settings-close-btn');
     closeBtn?.addEventListener('click', () => this.hide());
 
+    if (showPlayer) void this.showPlayer();
+
     // Delete all leaderboard scores
     const deleteScoresBtn = this.content.querySelector('#settings-delete-scores-btn') as HTMLButtonElement;
     deleteScoresBtn?.addEventListener('click', async () => {
@@ -250,4 +263,95 @@ export class SettingsOverlay {
       }
     });
   }
+
+  /** The Your Player section: the player's name (which they can change), and signing in with Google. */
+  private async showPlayer(note?: { text: string; error?: boolean }): Promise<void> {
+    const generation = ++this.playerGeneration;
+    const player = await getPlayer();
+    const section = this.content.querySelector<HTMLElement>('#settings-player');
+    if (generation !== this.playerGeneration || !section) return;
+    if (!player) {
+      section.textContent = "The online leaderboards can't be reached right now.";
+      return;
+    }
+
+    const strong = (s: string) => `<strong style="color:var(--text-primary)">${esc(s)}</strong>`;
+    let html = player.name
+      ? `<div>You're ${strong(player.name)} on the online boards: nobody else can submit scores with that name.</div>`
+      : '<div>No name yet: the name you first submit a score with becomes yours, and nobody else can use it.</div>';
+    html += '<div style="display:flex;gap:8px;margin:8px 0 4px">';
+    html += `<input type="text" class="leaderboard-name-input" id="settings-name-input" maxlength="20" autocomplete="off" placeholder="${player.name ? 'New name' : 'Your name'}">`;
+    html += `<button class="controls-bar__btn" id="settings-rename-btn">${player.name ? 'Rename' : 'Take Name'}</button>`;
+    html += '</div>';
+    if (player.name) html += '<div>Renaming frees your old name, and your scores show the new one.</div>';
+    html += `<div id="settings-player-note" style="color:${note?.error ? 'var(--accent-red)' : 'var(--accent-green)'}"${note ? '' : ' hidden'}>${esc(note?.text ?? '')}</div>`;
+    if (player.google) {
+      html += `<div style="margin-top:10px">Signed in with Google (${esc(player.google)}): you're this player wherever you sign in.</div>`;
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">';
+      html += '<button class="controls-bar__btn" id="settings-signout-btn">Sign Out</button>';
+      html += '<span>This browser then plays as a new player, with no name.</span></div>';
+    } else {
+      html += '<div style="margin-top:10px">Sign in with Google to be this player on any device, and to keep your name if this browser\'s data is cleared.</div>';
+      html += '<div style="margin-top:6px"><button class="controls-bar__btn" id="settings-google-btn">Sign in with Google</button></div>';
+    }
+    section.innerHTML = html;
+
+    const nameInput = section.querySelector<HTMLInputElement>('#settings-name-input')!;
+    const renameBtn = section.querySelector<HTMLButtonElement>('#settings-rename-btn')!;
+    const noteEl = section.querySelector<HTMLElement>('#settings-player-note')!;
+    const say = (text: string, error: boolean) => {
+      noteEl.textContent = text;
+      noteEl.style.color = error ? 'var(--accent-red)' : 'var(--accent-green)';
+      noteEl.hidden = !text;
+    };
+    nameInput.addEventListener('input', () => {
+      nameInput.classList.remove('leaderboard-name-input--error');
+      say('', false);
+    });
+    nameInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') renameBtn.click();
+    });
+    renameBtn.addEventListener('click', async () => {
+      const name = nameInput.value.trim();
+      if (!name || name === player.name) {
+        nameInput.classList.add('leaderboard-name-input--error');
+        return;
+      }
+      renameBtn.disabled = true;
+      const result = await renamePlayer(name);
+      if (generation !== this.playerGeneration) return;
+      if (result === 'ok') {
+        localStorage.setItem(PLAYER_NAME_KEY, name);
+        void this.showPlayer({ text: player.name ? `Renamed to ${name} ✓` : `${name} is yours ✓` });
+        return;
+      }
+      renameBtn.disabled = false;
+      nameInput.classList.toggle('leaderboard-name-input--error', result === 'name-taken');
+      say(result === 'name-taken' ? `${name} is another player's name: choose another.` : "Your name couldn't be changed. Try again?", true);
+    });
+
+    section.querySelector<HTMLButtonElement>('#settings-google-btn')?.addEventListener('click', async e => {
+      (e.currentTarget as HTMLButtonElement).disabled = true;
+      const result = await signInWithGoogle();
+      if (generation !== this.playerGeneration) return;
+      const problem = signInProblem(result);
+      void this.showPlayer(
+        result === 'linked' ? { text: 'Signed in ✓ Your name and scores go with your Google account now.' }
+          : result === 'switched' ? { text: "Signed in ✓ This browser plays as your Google account's player now." }
+          : problem ? { text: problem, error: true }
+          : undefined);
+    });
+    section.querySelector<HTMLButtonElement>('#settings-signout-btn')?.addEventListener('click', async e => {
+      (e.currentTarget as HTMLButtonElement).disabled = true;
+      await signOutPlayer();
+      if (generation !== this.playerGeneration) return;
+      void this.showPlayer({ text: 'Signed out: this browser plays as a new player now.' });
+    });
+  }
+}
+
+function esc(s: string): string {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
 }

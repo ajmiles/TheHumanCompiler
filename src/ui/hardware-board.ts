@@ -76,7 +76,10 @@ export function devkitRunStat(run: DevkitRun, now = Date.now()): { value: string
   }
 }
 
-/** A row of the board: the first entry with its name and time, standing for any later ones too, as on the other boards. */
+/**
+ * A row of the board: an entry with its name and time. A player has one entry, under a name nobody else has, so
+ * entries sharing a name and time come only from before that: the first stands for the rest.
+ */
 interface Row extends HardwareEntry {
   highlight: boolean;
 }
@@ -98,7 +101,7 @@ function rowsOf(entries: HardwareEntry[], highlightId: string | undefined): Row[
 
 /**
  * The Hardware cycles table, across the width of the other boards, from entries in board order: every row, like the
- * other boards. `highlightId` marks the entry just submitted.
+ * other boards. `highlightId` marks the entry of the player who has just submitted.
  */
 export function hardwareTableHtml(entries: HardwareEntry[], status: RunnerStatus, highlightId?: string, now = Date.now()): string {
   const rows = rowsOf(entries, highlightId);

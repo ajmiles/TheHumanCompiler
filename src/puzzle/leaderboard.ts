@@ -80,10 +80,59 @@ export function getRankedEntries(
     .slice(0, MAX_ENTRIES);
 }
 
+export const CATEGORY_KEYS: readonly LeaderboardCategory[] = ['codeSize', 'vgprsUsed', 'cycles'];
+
+/** A score's stats merged into a player's bests (each category on its own), and the categories it improves. */
+export function mergeBests(best: Pick<LeaderboardEntry, LeaderboardCategory> | undefined, score: Pick<LeaderboardEntry, LeaderboardCategory>):
+  { bests: Pick<LeaderboardEntry, LeaderboardCategory>; improved: LeaderboardCategory[] } {
+  const improved = CATEGORY_KEYS.filter(c => best === undefined || score[c] < best[c]);
+  const bests = Object.fromEntries(CATEGORY_KEYS.map(c => [c, Math.min(score[c], best?.[c] ?? Infinity)])) as Pick<LeaderboardEntry, LeaderboardCategory>;
+  return { bests, improved };
+}
+
+/** One row per name, its best in `category` (the first of equals), best first: a player counts once on a board. */
+export function bestPerName<T extends LeaderboardEntry>(entries: readonly T[], category: LeaderboardCategory): T[] {
+  const best = new Map<string, T>();
+  for (const e of entries) {
+    const held = best.get(e.name);
+    if (!held || e[category] < held[category]) best.set(e.name, e);
+  }
+  return [...best.values()].sort((a, b) => a[category] - b[category]);
+}
+
+/** A name's key in names/{key}: names are the same whatever their case. */
+export function nameKeyOf(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+const CATEGORY_NAMES: Record<LeaderboardCategory, string> = { codeSize: 'code size', vgprsUsed: 'VGPRs', cycles: 'speed' };
+
+/** What a submitted score did for the player's bests: mergeBests()'s `improved`. */
+export function improvedText(improved: readonly LeaderboardCategory[]): string {
+  if (improved.length === 0) return 'No new bests: your earlier scores stand.';
+  const names = improved.map(c => CATEGORY_NAMES[c]);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `A new best for ${list}.`;
+}
+
 // ── Online entries ──
 
 export interface LeaderboardEntryWithOwner extends LeaderboardEntry {
   isMine: boolean;
+}
+
+/** The name last submitted with in this browser. */
+export const PLAYER_NAME_KEY = 'humancompiler_player_name';
+
+/**
+ * A board's rows, best first: the online board once it's in (each player once, at their best). Before that, or when
+ * it can't be read, this browser's own scores, one row per name.
+ */
+export function boardRows(puzzleId: string, category: LeaderboardCategory, online: readonly LeaderboardEntryWithOwner[] | null):
+  LeaderboardEntryWithOwner[] {
+  if (online) return [...online];
+  const myName = localStorage.getItem(PLAYER_NAME_KEY) ?? '';
+  return bestPerName(getLeaderboard(puzzleId).map(e => ({ ...e, isMine: !!myName && e.name === myName })), category);
 }
 
 // ── Hardware cycles ──

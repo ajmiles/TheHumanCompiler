@@ -21,6 +21,7 @@ import { codeHash, hash64, puzzleHash } from '../src/hardware/hash';
 import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
 import { devkitOnline, devkitRunStat, hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
+import { addLeaderboardEntry, bestPerName, boardRows, improvedText, mergeBests, nameKeyOf, PLAYER_NAME_KEY } from '../src/puzzle/leaderboard';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -7813,6 +7814,51 @@ group('Hardware runs: the Hardware cycles board');
     'hardware table: one row per name and time (the first), highlighted when the entry just submitted repeats it');
   assert(hardwareTableHtml([{ id: 'x', name: 'Bob', cycles: 9, isMine: false }, { id: 'y', name: 'Bob', cycles: 9, isMine: true }], status(1), undefined, now)
     .includes('<tr class="leaderboard-row--mine"><td>🥇</td><td>Bob</td><td>9</td></tr>'), 'hardware table: a row is mine if any entry it stands for is');
+}
+
+group('Leaderboards: each player once, at their best');
+{
+  const stats = (codeSize: number, vgprsUsed: number, cycles: number) => ({ codeSize, vgprsUsed, cycles });
+  const first = mergeBests(undefined, stats(40, 3, 12));
+  assert(JSON.stringify(first.bests) === JSON.stringify(stats(40, 3, 12)) && first.improved.join() === 'codeSize,vgprsUsed,cycles',
+    'mergeBests: a first score is the best in every category');
+  const mixed = mergeBests(stats(40, 3, 12), stats(44, 2, 12));
+  assert(JSON.stringify(mixed.bests) === JSON.stringify(stats(40, 2, 12)) && mixed.improved.join() === 'vgprsUsed',
+    'mergeBests: each category keeps its own best, and equalling one is no improvement');
+  const worse = mergeBests(stats(40, 3, 12), stats(48, 4, 20));
+  assert(JSON.stringify(worse.bests) === JSON.stringify(stats(40, 3, 12)) && worse.improved.length === 0, 'mergeBests: a worse score changes nothing');
+
+  const entry = (name: string, codeSize: number, cycles: number, timestamp: number) => ({ name, codeSize, vgprsUsed: 3, cycles, timestamp });
+  const scores = [entry('Ann', 50, 9, 1), entry('Bob', 40, 8, 2), entry('Ann', 44, 7, 3), entry('Ann', 44, 6, 4), entry('ann', 60, 5, 5)];
+  const bySize = bestPerName(scores, 'codeSize');
+  assert(bySize.map(e => `${e.name}:${e.codeSize}@${e.timestamp}`).join() === 'Bob:40@2,Ann:44@3,ann:60@5',
+    'bestPerName: one row per name, at its best (the first of equals), best first');
+  assert(bestPerName(scores, 'cycles').map(e => `${e.name}:${e.cycles}`).join() === 'ann:5,Ann:6,Bob:8', 'bestPerName: each board on its own');
+
+  assert(nameKeyOf(' Adam ') === 'adam' && nameKeyOf('ADAM') === nameKeyOf('adam') && nameKeyOf('Ådam') !== nameKeyOf('adam'),
+    "nameKeyOf: names are the same whatever their case (or spaces at the ends)");
+  assert(improvedText([]) === 'No new bests: your earlier scores stand.' && improvedText(['cycles']) === 'A new best for speed.' &&
+    improvedText(['codeSize', 'cycles']) === 'A new best for code size and speed.' &&
+    improvedText(['codeSize', 'vgprsUsed', 'cycles']) === 'A new best for code size, VGPRs and speed.', 'improvedText: which bests a score set');
+
+  // The boards before the online ones are in, or when they can't be read: this browser's scores (in a stand-in localStorage)
+  const store = new Map<string, string>();
+  const stub = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) };
+  const held = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { value: stub, configurable: true, writable: true });
+  try {
+    for (const s of [...scores].reverse()) addLeaderboardEntry('p', s);
+    store.set(PLAYER_NAME_KEY, 'Ann');
+    const local = boardRows('p', 'codeSize', null);
+    assert(local.map(e => `${e.name}:${e.codeSize}:${e.isMine}`).join() === 'Bob:40:false,Ann:44:true,ann:60:false',
+      "boardRows: offline, this browser's scores, one row per name, with the name last used here marked mine");
+    const online = [{ ...entry('Cat', 30, 9, 9), isMine: false }];
+    assert(JSON.stringify(boardRows('p', 'codeSize', online)) === JSON.stringify(online) && boardRows('p', 'codeSize', []).length === 0,
+      "boardRows: once in, the online board alone (even an empty one), not this browser's scores too");
+  } finally {
+    if (held) Object.defineProperty(globalThis, 'localStorage', held);
+    else delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
 }
 
 // ════════════════════════════════════════════

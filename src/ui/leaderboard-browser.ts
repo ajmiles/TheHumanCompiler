@@ -1,8 +1,8 @@
 // ── Leaderboard Browser ──
 // Shows leaderboards for all completed puzzles in a single overlay.
 
-import { LeaderboardEntryWithOwner, LeaderboardCategory, HardwareBoard, getRankedEntries, clearLeaderboard } from '../puzzle/leaderboard';
-import { fetchOnlineLeaderboard, fetchHardwareBoard, isOnlineEnabled, deleteMyOnlineScores } from '../firebase/online-leaderboard';
+import { LeaderboardEntryWithOwner, LeaderboardCategory, HardwareBoard, boardRows, clearLeaderboard } from '../puzzle/leaderboard';
+import { fetchOnlineBoards, fetchHardwareBoard, isOnlineEnabled, deleteMyOnlineScores } from '../firebase/online-leaderboard';
 import { Puzzle } from '../puzzle/types';
 import { hardwareTableHtml } from './hardware-board';
 
@@ -97,13 +97,13 @@ export class LeaderboardBrowser {
     if (!detail) return;
 
     // Render local immediately
-    this.renderTables(detail, puzzleId, title, [], null);
+    this.renderTables(detail, puzzleId, title, null, null);
 
     // Fetch online and re-render
     if (isOnlineEnabled()) {
       const generation = ++this.generation;
       Promise.all([
-        Promise.all(CATEGORIES.map(cat => fetchOnlineLeaderboard(puzzleId, cat.key, 50))),
+        fetchOnlineBoards(puzzleId, CATEGORIES.map(cat => cat.key)),
         fetchHardwareBoard(puzzleId),
       ]).then(([results, hardware]) => {
         if (generation !== this.generation) return;
@@ -112,36 +112,16 @@ export class LeaderboardBrowser {
     }
   }
 
-  private renderTables(container: HTMLElement, puzzleId: string, title: string, onlineResults: LeaderboardEntryWithOwner[][],
+  /** `onlineResults` are the online boards, in CATEGORIES order: until they're in (or if they can't be read), null. */
+  private renderTables(container: HTMLElement, puzzleId: string, title: string, onlineResults: LeaderboardEntryWithOwner[][] | null,
                        hardware: HardwareBoard | null): void {
     let html = `<h3 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:14px">${this.esc(title)}</h3>`;
     html += `<div class="leaderboard-tables">`;
 
     for (let ci = 0; ci < CATEGORIES.length; ci++) {
       const cat = CATEGORIES[ci];
-      const localEntries = getRankedEntries(puzzleId, cat.key);
-      const onlineEntries: LeaderboardEntryWithOwner[] = onlineResults[ci] ?? [];
-
-      // Tag local entries with isMine based on saved player name
-      const myName = localStorage.getItem('humancompiler_player_name') ?? '';
-      const localTagged: LeaderboardEntryWithOwner[] = localEntries.map(e => ({
-        ...e,
-        isMine: !!myName && e.name === myName,
-      }));
-
-      // Merge and deduplicate
-      const merged = new Map<string, LeaderboardEntryWithOwner>();
-      for (const e of [...localTagged, ...onlineEntries]) {
-        const key = `${e.name}:${e[cat.key]}`;
-        const existing = merged.get(key);
-        if (!existing || e[cat.key] < existing[cat.key]) {
-          merged.set(key, e);
-        } else if (existing && e.isMine) {
-          existing.isMine = true;
-        }
-      }
-      const entries = [...merged.values()]
-        .sort((a, b) => a[cat.key] - b[cat.key]);
+      // Each player once, at their best
+      const entries = boardRows(puzzleId, cat.key, onlineResults?.[ci] ?? null);
 
       html += `<div class="leaderboard-table-section">`;
       html += `<div class="leaderboard-table-title">${cat.icon} ${cat.label} (${cat.unit})</div>`;

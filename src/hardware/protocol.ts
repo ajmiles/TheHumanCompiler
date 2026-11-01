@@ -11,24 +11,26 @@
 // In Firestore, where firestore.rules lets only the runner's account do these, the runner:
 //   1. Keeps runner/status up to date: { heartbeat: server time, queued: submissions waiting, harness: HW_HARNESS,
 //      version: the verifier's }. While it exists, the site shows the Hardware cycles board and sends solutions.
-//   2. Takes the submissions/{entryId} whose status is 'pending', oldest createdAt first, and sets 'running' if the
+//   2. Takes the submissions/{id} whose status is 'pending', oldest createdAt first, and sets 'running' if the
 //      submission hasn't changed since it was read. One from a newer appVersion than the verifier waits for the live
 //      verifier to catch up, without holding up those behind it; still unknown after 30 minutes, it's 'rejected'.
 //   3. Sets 'stale' if the submission's puzzleHash isn't the puzzle's any more (puzzleHashOf() in verifier.ts).
-//      Otherwise it verify()s the source, with the stats that leaderboards/{puzzleId}/entries/{entryId} claims: if
-//      that isn't ok, or the entry has gone (or isn't the submission's uid's: the id was used again), it sets
-//      'rejected', with the reason as detail.
+//      Otherwise it verify()s the source, with the stats the submission claims (its stats): if that isn't ok, or the
+//      player's entry on the puzzle (leaderboards/{puzzleId}/entries/{uid}) has gone, it sets 'rejected', with the
+//      reason as detail.
 //   4. Times the job and score()s the runs, recording the status, detail, cycles, claimMismatches and harness ('hung'
 //      if the GPU doesn't finish), and updatedAt: server time.
-//   5. When measured, adds hw: { cycles, perInvocation, emulatorMismatches, harness, measuredAt: server time,
-//      submittedAt: the submission's createdAt } to the entry, in the same batch as step 4: that puts the entry on the
-//      board, where ties go to the earliest submittedAt (kept when the entry is timed again). The batch only goes
-//      through if neither document has changed since step 3; if the entry has, the submission is 'rejected'.
+//   5. When measured, and it's the player's best time on the puzzle (the entry has no hw, or one from an older harness,
+//      or a slower one; of two as fast, the one submitted first stands), sets hw: { cycles, perInvocation,
+//      emulatorMismatches, harness, measuredAt: server time, submittedAt: the submission's createdAt } on the entry,
+//      in the same batch as step 4: that puts the player on the board, where ties go to the earliest submittedAt.
+//      The batch only goes through if neither document has changed since they were read. An entry that has changed
+//      (a better score, or a new name) is read again; one that has gone means the submission is 'rejected'.
 //
 // A player can also run a solution on the devkit without a score: submissions/trial-{uid}, one a player, which the
 // next replaces (runOnDevkit() in src/firebase/online-leaderboard.ts). The runner takes it in its turn and does steps
-// 2-4 without an entry: there are no claims to check and no hw, so it goes on no board, and the result recorded on it
-// is all there is. A trial replaced while it's timed has changed, so nothing is recorded for the old solution.
+// 2-4 without an entry: it claims no stats and gets no hw, so it goes on no board, and the result recorded on it is
+// all there is. A trial replaced while it's timed has changed, so nothing is recorded for the old solution.
 
 export const HW_PROTOCOL = 2;
 export const HW_HARNESS = 2;
