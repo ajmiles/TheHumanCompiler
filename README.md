@@ -17,10 +17,10 @@ A dev build never touches the live leaderboards: it signs in to the local
 emulators under the `demo-human-compiler` project. To point it at the live
 project anyway, run it with `VITE_FIREBASE_PROD=1`.
 
-## Hardware cycles (in progress)
+## Hardware cycles
 
-A devkit is to time submitted solutions on real RDNA2 hardware, for a
-"Hardware cycles" leaderboard. The public half is in
+A devkit times submitted solutions on real RDNA2 hardware, for a
+"Hardware cycles" leaderboard (live since 1 November 2026). The public half is in
 [`src/hardware/`](src/hardware/): `verify()` checks a solution in the emulator
 and wraps it in a timing harness ([`harness.ts`](src/hardware/harness.ts)), and
 `score()` turns the devkit's runs into the result
@@ -38,10 +38,9 @@ makes jobs by hand, including a set of calibration programs (see
 While the devkit is online (it keeps `runner/status` up to date), submitting a
 score also uploads the solution's source, privately, to `submissions/{entryId}`,
 and the leaderboards show a Hardware cycles board of the entries it has timed.
-Until then the site shows neither, and uploads nothing. The project is ready for
-it: Email/Password sign-in is on, the devkit has an account of its own (its UID
-is in `isRunner()` in [`firestore.rules`](firestore.rules)), and the rules and
-indexes are deployed. Starting the devkit's runner launches it.
+While it's offline the site shows neither, and uploads nothing. The devkit signs
+in with an Email/Password account of its own, whose UID is in `isRunner()` in
+[`firestore.rules`](firestore.rules).
 
 ## Online leaderboard rules
 
