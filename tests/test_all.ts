@@ -22,7 +22,7 @@ import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
 import { devkitOnline, devkitRunStat, hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
 import { addLeaderboardEntry, bestPerName, boardRows, improvedText, mergeBests, nameKeyOf, PLAYER_NAME_KEY } from '../src/puzzle/leaderboard';
-import { isShareId, newShareId, shareLink, shareParam, withoutShare } from '../src/puzzle/share';
+import { isShareId, newShareId, shareLink, shareParam, withoutShare, withSharedRevision } from '../src/puzzle/share';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -7883,6 +7883,21 @@ group('Share links');
     shareParam(`${page}?s=`) === '', 'shareParam: whatever ?s= holds, or null without one');
   assert(withoutShare(`${page}?s=Ab3dE9xY`) === page && withoutShare(`${page}?x=1&s=Ab3dE9xY#top`) === `${page}?x=1#top` &&
     withoutShare(page) === page, 'withoutShare: the page without ?s= (or a bare ?), keeping the rest');
+
+  const template = '; Signal Boost\ns_endpgm\n';
+  const shared = 'v_add_f32 v1, v0, v0\ns_endpgm\n';
+  const opened = (revisions: string[]) => JSON.stringify(withSharedRevision(revisions, template, shared));
+  assert(opened([template]) === JSON.stringify({ revisions: [shared], active: 0 }),
+    'withSharedRevision: in place of the untouched template, when that is all there is');
+  assert(opened(['mine']) === JSON.stringify({ revisions: ['mine', shared], active: 1 }) &&
+    opened([template, 'mine']) === JSON.stringify({ revisions: [template, 'mine', shared], active: 2 }),
+    "withSharedRevision: otherwise a new revision at the end, keeping the player's own (even a template beside others)");
+  assert(opened(['mine', shared, 'other']) === JSON.stringify({ revisions: ['mine', shared, 'other'], active: 1 }) &&
+    opened([shared, 'mine']) === JSON.stringify({ revisions: [shared, 'mine'], active: 0 }),
+    'withSharedRevision: the revision that holds it already (the first too), not a copy');
+  const revisions = ['mine'];
+  withSharedRevision(revisions, template, shared);
+  assert(revisions.length === 1, "withSharedRevision: the player's revisions are left as they were");
 }
 
 // ════════════════════════════════════════════

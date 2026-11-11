@@ -2,7 +2,7 @@ rules_version = '2';
 
 // Firestore security rules for the online leaderboards written by
 // src/firebase/online-leaderboard.ts, for the devkit that times submitted
-// solutions on hardware (src/hardware), and for sandbox code shared by link
+// solutions on hardware (src/hardware), and for code shared by link
 // (src/firebase/shares.ts). Rules and indexes are deployed by hand:
 //   firebase deploy --only firestore:rules,firestore:indexes --project human-compiler
 //
@@ -98,9 +98,9 @@ service cloud.firestore {
       allow write: if isRunner();
     }
 
-    // Sandbox code shared by link (the Share button). Anyone with a link reads
-    // its share, but nobody can list them; a share is never changed or deleted,
-    // so an id that's taken can't be written again.
+    // Code shared by link (the Share button, in the Sandbox or on a puzzle).
+    // Anyone with a link reads its share, but nobody can list them; a share is
+    // never changed or deleted, so an id that's taken can't be written again.
     match /shares/{id} {
       allow get: if true;
       allow create: if request.auth != null
@@ -227,17 +227,19 @@ service cloud.firestore {
         && hw.submittedAt is timestamp;
     }
 
-    // What createShare() (src/firebase/shares.ts) writes: the sandbox's code,
-    // up to MAX_SHARE_CHARS (src/puzzle/share.ts), and the game it came from.
+    // What createShare() (src/firebase/shares.ts) writes: the code, up to
+    // MAX_SHARE_CHARS (src/puzzle/share.ts), the game it came from, and its
+    // puzzle unless it came from the Sandbox (its link opens that puzzle).
     function isValidShare(data) {
       return data.keys().hasAll(['source', 'appVersion', 'createdAt'])
-        && data.keys().hasOnly(['source', 'appVersion', 'createdAt'])
+        && data.keys().hasOnly(['source', 'appVersion', 'createdAt', 'puzzleId'])
         && data.source is string
         && data.source.size() > 0
         && data.source.size() <= 50000
         && data.appVersion is string
         && data.appVersion.matches('[0-9]{1,4}[.][0-9]{1,4}[.][0-9]{1,6}')
-        && data.createdAt == request.time;
+        && data.createdAt == request.time
+        && (!('puzzleId' in data) || (data.puzzleId is string && isValidPuzzleId(data.puzzleId)));
     }
 
     // Everything else is denied: there are no other allow rules.

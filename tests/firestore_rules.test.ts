@@ -289,7 +289,7 @@ await expect('allow', 'run another after that: the last result goes', async () =
 });
 await expect('allow', 'delete my own trial', () => deleteDoc(aliceTrial));
 
-console.log('Shares (sandbox code shared by link: shares/{8 characters of [0-9A-Za-z]})');
+console.log('Shares (code shared by link: shares/{8 characters of [0-9A-Za-z]})');
 const shares = (db: Firestore) => collection(db, 'shares');
 const share = (over: Record<string, unknown> = {}) =>
   ({ source: 'v_mov_b32 v0, 1.0\ns_endpgm', appVersion: '0.5.109', createdAt: serverTimestamp(), ...over });
@@ -308,15 +308,20 @@ await expect('deny', 'the runner deletes a share', () => deleteDoc(as(runner, al
 for (const [label, id] of [['a 7-character id', 'Ab3dE9x'], ['a 9-character id', 'Ab3dE9xYZ'], ['an id with a -', 'Ab3d-9xY'], ['an id with a .', 'Ab3d.9xY']] as const) {
   await expect('deny', `share under ${label}`, () => setDoc(doc(shares(bob), id), share()));
 }
-for (const [label, data] of [
+// Each refused share has an id of its own, so that one wrongly allowed can't hide the next (as a refused update)
+for (const [i, [label, data]] of ([
   ['an empty source', share({ source: '' })], ['a source of 50,001 characters', share({ source: 'x'.repeat(50_001) })],
   ['a source that is not a string', share({ source: 42 })], ['a client createdAt', share({ createdAt: Timestamp.now() })],
   ['no createdAt', omit(share(), 'createdAt')], ['a bad appVersion', share({ appVersion: 'latest' })], ['no appVersion', omit(share(), 'appVersion')],
   ['an extra field', share({ uid: 'bob' })],
-] as const) {
-  await expect('deny', `share ${label}`, () => setDoc(doc(shares(bob), 'Cd5fG1zA'), data));
+] as const).entries()) {
+  await expect('deny', `share ${label}`, () => setDoc(doc(shares(bob), `Cd5fG1z${i}`), data));
 }
 await expect('allow', 'share a source of 50,000 characters', () => setDoc(doc(shares(bob), 'Cd5fG1zA'), share({ source: 'x'.repeat(50_000) })));
+await expect('allow', 'share code from a puzzle', () => setDoc(doc(shares(carol), 'De6gH2aB'), share({ puzzleId: 'signal-boost' })));
+for (const [i, [label, puzzleId]] of ([['that is not a string', 42], ['with a /', 'a/b'], ['that is empty', ''], ['of 65 characters', 'p'.repeat(65)]] as const).entries()) {
+  await expect('deny', `share code from a puzzle id ${label}`, () => setDoc(doc(shares(carol), `Ef7hI3b${i}`), share({ puzzleId })));
+}
 
 console.log('Runner status and everything else');
 const status = (db: Firestore) => doc(db, 'runner', 'status');

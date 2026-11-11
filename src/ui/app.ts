@@ -21,7 +21,7 @@ import { Puzzle } from '../puzzle/types';
 import { ALL_PUZZLES, getPuzzleById } from '../puzzle/puzzles';
 import { ALL_TUTORIALS, getTutorialById, Tutorial } from '../puzzle/tutorials';
 import { getLeaderboard } from '../puzzle/leaderboard';
-import { isShareId, shareLink, shareParam, withoutShare } from '../puzzle/share';
+import { isShareId, shareLink, shareParam, withoutShare, withSharedRevision } from '../puzzle/share';
 import { isOnlineEnabled } from '../firebase/online-leaderboard';
 import { fetchShare } from '../firebase/shares';
 
@@ -153,14 +153,15 @@ export class App {
 
   // Revision tabs
   private revisionBar!: HTMLElement;
+  private revisionTabs!: HTMLElement;
   private revisions: string[] = [];
   private activeRevision = 0;
 
-  // Sandbox: its bar replaces the revision tabs
+  // The bar above the editor: a puzzle's revision tabs, or the Sandbox's title, then Share
+  private sandboxTitle!: HTMLElement;
   private shareBar!: ShareBar;
-  private inSandbox = false;
-  /** Counts the sandbox's loads and exits, so that shared code which arrives after another one is dropped. */
-  private sandboxLoads = 0;
+  /** Counts loads of a puzzle, the Sandbox or a tutorial, so that shared code which arrives after another is dropped. */
+  private contextLoads = 0;
 
   // Completed puzzle tracking
   private completedIds: Set<string>;
@@ -266,7 +267,13 @@ export class App {
 
     this.revisionBar = document.createElement('div');
     this.revisionBar.className = 'revision-bar';
-    this.shareBar = new ShareBar(() => this.editor.getSource(), isOnlineEnabled(), id => this.showShareInAddress(id));
+    this.revisionTabs = document.createElement('div');
+    this.revisionTabs.className = 'revision-tabs';
+    this.sandboxTitle = document.createElement('span');
+    this.sandboxTitle.className = 'revision-bar__title';
+    this.sandboxTitle.textContent = '🧪 Sandbox';
+    this.shareBar = new ShareBar(() => this.editor.getSource(), () => this.currentPuzzle?.id ?? null, isOnlineEnabled(),
+      id => this.showShareInAddress(id));
 
     const editorContainer = document.createElement('div');
     editorContainer.className = 'editor-container';
@@ -356,7 +363,7 @@ export class App {
   private wireEvents(): void {
     // Auto-assemble on content change with debounce, and save solution
     this.editor.onContentChange(() => {
-      if (this.inSandbox) this.shareBar.codeChanged();
+      this.shareBar.codeChanged();
       if (this.debounceTimer) clearTimeout(this.debounceTimer);
       this.debounceTimer = setTimeout(() => {
         this.doAssemble();
@@ -407,8 +414,6 @@ export class App {
     // Puzzle / tutorial selection
     this.puzzleSelect.onSelect((id, kind) => {
       if (kind === 'sandbox') {
-        // A new sandbox: no longer the code of a share link
-        this.showShareInAddress(null);
         this.loadSandbox();
       } else if (kind === 'tutorial') {
         this.loadTutorial(id);
@@ -699,7 +704,11 @@ export class App {
 
   // ── Puzzle Engine ──
 
-  private loadSandbox(source = SANDBOX_TEMPLATE): void {
+  /**
+   * Open the Sandbox with `source`. `keepAddress` keeps a share link in the address bar (while its code loads, so
+   * that a reload tries again).
+   */
+  private loadSandbox(source = SANDBOX_TEMPLATE, keepAddress = false): void {
     this.exitTutorialMode();
     this.doStop();
     this.primed = false;
@@ -714,10 +723,7 @@ export class App {
     this.rightPanel.style.display = 'none';
     this.mainLayout.style.gridTemplateColumns = '260px 4px 1fr';
 
-    this.inSandbox = true;
-    this.sandboxLoads++;
-    this.shareBar.reset();
-    this.revisionBar.replaceChildren(this.shareBar.element);
+    this.beginContext('sandbox', keepAddress);
     this.setSourceNow(source);
 
     this.registers.setVGPRMode('f32');
@@ -727,27 +733,37 @@ export class App {
   private exitSandbox(): void {
     this.rightPanel.style.display = '';
     this.mainLayout.style.gridTemplateColumns = '';
-    if (!this.inSandbox) return;
-    this.inSandbox = false;
-    this.sandboxLoads++;
-    this.shareBar.reset();
-    this.shareBar.element.remove();
-    this.showShareInAddress(null);
   }
 
-  /** Open the sandbox with the code of a share link; `id` is its ?s=, which may not be a share's id. */
+  /**
+   * Start showing a puzzle, the Sandbox or a tutorial: nothing in it is shared yet, so no share link shows (nor, unless
+   * `keepAddress`, in the address bar). The bar above the editor holds the puzzle's revision tabs, or the Sandbox's
+   * title, then Share; a tutorial has none of them.
+   */
+  private beginContext(kind: 'puzzle' | 'sandbox' | 'tutorial', keepAddress = false): void {
+    this.contextLoads++;
+    this.shareBar.reset();
+    if (!keepAddress) this.showShareInAddress(null);
+    if (kind === 'tutorial') this.revisionBar.replaceChildren();
+    else this.revisionBar.replaceChildren(kind === 'sandbox' ? this.sandboxTitle : this.revisionTabs, this.shareBar.element);
+  }
+
+  /**
+   * Open the code of a share link, on its puzzle (as a revision) or in the Sandbox; `id` is the link's ?s=, which may
+   * not be a share's id.
+   */
   private async openShare(id: string): Promise<void> {
     if (!isShareId(id)) {
-      this.loadSandbox();
+      this.loadSandbox(SANDBOX_TEMPLATE, true);
       this.statusBar.setStatus('This share link is broken', 'error');
       return;
     }
-    this.loadSandbox(LOADING_SHARE);
+    this.loadSandbox(LOADING_SHARE, true);
     this.statusBar.setStatus('Loading shared code…', 'info');
-    const load = this.sandboxLoads;
+    const load = this.contextLoads;
     const share = await fetchShare(id);
     // Leave the editor alone if the player has moved on, or has started typing
-    if (load !== this.sandboxLoads || this.editor.getSource() !== LOADING_SHARE) return;
+    if (load !== this.contextLoads || this.editor.getSource() !== LOADING_SHARE) return;
 
     if (share === null || share === 'unreachable') {
       this.setSourceNow(SANDBOX_TEMPLATE);
@@ -756,9 +772,34 @@ export class App {
         : "Couldn't load the shared code: the server can't be reached. Reload to try again", 'error');
       return;
     }
+    const puzzle = share.puzzleId === null ? undefined : getPuzzleById(share.puzzleId);
+    if (puzzle) {
+      this.loadPuzzle(puzzle.id);
+      const revision = this.addSharedRevision(puzzle, share.source);
+      this.shareBar.remember(share.source, id);
+      this.statusBar.setStatus(`Opened shared code for ${puzzle.title}, as Rev ${revision + 1}`, 'info');
+      return;
+    }
     this.setSourceNow(share.source);
     this.shareBar.remember(share.source, id);
-    this.statusBar.setStatus('Opened shared code', 'info');
+    // A puzzle this version doesn't have (one taken out, say): the code is still worth seeing
+    this.statusBar.setStatus(share.puzzleId === null ? 'Opened shared code'
+      : `Opened shared code for a puzzle this version doesn't have (${share.puzzleId}), in the Sandbox`, 'info');
+  }
+
+  /**
+   * Put shared code among the puzzle's revisions, keeping the player's own (see withSharedRevision), and show it.
+   * Which revision it is.
+   */
+  private addSharedRevision(puzzle: Puzzle, source: string): number {
+    this.revisions[this.activeRevision] = this.editor.getSource();
+    const { revisions, active } = withSharedRevision(this.revisions, this.puzzleTemplate(puzzle), source);
+    this.revisions = revisions;
+    this.activeRevision = active;
+    this.setSourceNow(source);
+    this.renderRevisionTabs();
+    this.saveSolution();
+    return active;
   }
 
   /** Put code in the editor and assemble it now: the usual pause before assembling would clear the status bar. */
@@ -771,7 +812,7 @@ export class App {
     this.doAssemble();
   }
 
-  /** Show the link to a share in the address bar (while the sandbox holds its code), or no share. */
+  /** Show the link to a share in the address bar (while the editor holds its code), or no share. */
   private showShareInAddress(id: string | null): void {
     const address = id ? shareLink(location.href, id) : withoutShare(location.href);
     if (address !== location.href) history.replaceState(history.state, '', address);
@@ -784,6 +825,7 @@ export class App {
     // Exit tutorial/sandbox mode if active
     this.exitTutorialMode();
     this.exitSandbox();
+    this.beginContext('puzzle');
 
     this.doStop();
     this.primed = false;
@@ -810,13 +852,7 @@ export class App {
       this.revisions = saved.revisions;
       this.activeRevision = saved.activeIndex;
     } else {
-      const inputNames = puzzle.inputs.map(i => {
-        const regName = i.isSGPR ? `s${i.register}` : `v${i.register}`;
-        return `; ${i.name} in ${regName}`;
-      }).join('\n');
-      const outputNames = puzzle.outputs.map(o => `; ${o.name} to v${o.register}`).join('\n');
-      const template = `; ${puzzle.title}\n${inputNames}\n${outputNames}\n; Write your solution below:\n\ns_endpgm\n`;
-      this.revisions = [template];
+      this.revisions = [this.puzzleTemplate(puzzle)];
       this.activeRevision = 0;
     }
     this.editor.setSource(this.revisions[this.activeRevision]);
@@ -827,6 +863,16 @@ export class App {
     this.setupInvocation(puzzle, 0);
 
     this.statusBar.setStatus(`Puzzle: ${puzzle.title}`, 'info');
+  }
+
+  /** The code a puzzle starts with: which registers hold its inputs and outputs. */
+  private puzzleTemplate(puzzle: Puzzle): string {
+    const inputNames = puzzle.inputs.map(i => {
+      const regName = i.isSGPR ? `s${i.register}` : `v${i.register}`;
+      return `; ${i.name} in ${regName}`;
+    }).join('\n');
+    const outputNames = puzzle.outputs.map(o => `; ${o.name} to v${o.register}`).join('\n');
+    return `; ${puzzle.title}\n${inputNames}\n${outputNames}\n; Write your solution below:\n\ns_endpgm\n`;
   }
 
   private setupInvocation(puzzle: Puzzle, invocationIndex: number): void {
@@ -930,6 +976,7 @@ export class App {
     if (!tutorial) return;
 
     this.exitSandbox();
+    this.beginContext('tutorial');
     this.doStop();
     this.primed = false;
     this.currentPuzzle = null;
@@ -1071,7 +1118,7 @@ export class App {
   }
 
   private renderRevisionTabs(): void {
-    this.revisionBar.innerHTML = '';
+    this.revisionTabs.innerHTML = '';
 
     for (let i = 0; i < this.revisions.length; i++) {
       const tab = document.createElement('button');
@@ -1097,7 +1144,7 @@ export class App {
         tab.appendChild(closeBtn);
       }
 
-      this.revisionBar.appendChild(tab);
+      this.revisionTabs.appendChild(tab);
     }
 
     const addBtn = document.createElement('button');
@@ -1105,7 +1152,7 @@ export class App {
     addBtn.textContent = '+';
     addBtn.title = 'New revision (copies current code)';
     addBtn.onclick = () => this.addRevision();
-    this.revisionBar.appendChild(addBtn);
+    this.revisionTabs.appendChild(addBtn);
   }
 
   private switchRevision(index: number): void {

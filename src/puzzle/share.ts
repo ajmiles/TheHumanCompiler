@@ -1,6 +1,7 @@
 // ── Share links ──
-// Sandbox code shared by link: the Share button stores the code as shares/{id} (src/firebase/shares.ts), and the
-// link is the site's address with ?s={id}, which opens the sandbox with that code.
+// Code shared by link: the Share button (in the Sandbox, or on a puzzle) stores the code as shares/{id}
+// (src/firebase/shares.ts), and the link is the site's address with ?s={id}, which opens that code: in the Sandbox, or
+// on its puzzle as a revision.
 
 /** A share's id: 8 characters of [0-9A-Za-z] (about 48 bits), so that nobody finds shares by guessing. */
 export const SHARE_ID_LENGTH = 8;
@@ -46,4 +47,16 @@ export function withoutShare(page: string): string {
   // Older browsers leave a bare ? behind
   if (!url.search) url.search = '';
   return url.toString();
+}
+
+/**
+ * A puzzle's revisions with shared code opened among them, and which is the shared code's: the revision that holds it
+ * already, else the only revision if that's still the puzzle's untouched `template`, else a new revision at the end.
+ * The player's own code is never replaced.
+ */
+export function withSharedRevision(revisions: readonly string[], template: string, source: string): { revisions: string[]; active: number } {
+  const held = revisions.indexOf(source);
+  if (held >= 0) return { revisions: [...revisions], active: held };
+  if (revisions.length === 1 && revisions[0] === template) return { revisions: [source], active: 0 };
+  return { revisions: [...revisions, source], active: revisions.length };
 }

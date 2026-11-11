@@ -71,14 +71,17 @@ player is left as it was. Google sign-in needs the Google provider enabled in
 the Firebase project, and the site's domain among Authentication's authorised
 domains.
 
-## Sharing sandbox code
+## Sharing code
 
-In the Sandbox, 🔗 Share stores the code in Firestore (`shares/{id}`, with a
-random 8-character id) and gives a link to it: the site's address with
-`?s={id}`, which opens the Sandbox with that code. The address bar shows the
-link while the editor holds the shared code. A share holds up to 50,000
-characters and is never changed or deleted. Sharing again before changing the
-code shows the same link.
+🔗 Share, at the right of the bar above the editor in the Sandbox and on every
+puzzle, stores the code in Firestore (`shares/{id}`, with a random 8-character
+id) and gives a link to it: the site's address with `?s={id}`. A link from the
+Sandbox opens the Sandbox with the code. A link from a puzzle opens that
+puzzle with the code as a revision of its own, keeping the player's own
+revisions (it replaces only the untouched starting code, and opening it again
+doesn't add another). The address bar shows the link while the editor holds
+the shared code. A share holds up to 50,000 characters and is never changed or
+deleted. Sharing again before changing the code shows the same link.
 
 ## Online leaderboard rules
 
@@ -109,8 +112,8 @@ player's browser, on the devkit.
 
 Anyone can read a share whose id they have, but nobody can list them. A
 signed-in player (anonymous or not) can make one, with the source, the game's
-version and the server's time, and nothing else (not who made it); nobody can
-change or delete one.
+version, the server's time and the puzzle it's from (if any), and nothing else
+(not who made it); nobody can change or delete one.
 
 ## Credits
 

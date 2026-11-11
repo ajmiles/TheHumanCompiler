@@ -1,13 +1,29 @@
 /* ── Revision Tabs ── */
 
+/* A puzzle's revision tabs (or the Sandbox's title), then Share at the right (on a line of its own when there's no room) */
 .revision-bar {
   display: flex;
-  gap: 1px;
+  flex-wrap: wrap;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
   padding: 0 4px;
+}
+
+.revision-tabs {
+  display: flex;
+  gap: 1px;
+  min-width: 0;
   overflow-x: auto;
+}
+
+.revision-bar__title {
+  align-self: center;
+  padding: 0 8px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .revision-tab {
@@ -57,33 +73,25 @@
   color: var(--accent-red);
 }
 
-/* ── Sandbox Bar (in place of the revision tabs) ── */
+/* ── Share (at the right of the revision bar) ── */
 
-.sandbox-bar {
+.share-bar {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
+  margin-left: auto;
   min-width: 0;
-  padding: 3px 4px;
+  max-width: 100%;
+  padding: 3px 0 3px 8px;
   font-family: var(--font-mono);
   font-size: 11px;
 }
 
-.sandbox-bar [hidden] {
+.share-bar [hidden] {
   display: none;
 }
 
-.sandbox-bar__title {
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-.sandbox-bar__spacer {
-  flex: 1;
-}
-
-.sandbox-bar__note {
+.share-bar__note {
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -91,17 +99,17 @@
   min-width: 0;
 }
 
-.sandbox-bar__note--success {
+.share-bar__note--success {
   color: var(--accent-green);
 }
 
-.sandbox-bar__note--error {
+.share-bar__note--error {
   color: var(--accent-red);
 }
 
-.sandbox-bar__link {
+.share-bar__link {
   width: 300px;
-  min-width: 120px;
+  min-width: 80px;
   flex-shrink: 1;
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
@@ -112,7 +120,7 @@
   padding: 2px 6px;
 }
 
-.sandbox-bar__btn {
+.share-bar__btn {
   background: var(--bg-tertiary);
   border: 1px solid var(--border-default);
   border-radius: 3px;
@@ -125,11 +133,11 @@
   transition: border-color 0.15s;
 }
 
-.sandbox-bar__btn:hover:not(:disabled) {
+.share-bar__btn:hover:not(:disabled) {
   border-color: var(--text-secondary);
 }
 
-.sandbox-bar__btn:disabled {
+.share-bar__btn:disabled {
   color: var(--text-secondary);
   cursor: default;
 }
