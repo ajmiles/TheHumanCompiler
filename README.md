@@ -71,6 +71,15 @@ player is left as it was. Google sign-in needs the Google provider enabled in
 the Firebase project, and the site's domain among Authentication's authorised
 domains.
 
+## Sharing sandbox code
+
+In the Sandbox, 🔗 Share stores the code in Firestore (`shares/{id}`, with a
+random 8-character id) and gives a link to it: the site's address with
+`?s={id}`, which opens the Sandbox with that code. The address bar shows the
+link while the editor holds the shared code. A share holds up to 50,000
+characters and is never changed or deleted. Sharing again before changing the
+code shows the same link.
+
 ## Online leaderboard rules
 
 Online leaderboards live in Cloud Firestore (`leaderboards/{puzzleId}/entries`).
@@ -97,6 +106,11 @@ the Code Size, VGPRs and Speed boards are still reported by the client, though:
 the rules bound the values and enforce ownership, but don't check them. Only
 the Hardware cycles board comes from solutions checked again away from the
 player's browser, on the devkit.
+
+Anyone can read a share whose id they have, but nobody can list them. A
+signed-in player (anonymous or not) can make one, with the source, the game's
+version and the server's time, and nothing else (not who made it); nobody can
+change or delete one.
 
 ## Credits
 

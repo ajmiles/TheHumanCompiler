@@ -22,6 +22,7 @@ import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
 import { devkitOnline, devkitRunStat, hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
 import { addLeaderboardEntry, bestPerName, boardRows, improvedText, mergeBests, nameKeyOf, PLAYER_NAME_KEY } from '../src/puzzle/leaderboard';
+import { isShareId, newShareId, shareLink, shareParam, withoutShare } from '../src/puzzle/share';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -7859,6 +7860,29 @@ group('Leaderboards: each player once, at their best');
     if (held) Object.defineProperty(globalThis, 'localStorage', held);
     else delete (globalThis as { localStorage?: unknown }).localStorage;
   }
+}
+
+group('Share links');
+{
+  // Bytes from 248 up are dropped (so that each of the 62 characters is as likely), and more are drawn until there are 8
+  const batches = [[255, 248, 0, 1, 61, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], [62, 123, 247, 10, 36, 249, 37, 5]];
+  let draws = 0;
+  assert(newShareId(n => Uint8Array.from(batches[draws++]).subarray(0, n)) === '01z0zzAa' && draws === 2,
+    'newShareId: each byte below 248 picks a character (byte % 62), the rest are dropped, until there are 8');
+  const ids = Array.from({ length: 20 }, () => newShareId());
+  assert(ids.every(isShareId) && new Set(ids).size === ids.length, 'newShareId: random ids from crypto.getRandomValues');
+
+  assert(isShareId('Ab3dE9xY') && isShareId('00000000') && !isShareId('Ab3dE9x') && !isShareId('Ab3dE9xYZ') &&
+    !isShareId('Ab3d-9xY') && !isShareId('Ab3d_9xY') && !isShareId('Ab3dÉ9xY') && !isShareId(''), 'isShareId: 8 of [0-9A-Za-z]');
+
+  const page = 'https://ajmiles.github.io/TheHumanCompiler/';
+  assert(shareLink(page, 'Ab3dE9xY') === `${page}?s=Ab3dE9xY`, 'shareLink: the page with ?s=');
+  assert(shareLink(`${page}?x=1&s=Old12345#top`, 'Ab3dE9xY') === `${page}?x=1&s=Ab3dE9xY`,
+    "shareLink: in place of the page's share, keeping the rest of its query, without its #fragment");
+  assert(shareParam(page) === null && shareParam(`${page}?s=Ab3dE9xY`) === 'Ab3dE9xY' && shareParam(`${page}?x=1&s=bad!`) === 'bad!' &&
+    shareParam(`${page}?s=`) === '', 'shareParam: whatever ?s= holds, or null without one');
+  assert(withoutShare(`${page}?s=Ab3dE9xY`) === page && withoutShare(`${page}?x=1&s=Ab3dE9xY#top`) === `${page}?x=1#top` &&
+    withoutShare(page) === page, 'withoutShare: the page without ?s= (or a bare ?), keeping the rest');
 }
 
 // ════════════════════════════════════════════

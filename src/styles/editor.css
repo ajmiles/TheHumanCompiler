@@ -57,6 +57,83 @@
   color: var(--accent-red);
 }
 
+/* ── Sandbox Bar (in place of the revision tabs) ── */
+
+.sandbox-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 3px 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.sandbox-bar [hidden] {
+  display: none;
+}
+
+.sandbox-bar__title {
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.sandbox-bar__spacer {
+  flex: 1;
+}
+
+.sandbox-bar__note {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.sandbox-bar__note--success {
+  color: var(--accent-green);
+}
+
+.sandbox-bar__note--error {
+  color: var(--accent-red);
+}
+
+.sandbox-bar__link {
+  width: 300px;
+  min-width: 120px;
+  flex-shrink: 1;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.sandbox-bar__btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s;
+}
+
+.sandbox-bar__btn:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+}
+
+.sandbox-bar__btn:disabled {
+  color: var(--text-secondary);
+  cursor: default;
+}
+
 /* ── Editor Panel ── */
 
 .editor-panel {

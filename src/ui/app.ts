@@ -13,6 +13,7 @@ import { LeaderboardBrowser } from './leaderboard-browser';
 import { Encyclopedia } from './encyclopedia';
 import { SettingsOverlay, getLeaderboardPref } from './settings';
 import { MusicPlayer } from './music';
+import { ShareBar } from './share-bar';
 
 import { assemble } from '../assembler/assembler';
 import { Emulator } from '../emulator/emulator';
@@ -20,6 +21,9 @@ import { Puzzle } from '../puzzle/types';
 import { ALL_PUZZLES, getPuzzleById } from '../puzzle/puzzles';
 import { ALL_TUTORIALS, getTutorialById, Tutorial } from '../puzzle/tutorials';
 import { getLeaderboard } from '../puzzle/leaderboard';
+import { isShareId, shareLink, shareParam, withoutShare } from '../puzzle/share';
+import { isOnlineEnabled } from '../firebase/online-leaderboard';
+import { fetchShare } from '../firebase/shares';
 
 // Build the level order: T1, P1, P2, [T2], remaining puzzles, remaining tutorials
 function buildLevelOrder(): LevelItem[] {
@@ -105,6 +109,9 @@ const STORAGE_KEY = 'humancompiler_completed';
 const SOLUTIONS_KEY = 'humancompiler_solutions';
 const TUTORIALS_KEY = 'humancompiler_tutorials_completed';
 const DEBOUNCE_MS = 500;
+const SANDBOX_TEMPLATE = '; Sandbox — write any code and run it\n;\n; Example:\nv_mov_b32 v0, 1.0\nv_mov_b32 v1, 2.0\nv_add_f32 v2, v0, v1\ns_endpgm\n';
+/** The sandbox's code while the code of a share link loads. */
+const LOADING_SHARE = '; Loading shared code…\n';
 
 export class App {
   private editor!: AsmEditor;
@@ -149,6 +156,12 @@ export class App {
   private revisions: string[] = [];
   private activeRevision = 0;
 
+  // Sandbox: its bar replaces the revision tabs
+  private shareBar!: ShareBar;
+  private inSandbox = false;
+  /** Counts the sandbox's loads and exits, so that shared code which arrives after another one is dropped. */
+  private sandboxLoads = 0;
+
   // Completed puzzle tracking
   private completedIds: Set<string>;
 
@@ -165,8 +178,13 @@ export class App {
     this.completedTutorialIds = this.loadCompletedTutorials();
     this.buildLayout(root);
     this.wireEvents();
-    // Show puzzle select on startup
-    this.puzzleSelect.show(LEVEL_ORDER, this.allCompletedIds(), this.getBestScores());
+    // A share link (?s=) opens the sandbox with its code; otherwise start at the puzzle select
+    const share = shareParam(location.href);
+    if (share !== null) {
+      void this.openShare(share);
+    } else {
+      this.puzzleSelect.show(LEVEL_ORDER, this.allCompletedIds(), this.getBestScores());
+    }
   }
 
   private buildLayout(root: HTMLElement): void {
@@ -248,6 +266,7 @@ export class App {
 
     this.revisionBar = document.createElement('div');
     this.revisionBar.className = 'revision-bar';
+    this.shareBar = new ShareBar(() => this.editor.getSource(), isOnlineEnabled(), id => this.showShareInAddress(id));
 
     const editorContainer = document.createElement('div');
     editorContainer.className = 'editor-container';
@@ -337,6 +356,7 @@ export class App {
   private wireEvents(): void {
     // Auto-assemble on content change with debounce, and save solution
     this.editor.onContentChange(() => {
+      if (this.inSandbox) this.shareBar.codeChanged();
       if (this.debounceTimer) clearTimeout(this.debounceTimer);
       this.debounceTimer = setTimeout(() => {
         this.doAssemble();
@@ -387,6 +407,8 @@ export class App {
     // Puzzle / tutorial selection
     this.puzzleSelect.onSelect((id, kind) => {
       if (kind === 'sandbox') {
+        // A new sandbox: no longer the code of a share link
+        this.showShareInAddress(null);
         this.loadSandbox();
       } else if (kind === 'tutorial') {
         this.loadTutorial(id);
@@ -677,7 +699,7 @@ export class App {
 
   // ── Puzzle Engine ──
 
-  private loadSandbox(): void {
+  private loadSandbox(source = SANDBOX_TEMPLATE): void {
     this.exitTutorialMode();
     this.doStop();
     this.primed = false;
@@ -692,9 +714,11 @@ export class App {
     this.rightPanel.style.display = 'none';
     this.mainLayout.style.gridTemplateColumns = '260px 4px 1fr';
 
-    const template = '; Sandbox — write any code and run it\n;\n; Example:\nv_mov_b32 v0, 1.0\nv_mov_b32 v1, 2.0\nv_add_f32 v2, v0, v1\ns_endpgm\n';
-    this.editor.setSource(template);
-    this.doAssemble();
+    this.inSandbox = true;
+    this.sandboxLoads++;
+    this.shareBar.reset();
+    this.revisionBar.replaceChildren(this.shareBar.element);
+    this.setSourceNow(source);
 
     this.registers.setVGPRMode('f32');
     this.statusBar.setStatus('Sandbox: free play — no goals', 'info');
@@ -703,6 +727,54 @@ export class App {
   private exitSandbox(): void {
     this.rightPanel.style.display = '';
     this.mainLayout.style.gridTemplateColumns = '';
+    if (!this.inSandbox) return;
+    this.inSandbox = false;
+    this.sandboxLoads++;
+    this.shareBar.reset();
+    this.shareBar.element.remove();
+    this.showShareInAddress(null);
+  }
+
+  /** Open the sandbox with the code of a share link; `id` is its ?s=, which may not be a share's id. */
+  private async openShare(id: string): Promise<void> {
+    if (!isShareId(id)) {
+      this.loadSandbox();
+      this.statusBar.setStatus('This share link is broken', 'error');
+      return;
+    }
+    this.loadSandbox(LOADING_SHARE);
+    this.statusBar.setStatus('Loading shared code…', 'info');
+    const load = this.sandboxLoads;
+    const share = await fetchShare(id);
+    // Leave the editor alone if the player has moved on, or has started typing
+    if (load !== this.sandboxLoads || this.editor.getSource() !== LOADING_SHARE) return;
+
+    if (share === null || share === 'unreachable') {
+      this.setSourceNow(SANDBOX_TEMPLATE);
+      this.statusBar.setStatus(share === null
+        ? 'No code is shared at this link'
+        : "Couldn't load the shared code: the server can't be reached. Reload to try again", 'error');
+      return;
+    }
+    this.setSourceNow(share.source);
+    this.shareBar.remember(share.source, id);
+    this.statusBar.setStatus('Opened shared code', 'info');
+  }
+
+  /** Put code in the editor and assemble it now: the usual pause before assembling would clear the status bar. */
+  private setSourceNow(source: string): void {
+    this.editor.setSource(source);
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    this.doAssemble();
+  }
+
+  /** Show the link to a share in the address bar (while the sandbox holds its code), or no share. */
+  private showShareInAddress(id: string | null): void {
+    const address = id ? shareLink(location.href, id) : withoutShare(location.href);
+    if (address !== location.href) history.replaceState(history.state, '', address);
   }
 
   private loadPuzzle(id: string): void {

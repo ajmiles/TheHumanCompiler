@@ -1,8 +1,9 @@
 rules_version = '2';
 
 // Firestore security rules for the online leaderboards written by
-// src/firebase/online-leaderboard.ts, and for the devkit that times submitted
-// solutions on hardware (src/hardware). Rules and indexes are deployed by hand:
+// src/firebase/online-leaderboard.ts, for the devkit that times submitted
+// solutions on hardware (src/hardware), and for sandbox code shared by link
+// (src/firebase/shares.ts). Rules and indexes are deployed by hand:
 //   firebase deploy --only firestore:rules,firestore:indexes --project human-compiler
 //
 // A player has one entry on each puzzle's board, their best in each category,
@@ -95,6 +96,16 @@ service cloud.firestore {
     match /runner/status {
       allow read: if true;
       allow write: if isRunner();
+    }
+
+    // Sandbox code shared by link (the Share button). Anyone with a link reads
+    // its share, but nobody can list them; a share is never changed or deleted,
+    // so an id that's taken can't be written again.
+    match /shares/{id} {
+      allow get: if true;
+      allow create: if request.auth != null
+                    && id.matches('[0-9A-Za-z]{8}')
+                    && isValidShare(request.resource.data);
     }
 
     // The devkit's account: an email/password user (devkit-runner@human-compiler.invalid),
@@ -214,6 +225,19 @@ service cloud.firestore {
         && hw.harness is int
         && hw.measuredAt is timestamp
         && hw.submittedAt is timestamp;
+    }
+
+    // What createShare() (src/firebase/shares.ts) writes: the sandbox's code,
+    // up to MAX_SHARE_CHARS (src/puzzle/share.ts), and the game it came from.
+    function isValidShare(data) {
+      return data.keys().hasAll(['source', 'appVersion', 'createdAt'])
+        && data.keys().hasOnly(['source', 'appVersion', 'createdAt'])
+        && data.source is string
+        && data.source.size() > 0
+        && data.source.size() <= 50000
+        && data.appVersion is string
+        && data.appVersion.matches('[0-9]{1,4}[.][0-9]{1,4}[.][0-9]{1,6}')
+        && data.createdAt == request.time;
     }
 
     // Everything else is denied: there are no other allow rules.

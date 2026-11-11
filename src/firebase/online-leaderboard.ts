@@ -83,6 +83,11 @@ function getUid(): string | null {
   return auth?.currentUser?.uid ?? null;
 }
 
+/** Firestore, once this browser has signed in (anonymously, unless with Google); null when that can't be done. */
+export async function onlineDb(): Promise<Firestore | null> {
+  return (await ensureInit()) ? db : null;
+}
+
 /** Expose the current user's UID for ownership checks. */
 export function getMyUid(): string | null {
   return auth?.currentUser?.uid ?? null;
