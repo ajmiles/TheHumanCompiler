@@ -30,7 +30,7 @@ import {
 } from './constants';
 import { lookupByMnemonic, lookupByOpcode } from './opcodes';
 import { f16ToF32, f32ToF16 } from './float16';
-import { ConstKind, valuConstKind, valuSourceCount, vopTypes, isFloatType, operandRegCount, hasPackedModifiers } from './operands';
+import { ConstKind, valuConstKind, valuSourceCount, vopTypes, isFloatType, operandRegCount, hasPackedModifiers, omodIgnored } from './operands';
 
 /** An instruction that cannot be encoded (bad operand combination, constant out of range, …). */
 export class EncodingError extends Error {}
@@ -753,9 +753,11 @@ export function assembleToBinary(instructions: ParsedInstruction[]): Uint32Array
 
 /** Something that assembles but probably not as written: where it is and what happens. */
 export interface EncodingWarning {
-  slot: 'src0' | 'src1' | 'src2' | 'k';
+  slot: 'src0' | 'src1' | 'src2' | 'k' | 'omod';
   message: string;
 }
+
+const OMOD_NAMES = ['', 'mul:2', 'mul:4', 'div:2'];
 
 /** "4.2e-45", "NaN", "1": a value at a glance. */
 function shortNumber(v: number): string {
@@ -796,7 +798,7 @@ function integerConstantWarning(v: number, kind: ConstKind): string | null {
  * Constants that assemble but are probably not what was meant: an integer such as 3 written for a
  * floating-point operand is read as its bit pattern, not as 3.0 (hex is taken to mean the bits); and a float
  * literal for a 64-bit float operand keeps only the high 32 bits of the double, so a value such as 0.1
- * changes (LLVM warns about this too).
+ * changes (LLVM warns about this too). And an output modifier that the devkit's GPU ignores (see omodIgnored).
  */
 export function encodingWarnings(instr: ParsedInstruction): EncodingWarning[] {
   const info = lookupByMnemonic(instr.mnemonic);
@@ -821,6 +823,19 @@ export function encodingWarnings(instr: ParsedInstruction): EncodingWarning[] {
   if (instr.kInteger !== undefined) {
     const message = integerConstantWarning(instr.kInteger, vopTypes(info).d === 'f16' ? 'f16' : 'f32');
     if (message) warnings.push({ slot: 'k', message });
+  }
+  // DPP and VOP3P refuse OMOD outright, and VOPC SDWA has no float result
+  const plan = planEncoding(instr, info);
+  const result = vopTypes(info).d;
+  if (instr.omod && isFloatType(result) && plan.kind !== 'VOP3P' && plan.extra !== 'DPP16' && plan.extra !== 'DPP8') {
+    const reason = omodIgnored(result, plan.extra === 'SDWA', !!instr.clamp);
+    if (reason) {
+      warnings.push({
+        slot: 'omod',
+        message: `${OMOD_NAMES[instr.omod]} has no effect here: ${reason}. mul:2, mul:4 and div:2 only scale an f32 result ` +
+          'in VOP3, without clamp',
+      });
+    }
   }
   return warnings;
 }

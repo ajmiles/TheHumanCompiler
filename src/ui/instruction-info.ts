@@ -7,8 +7,8 @@ import {
   SourceSpan,
 } from '../isa/types';
 import { lookupByMnemonic } from '../isa/opcodes';
-import { decodeBinary, describeDppCtrl, dppCtrlMeaning, encodeInstruction, scalarRegName, sourceFieldName } from '../isa/encoding';
-import { OperandRole, operandRegCount, valuSourceCount, hasPackedModifiers } from '../isa/operands';
+import { decodeBinary, describeDppCtrl, dppCtrlMeaning, encodeInstruction, planEncoding, scalarRegName, sourceFieldName } from '../isa/encoding';
+import { OperandRole, operandRegCount, valuSourceCount, hasPackedModifiers, omodIgnored, vopTypes } from '../isa/operands';
 import { VCC_LO } from '../isa/constants';
 import {
   checkLine, editChoices, EncodingKey, EncodingOption, encodingOptions, labelsIn, lineEdit, ModifierChoices, ModifierField,
@@ -88,8 +88,8 @@ function sourceModField(name: string, bit: number, color: string, mod: ModifierF
 
 /** What each modifier field does, shown at the top of its picker. */
 const MODIFIER_INTRO: Record<ModifierField, string> = {
-  clamp: 'Clamp the result, after any output modifier',
-  omod: 'Output modifier: scale a floating-point result before it is clamped',
+  clamp: 'Clamp the result (on the devkit\'s GPU, OMOD then does nothing)',
+  omod: 'Output modifier: scale an f32 result. The devkit\'s GPU does so only in VOP3, without CLAMP',
   op_sel: 'Which 16-bit half each operand uses: hi reads the high half of a source, or writes the high half of the destination',
   op_sel_hi: 'Which half of each source feeds the high half of the result',
   abs: 'Take the absolute value of a source (before NEG)',
@@ -470,9 +470,9 @@ function buildFormula(info: OpcodeInfo, instr: ParsedInstruction): string {
     formula = formula.replace(/\bVCC\b/g, () => maskName(info.carryIn && k++ === 0 ? instr.src2 : instr.sdst));
   }
 
-  if (instr.omod === 1) formula += ' × 2';
-  if (instr.omod === 2) formula += ' × 4';
-  if (instr.omod === 3) formula += ' ÷ 2';
+  if (instr.omod && !omodIgnored(vopTypes(info).d, planEncoding(instr, info).extra === 'SDWA', !!instr.clamp)) {
+    formula += [' × 2', ' × 4', ' ÷ 2'][instr.omod - 1];
+  }
   if (instr.clamp) formula = `clamp(${formula})`;
   return formula;
 }

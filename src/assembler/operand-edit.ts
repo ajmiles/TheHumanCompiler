@@ -5,7 +5,7 @@
 
 import { decodeBinary, dppCtrlMeaning, encodeInstruction, EncodingError, EncodingPlan, planEncoding } from '../isa/encoding';
 import { getAllOpcodes, lookupByMnemonic } from '../isa/opcodes';
-import { isFloatType, operandRegCount, valuSourceCount, vopTypes } from '../isa/operands';
+import { isFloatType, omodIgnored, operandRegCount, valuSourceCount, vopTypes } from '../isa/operands';
 import { EXEC_LO, NUM_VGPRS, SGPR_MAX, VCC_LO } from '../isa/constants';
 import { InstructionFormat, OpcodeInfo, Operand, OperandSlot, OperandType, ParsedInstruction, SourceSpan } from '../isa/types';
 import { Token, tokenize, TokenType } from './lexer';
@@ -163,7 +163,8 @@ export function editChoices(lineText: string, slot: OperandSlot, labels: Readonl
     if (/^s_(c)?branch/.test(instr.mnemonic)) for (const label of [...labels].sort()) offer(label, 'Label');
     return choices;
   }
-  if (slot === 'k') return choices;
+  // K is typed, and the output modifier is set through the OMOD field: neither offers choices here
+  if (slot === 'k' || slot === 'omod') return choices;
 
   if (slot === 'dpp') {
     // The DPP16 lane controls, with what each does; a DPP8 selection or another quad_perm is typed
@@ -411,12 +412,18 @@ export function modifierOptions(lineText: string, field: ModifierField, lane = 0
   });
 
   switch (field) {
-    case 'clamp':
-      return values([['off', 'The result is written as computed'], ['on', clampMeaning(info)]], instr.clamp ? 1 : 0,
+    case 'clamp': {
+      const offOmod = instr.omod && !omodIgnored(vopTypes(info).d, extra === 'SDWA', false)
+        ? `; ${OMOD_SYNTAX[instr.omod]} then does nothing on the devkit's GPU` : '';
+      return values([['off', 'The result is written as computed'], ['on', clampMeaning(info) + offOmod]], instr.clamp ? 1 : 0,
         v => setModifier(lineText, ['clamp'], v ? 'clamp' : ''));
-    case 'omod':
-      return values(OMOD_SYNTAX.map((text, v) => [text || 'none', OMOD_MEANING[v]]), instr.omod ?? 0,
-        v => setModifier(lineText, ['mul', 'div'], OMOD_SYNTAX[v]));
+    }
+    case 'omod': {
+      // The devkit's GPU ignores OMOD in some places; it still assembles there, and the option says so
+      const ignored = omodIgnored(vopTypes(info).d, extra === 'SDWA', !!instr.clamp);
+      return values(OMOD_SYNTAX.map((text, v) => [text || 'none', v && ignored ? `Does nothing here: ${ignored}` : OMOD_MEANING[v]]),
+        instr.omod ?? 0, v => setModifier(lineText, ['mul', 'div'], OMOD_SYNTAX[v]));
+    }
     case 'row_mask':
     case 'bank_mask': {
       // A bit per row of 16 lanes, or per bank of 4 lanes in each row; an unwritten mask is 0xf

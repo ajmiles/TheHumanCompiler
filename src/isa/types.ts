@@ -61,9 +61,9 @@ export interface SourceSpan {
  * Parts of an instruction that can be rewritten in place: the mnemonic (without an _e32/_e64/_dpp/_sdwa
  * suffix), the operands (just the register or constant, inside any -, |…|, abs() or sext() wrapper),
  * the implied constant K, the 16-bit immediate (or branch label, or s_waitcnt counters) and the DPP lane
- * control (quad_perm:[…], row_shr:1, dpp8:[…], …).
+ * control (quad_perm:[…], row_shr:1, dpp8:[…], …); and where the output modifier (mul:2, mul:4, div:2) was written.
  */
-export type OperandSlot = 'mnemonic' | 'dst' | 'sdst' | 'src0' | 'src1' | 'src2' | 'k' | 'simm' | 'dpp';
+export type OperandSlot = 'mnemonic' | 'dst' | 'sdst' | 'src0' | 'src1' | 'src2' | 'k' | 'simm' | 'dpp' | 'omod';
 
 export interface ParsedInstruction {
   mnemonic: string;

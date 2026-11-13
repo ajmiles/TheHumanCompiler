@@ -775,6 +775,25 @@ group('Modifiers');
   assert(approx(emu.state.readVGPR(2, 0), 6.0), 'omod mul:2: (1.0 + 2.0) * 2 = 6.0');
 }
 
+// OMOD scales only an f32 result in VOP3, without clamp. The devkit's GPU ignores it alongside clamp, in SDWA and on
+// f16 and f64 results: Signal Boost solutions relying on each of those failed there while the emulator applied it
+{
+  const run2 = (src: string, a: number, b: number) => {
+    const emu = setup(`${src}\ns_endpgm`);
+    emu.state.writeVGPR(0, 0, a);
+    emu.state.writeVGPR(1, 0, b);
+    emu.run();
+    return emu.state.readVGPR(2, 0);
+  };
+  assert(run2('v_mul_f32 v2, v0, v1 div:2', 3.0, 0.5) === 0.75 && run2('v_mul_f32 v2, v0, v1 mul:4 clamp', 0.125, 0.5) === 0.0625 &&
+    run2('v_add_f32 v2, v0, v1 mul:2 clamp', 0.25, 0.25) === 0.5, 'omod: div:2 scales an f32 result, but clamp turns it off');
+  const f16 = setup('v_add_f16 v2, v0, v1 mul:2\ns_endpgm');
+  f16.state.writeVGPR_u32(0, 0, 0x3C00); // 1.0
+  f16.state.writeVGPR_u32(1, 0, 0x4000); // 2.0
+  f16.run();
+  assert((f16.state.readVGPR_u32(2, 0) & 0xFFFF) === 0x4200, 'omod leaves an f16 result alone: 1.0 + 2.0 = 3.0');
+}
+
 // clamp
 {
   const emu = setup('v_add_f32 v2, v0, v1 clamp\ns_endpgm');
@@ -6281,6 +6300,17 @@ group('Regression: player report — an integer 3 where the float 3.0 was meant'
   assert(['v_add_f32 v0, 0x3, v1', 'v_add_f32 v0, 0, v1', 'v_add_f32 v0, 3.0, v1', 'v_fmamk_f32 v0, v1, 0x40400000, v2', 'v_mov_b32 v0, 3',
     'v_cvt_f32_i32 v0, 3', 'v_ldexp_f32 v0, v1, 3', 'v_add_nc_u32 v0, 3, v1', 'v_cndmask_b32 v0, 3, v1, vcc_lo'].every(s => warns(s).length === 0),
     'hex bit patterns, 0, floats and integer operands do not warn');
+  const omodWarn = (s: string) => warns(s).find(m => /has no effect here/.test(m)) ?? '';
+  assert(/^mul:2 has no effect here: on the devkit's GPU, clamp turns it off/.test(omodWarn('v_mul_f32 v0, v1, v2 mul:2 clamp')) &&
+    /^div:2 .*ignores it in SDWA/.test(omodWarn('v_mul_f32 v0, v1, v2 div:2 src0_sel:DWORD')) &&
+    /^mul:4 .*keeps f16 denormals/.test(omodWarn('v_add_f16 v0, v1, v2 mul:4')) &&
+    /keeps f64 denormals/.test(omodWarn('v_add_f64 v[0:1], v[2:3], v[4:5] mul:2')),
+    'an output modifier warns where the devkit ignores it: alongside clamp, in SDWA, on f16 and f64 results');
+  assert(['v_mul_f32 v0, v1, v2 mul:2', 'v_cvt_f32_i32 v0, v1 div:2', 'v_fma_f32 v0, v1, v2, v3 mul:4', 'v_cvt_f32_f64 v0, v[2:3] mul:2']
+    .every(s => warns(s).length === 0), 'an output modifier on an f32 result in VOP3, without clamp, does not warn');
+  const omodLine = 'v_mul_f32 v0, v1, v2 clamp mul:2';
+  const atOmod = assemble(`${omodLine}\ns_endpgm`).warnings;
+  assert(atOmod.length === 1 && atOmod[0].column === omodLine.indexOf('mul:2') + 1, 'the output modifier warning is at the mul:2');
 }
 
 group('Regression: every program must finish by executing s_endpgm');
@@ -6454,7 +6484,8 @@ group('DPP and SDWA coverage');
   assert(((enc('v_add_f32 v2, v0, v1 src0_sel:DWORD src1_sel:DWORD clamp')[1] >>> 13) & 1) === 1, 'SDWA clamp is bit 13');
   assert(run1(regs + 'v_add_f32 v2, v0, v1 src0_sel:DWORD src1_sel:DWORD clamp').state.readVGPR(2, 0) === 1, 'SDWA clamp: 0.5 + 0.75 clamps to 1.0');
   assert(((enc('v_add_f32 v2, v0, v1 src0_sel:DWORD mul:2')[1] >>> 14) & 3) === 1, 'SDWA mul:2 is omod 1 in bits [15:14]');
-  assert(run1(regs + 'v_add_f32 v2, v0, v1 src0_sel:DWORD src1_sel:DWORD mul:2').state.readVGPR(2, 0) === 2.5, 'SDWA mul:2 doubles the result');
+  assert(run1(regs + 'v_add_f32 v2, v0, v1 src0_sel:DWORD src1_sel:DWORD mul:2').state.readVGPR(2, 0) === 1.25,
+    'SDWA mul:2 leaves the result alone, as on the devkit');
   const m = enc('v_add_f32 v2, -v0, |v1| src0_sel:DWORD src1_sel:DWORD')[1];
   assert(((m >>> 20) & 1) === 1 && ((m >>> 21) & 1) === 0 && ((m >>> 28) & 1) === 0 && ((m >>> 29) & 1) === 1, 'SDWA neg/abs: src0 neg [20], src1 abs [29]');
   const absneg = run1('v_mov_b32 v0, 0.75\nv_mov_b32 v1, -0.5\nv_add_f32 v2, -v0, |v1| src0_sel:DWORD src1_sel:DWORD');
@@ -6638,6 +6669,12 @@ group('Instruction Info editing: VOP3 and VOP3P modifier fields');
   assert(omod.options.map(o => `${o.label}:${o.on}`).join() === 'none:false,mul:2:false,mul:4:true,div:2:false' &&
     omod.options[1].line === 'v_add_f32_e64 v0, v1, v2 clamp mul:2' && lineOf('v_add_f32_e64 v0, v1, v2 clamp', 'omod', '3') === 'v_add_f32_e64 v0, v1, v2 clamp div:2',
     'OMOD: none, mul:2, mul:4, div:2, replaced in place or added after clamp');
+  // The devkit's GPU ignores OMOD alongside clamp, in SDWA and on f16 and f64 results: such options assemble, and say so
+  const noEffect = (line: string) => opts(line, 'omod').options.slice(1).every(o => o.line && /^Does nothing here: /.test(o.detail ?? ''));
+  assert(noEffect('v_add_f32_e64 v0, v1, v2 clamp') && noEffect('v_add_f16_e64 v0, v1, v2') && noEffect('v_mul_f32 v0, v1, v2 src0_sel:DWORD') &&
+    noEffect('v_add_f64 v[0:1], v[2:3], v[4:5]') && opts('v_add_f32_e64 v0, v1, v2', 'omod').options[1].detail === 'Multiply the result by 2' &&
+    /mul:2 then does nothing/.test(opts('v_add_f32_e64 v0, v1, v2 mul:2', 'clamp').options[1].detail ?? ''),
+    'OMOD options say where the devkit ignores them, and switching CLAMP on says it turns an output modifier off');
   assert(lineOf('v_add_nc_u32_e64 v0, v1, v2', 'clamp', '1') === 'v_add_nc_u32_e64 v0, v1, v2 clamp' &&
     /Saturate/.test(opts('v_add_nc_u32_e64 v0, v1, v2', 'clamp').options[1].detail ?? '') &&
     /floating-point result/.test(errorOf('v_add_nc_u32_e64 v0, v1, v2', 'omod', '1')),
@@ -6929,12 +6966,12 @@ group('Encyclopedia: the Modifiers tab');
 {
   const wrong = MODIFIER_EXAMPLES.filter(ex => {
     const r = assemble(`${ex.line}\ns_endpgm`);
-    if (r.errors.length > 0) return true;
+    if (r.errors.length > 0 || r.warnings.length > 0) return true;
     const plan = planEncoding(r.instructions[0]);
     return (plan.extra ?? plan.kind) !== ex.encoding;
   });
   assert(wrong.length === 0,
-    `each example assembles, in the encoding the tab gives it${wrong.length ? `; not ${wrong.map(w => w.line).join('; ')}` : ''}`);
+    `each example assembles without a warning, in the encoding the tab gives it${wrong.length ? `; not ${wrong.map(w => w.line).join('; ')}` : ''}`);
 }
 
 group('Instruction Info editing: switching encodings');
@@ -7465,8 +7502,8 @@ const isF64 = (got: number, want: number) => (Number.isNaN(want) ? Number.isNaN(
     'v_frexp_mant_f64 / v_frexp_exp_i32_f64: [0.5, 1) significands, subnormals normalized, ±0/±∞/NaN give themselves and 0');
 
   assert(isF64(f64op('v_add_f64 v[6:7], -v[0:1], |v[2:3]|', 1.5, -4), 2.5), 'f64 neg and abs modifiers');
-  assert(isF64(f64op('v_add_f64 v[6:7], v[0:1], v[2:3] clamp', 0.75, 0.75), 1) && isF64(f64op('v_mul_f64 v[6:7], v[0:1], v[2:3] mul:4', 1.5, 2), 12),
-    'f64 clamp and output modifiers');
+  assert(isF64(f64op('v_add_f64 v[6:7], v[0:1], v[2:3] clamp', 0.75, 0.75), 1) && isF64(f64op('v_mul_f64 v[6:7], v[0:1], v[2:3] mul:4', 1.5, 2), 3),
+    'f64 clamp, and OMOD leaves an f64 result alone, as on the devkit');
   assert(isF64(f64op('v_sqrt_f64 v[6:7], 4.0'), 2) && isF64(f64op('v_sqrt_f64 v[6:7], 0x40310000'), Math.sqrt(17)),
     'VOP1 f64 sources: inline 4.0, and a literal is the high half of the double (0x40310000 is 17.0)');
   const pair = run1('v_add_f64 v[6:7], s[0:1], v[2:3]', e => {

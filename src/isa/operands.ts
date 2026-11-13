@@ -30,6 +30,18 @@ export function isFloatType(t: ValueType): boolean {
   return t === 'f32' || t === 'f16' || t === 'f64';
 }
 
+/**
+ * Why OMOD (mul:2, mul:4, div:2) leaves a floating-point result alone on the devkit, or null where it scales it.
+ * Measured there, it scales only an f32 result in VOP3, without clamp: clamp turns it off, SDWA ignores it, and so
+ * do f16 and f64 results, whose denormals the GPU keeps (OMOD is off while output denormals are on).
+ */
+export function omodIgnored(result: ValueType, sdwa: boolean, clamp: boolean): string | null {
+  if (result === 'f16' || result === 'f64') return `the devkit's GPU keeps ${result} denormals, which turns it off`;
+  if (sdwa) return 'the devkit\'s GPU ignores it in SDWA';
+  if (clamp) return 'on the devkit\'s GPU, clamp turns it off';
+  return null;
+}
+
 export function is16BitType(t: ValueType): boolean {
   return t === 'f16' || t === 'u16' || t === 'i16' || t === 'b16';
 }

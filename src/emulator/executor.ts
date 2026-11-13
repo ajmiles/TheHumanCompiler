@@ -20,7 +20,7 @@ import {
 import { f16ToF32, f32ToF16 } from '../isa/float16';
 import { bitsToF64, divFixupF64, divFmasScale, divScaleF64, f64ToBits, fmaF64 } from '../isa/float64';
 import { sadU8, msadU8, compareHolds, compareOrder, floatClass } from '../isa/opcodes';
-import { vopTypes, valuSourceCount, isFloatType, is16BitType, is64BitType, VopTypes } from '../isa/operands';
+import { vopTypes, valuSourceCount, isFloatType, is16BitType, is64BitType, omodIgnored, VopTypes } from '../isa/operands';
 import { GPUState, LDS_SIZE_BYTES } from './state';
 import { ResolvedInstruction } from './decoder';
 
@@ -173,11 +173,16 @@ function toBits(v: number, t: ValueType): number {
   }
 }
 
-/** OMOD then CLAMP for floating-point results (DX10 clamp: NaN becomes 0). */
-function outputModifiers(v: number, d: DecodedInstruction): number {
-  if (d.omod === 1) v *= 2;
-  else if (d.omod === 2) v *= 4;
-  else if (d.omod === 3) v *= 0.5;
+/**
+ * OMOD then CLAMP for a floating-point result of type `type` (DX10 clamp: NaN becomes 0). OMOD scales only where the
+ * devkit's GPU applies it: an f32 result in VOP3, without clamp (see omodIgnored).
+ */
+function outputModifiers(v: number, d: DecodedInstruction, type: ValueType): number {
+  if (d.omod && !omodIgnored(type, d.extra === 'SDWA', !!d.clamp)) {
+    if (d.omod === 1) v *= 2;
+    else if (d.omod === 2) v *= 4;
+    else if (d.omod === 3) v *= 0.5;
+  }
   if (d.clamp) v = Number.isNaN(v) ? 0 : Math.min(1, Math.max(0, v));
   return v;
 }
@@ -464,7 +469,7 @@ const VALU_SPECIAL: Record<string, ValuHandler> = {
       const [s0, s1, s2] = readF64Sources(state, d, lane);
       const r = divScaleF64(s0, s1, s2);
       if (r.vcc) mask |= 1 << lane;
-      return f64ToBits(outputModifiers(r.value, d));
+      return f64ToBits(outputModifiers(r.value, d, 'f64'));
     });
     state.writeSGPR(d.sdst ?? VCC_LO, mask >>> 0);
   },
@@ -472,13 +477,14 @@ const VALU_SPECIAL: Record<string, ValuHandler> = {
     const vcc = state.vcc;
     perLane64(state, d, (lane) => {
       const [a, b, c] = readF64Sources(state, d, lane);
-      return f64ToBits(outputModifiers(fmaF64(a, b, c, (vcc >>> lane) & 1 ? divFmasScale(c) : 0), d));
+      return f64ToBits(outputModifiers(fmaF64(a, b, c, (vcc >>> lane) & 1 ? divFmasScale(c) : 0), d, 'f64'));
     });
   },
   v_div_fixup_f64: (state, d) => {
     perLane64(state, d, (lane) => {
       const bits = divFixupF64(readF64Bits(state, d, 0, lane), readF64Bits(state, d, 1, lane), readF64Bits(state, d, 2, lane));
-      return d.clamp || d.omod ? f64ToBits(outputModifiers(bitsToF64(bits), d)) : bits;
+      // OMOD never scales an f64 result, so only clamp can change these exact bits
+      return d.clamp ? f64ToBits(outputModifiers(bitsToF64(bits), d, 'f64')) : bits;
     });
   },
   v_nop: () => {},
@@ -646,7 +652,7 @@ function executeVALU64(state: GPUState, d: DecodedInstruction, info: OpcodeInfo,
       args[i] = applyModifiers(v, t, abs[i], neg[i]);
     }
     let result = info.execute(args[0], args[1], args[2]);
-    if (isFloatType(types.d)) result = outputModifiers(result, d);
+    if (isFloatType(types.d)) result = outputModifiers(result, d, types.d);
     if (types.d === 'f64') writes64.push([lane, f64ToBits(result)]);
     else writes.push([lane, toBits(result, types.d)]);
   }
@@ -725,7 +731,7 @@ function executeVALU(state: GPUState, d: DecodedInstruction, info: OpcodeInfo): 
       if (m === 'v_div_fmas_f32' && (state.vcc >>> lane) & 1) result *= 2 ** 32;
     }
 
-    if (isFloatType(types.d)) result = outputModifiers(result, d);
+    if (isFloatType(types.d)) result = outputModifiers(result, d, types.d);
     let bits = toBits(result, types.d);
     if (d.clamp && PACKED_F16_RESULT.has(m)) bits = clampPackedF16(bits);
     // Only partial writes read the old value: reading it otherwise would make an overwrite look like a read
@@ -764,7 +770,7 @@ function dotResult(info: OpcodeInfo, d: DecodedInstruction, raw: number[], opSel
     let c = bitsToFloat(raw[2]);
     if (negHi & 4) c = Math.abs(c);
     if (negLo & 4) c = -c;
-    return floatBits(outputModifiers(info.execute(a, b, c), d));
+    return floatBits(outputModifiers(info.execute(a, b, c), d, 'f32'));
   }
   const exact = info.execute(a, b, raw[2]);
   if (!d.clamp) return exact >>> 0;
@@ -803,7 +809,7 @@ function executeVOP3P(state: GPUState, d: DecodedInstruction, info: OpcodeInfo):
         if ((negHi >> i) & 1) v = Math.abs(v);
         return (negLo >> i) & 1 ? -v : v;
       });
-      const result = outputModifiers(info.execute(args[0], args[1], args[2]), d);
+      const result = outputModifiers(info.execute(args[0], args[1], args[2]), d, mixHalf ? 'f16' : 'f32');
       if (mixHalf) writes.push([lane, writeHalf(state.readVGPR_u32(d.dst, lane), f32ToF16(result), mixHalf === 'hi')]);
       else writes.push([lane, floatBits(result)]);
       continue;
@@ -823,8 +829,8 @@ function executeVOP3P(state: GPUState, d: DecodedInstruction, info: OpcodeInfo):
       const conv = (h: number[], negBits: number) => h.map((x, i) => ((negBits >> i) & 1 ? -f16ToF32(x) : f16ToF32(x)));
       const a = conv(lo, negLo);
       const b = conv(hi, negHi);
-      rLo = f32ToF16(outputModifiers(info.execute(a[0], a[1], a[2]), d));
-      rHi = f32ToF16(outputModifiers(info.execute(b[0], b[1], b[2]), d));
+      rLo = f32ToF16(outputModifiers(info.execute(a[0], a[1], a[2]), d, 'f16'));
+      rHi = f32ToF16(outputModifiers(info.execute(b[0], b[1], b[2]), d, 'f16'));
     } else if (sat) {
       rLo = sat(lo[0], lo[1], lo[2]) & 0xFFFF;
       rHi = sat(hi[0], hi[1], hi[2]) & 0xFFFF;

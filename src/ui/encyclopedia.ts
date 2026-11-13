@@ -350,14 +350,15 @@ const INPUT_MODIFIERS: ModifierRow[] = [
 
 const OUTPUT_MODIFIERS: ModifierRow[] = [
   { name: 'clamp', syntax: code('clamp'), in: { VOP3A: '✓', VOP3B: '✓', VOP3P: '✓', SDWA: 'not VOPC' } },
-  { name: 'mul, div', syntax: either('mul:2', 'mul:4', 'div:2'), in: { VOP3A: '✓', VOP3B: '✓', SDWA: 'not VOPC' } },
+  { name: 'mul, div', syntax: either('mul:2', 'mul:4', 'div:2'), in: { VOP3A: 'f32 results, without clamp', VOP3B: 'f32 results, without clamp' } },
   { name: 'dst_sel, dst_unused', syntax: code('dst_sel:WORD_1'), in: { SDWA: 'not VOPC' } },
 ];
 
 /** The Modifiers tab's examples: each line assembles in its `encoding` (tested). */
 export const MODIFIER_EXAMPLES: { line: string; encoding: string; result: string }[] = [
   { line: 'v_add_f32 v0, -v1, |v2|', encoding: 'VOP3A', result: 'v0 = −v1 + |v2|' },
-  { line: 'v_mul_f32 v0, v1, v2 mul:2 clamp', encoding: 'VOP3A', result: 'v0 = v1 × v2 × 2, clamped to [0.0, 1.0]' },
+  { line: 'v_mul_f32 v0, v1, v2 mul:2', encoding: 'VOP3A', result: 'v0 = v1 × v2 × 2' },
+  { line: 'v_mul_f32 v0, v1, v2 clamp', encoding: 'VOP3A', result: 'v0 = v1 × v2, clamped to [0.0, 1.0]' },
   { line: 'v_sub_f32 v0, v1, v2 div:2', encoding: 'VOP3A', result: 'v0 = (v1 − v2) ÷ 2' },
   { line: 'v_fma_f16 v0, v1, v2, v3 op_sel:[1,0,0,1]', encoding: 'VOP3A', result: 'hi(v0) = hi(v1) × lo(v2) + lo(v3), keeping lo(v0)' },
   { line: 'v_add_co_u32 v0, s0, v1, v2 clamp', encoding: 'VOP3B', result: 'v0 = v1 + v2, saturating at 0xFFFFFFFF; s0 gets the carries' },
@@ -617,7 +618,7 @@ export class Encyclopedia {
     ]);
     html += list('Output Modifiers', [
       '<b>clamp</b>: a floating-point result is clamped to [0.0, 1.0], and NaN becomes 0. An integer result that overflows saturates at the limits of its type instead of wrapping (v_add_nc_u32, v_add_co_u32, v_mul_lo_u32, v_mad_u32_u24, the packed and dot instructions, …), and each half of a packed result is clamped on its own. Bitwise, shift, move and lane instructions (v_and_b32, v_lshlrev_b32, v_mov_b32, v_readlane_b32, …) have no clamp, and compares take it only when they compare floats (not v_cmp_class), where it leaves the mask unchanged',
-      `<b>mul:2</b>, <b>mul:4</b> and <b>div:2</b> (OMOD) multiply a floating-point result (f16, f32 or f64) by 2, 4 or 0.5, before any clamp: ${code('mul:2 clamp')} doubles, then clamps. One per instruction, and only on instructions with a floating-point result`,
+      `<b>mul:2</b>, <b>mul:4</b> and <b>div:2</b> (OMOD) multiply an f32 result by 2, 4 or 0.5, in VOP3, one per instruction. As in LLVM, they assemble on any floating-point result and in SDWA too, but the devkit's GPU ignores them (and the editor warns) in SDWA, alongside clamp (${code('mul:2 clamp')} only clamps), and on f16 and f64 results, whose denormals it keeps`,
       '<b>dst_sel</b> (SDWA): writes the result to BYTE_0–BYTE_3, WORD_0 or WORD_1 of vdst (default DWORD: all of it). <b>dst_unused</b> sets the rest of vdst: UNUSED_PAD zeros it (the default), UNUSED_SEXT sign-extends the result into the bits above it and zeros those below, and UNUSED_PRESERVE keeps them',
       'SDWA compares write a lane mask, so they take no clamp, mul:/div:, dst_sel or dst_unused',
     ]);

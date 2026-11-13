@@ -689,6 +689,7 @@ function parseVALU(
 
   // Modifiers → instruction fields
   if (mods.omod) instr.omod = mods.omod;
+  mark(instr, 'omod', mods.seen.get('mul') ?? mods.seen.get('div'));
   if (mods.clamp) instr.clamp = true;
   if (mods.dppCtrl !== undefined) instr.dppCtrl = mods.dppCtrl;
   if (mods.dpp8) instr.dpp8 = mods.dpp8;
