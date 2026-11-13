@@ -228,7 +228,8 @@ const INTRA_WAVE: Tutorial = {
         '• <strong>row_xmask:n</strong> — lane i reads lane i XOR n\n\n' +
         '<strong>DPP8</strong> (<code>dpp8:[…]</code>) lets each lane pick any lane within its group of 8.\n\n' +
         'On RDNA2, DPP never crosses a 16-lane row — GCN\'s <code>wave_shl</code>, <code>wave_ror</code> and <code>row_bcast</code> no longer exist. To move data between the two rows, use <code>v_permlanex16_b32</code>, <code>ds_swizzle_b32</code> or <code>v_readlane_b32</code>.\n\n' +
-        'Step through the example and compare v1–v3 with the lane index in v0. DPP is the workhorse behind <code>WavePrefixSum</code>, <code>WaveActiveSum</code>, and other subgroup operations in HLSL/GLSL.',
+        'Step through the example and compare v1–v3 with the lane index in v0. DPP is the workhorse behind <code>WavePrefixSum</code>, <code>WaveActiveSum</code>, and other subgroup operations in HLSL/GLSL.\n\n' +
+        'Tip: you don\'t need to remember the syntax. The <strong>Encoding</strong> buttons in Instruction Info, under the editor (collapsed during tutorials), add DPP16 or DPP8 to the instruction at the cursor, and its ▾ fields then list the lane controls.',
       code: '; v0 = lane index (0..31)\nv_mbcnt_lo_u32_b32 v0, -1, 0\n;\n; Lane i reads lane i-1 of its row; lanes 0 and 16 have no source and read 0\nv_mov_b32 v1, v0 row_shr:1 bound_ctrl:1\n;\n; Lane i reads lane i XOR 1 (swap neighbours)\nv_mov_b32 v2, v0 row_xmask:1\n;\n; Every lane reads lane 3 of its own row (3 or 19)\nv_mov_b32 v3, v0 row_share:3\ns_endpgm',
     },
     {
@@ -267,7 +268,8 @@ const SDWA_TUTORIAL: Tutorial = {
       title: 'What is SDWA?',
       text:
         'GPU registers are 32 bits wide, but data often comes in smaller pieces — 8-bit color channels, 16-bit integers, packed formats. <strong>SDWA</strong> (Sub-Dword Addressing) lets you operate on individual <em>bytes</em> or <em>words</em> within a register without manual shifting and masking.\n\n' +
-        'SDWA is a <em>modifier</em> on existing VOP1, VOP2 and VOPC instructions. It adds source selectors (which part to read), destination selectors (which part to write), and sign/zero extension — all in a single instruction.',
+        'SDWA is a <em>modifier</em> on existing VOP1, VOP2 and VOPC instructions. It adds source selectors (which part to read), destination selectors (which part to write), and sign/zero extension — all in a single instruction.\n\n' +
+        'Tip: the <strong>Encoding</strong> buttons in Instruction Info, under the editor (collapsed during tutorials), add SDWA to the instruction at the cursor, and its ▾ fields then list the selectors.',
     },
     {
       title: 'Source Selectors',

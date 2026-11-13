@@ -83,6 +83,88 @@
   margin-bottom: 2px;
 }
 
+/* ── Encoding switch: a VOP1, VOP2 or VOPC instruction as its 32-bit form, VOP3, DPP16, DPP8 or SDWA ── */
+
+.instr-info-diagram-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2px 12px;
+  margin-bottom: 3px;
+}
+
+.instr-info-diagram-head .instr-info-diagram-label {
+  margin-bottom: 0;
+}
+
+.instr-info-encodings {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.instr-info-encodings__label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.instr-info-encodings__buttons {
+  display: flex;
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.instr-info-encoding {
+  background: var(--bg-tertiary);
+  border: none;
+  border-left: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  padding: 1px 7px;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.instr-info-encoding:first-child {
+  border-left: none;
+}
+
+.instr-info-encoding:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.instr-info-encoding--current,
+.instr-info-encoding--current:hover {
+  background: var(--accent-cyan);
+  color: var(--bg-primary);
+  font-weight: 700;
+  cursor: default;
+}
+
+/* Encodings the instruction cannot use: the tip says why */
+.instr-info-encoding--unavailable,
+.instr-info-encoding--unavailable:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.instr-info-encoding:focus {
+  outline: none;
+}
+
+.instr-info-encoding:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--text-accent);
+}
+
 .instr-info-bitfield {
   border: 1px solid var(--border-default);
   border-radius: 3px;

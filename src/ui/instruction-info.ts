@@ -10,7 +10,10 @@ import { lookupByMnemonic } from '../isa/opcodes';
 import { decodeBinary, describeDppCtrl, dppCtrlMeaning, encodeInstruction, scalarRegName, sourceFieldName } from '../isa/encoding';
 import { OperandRole, operandRegCount, valuSourceCount, hasPackedModifiers } from '../isa/operands';
 import { VCC_LO } from '../isa/constants';
-import { checkLine, editChoices, labelsIn, lineEdit, ModifierChoices, ModifierField, modifierOptions, replaceSpan } from '../assembler/operand-edit';
+import {
+  checkLine, editChoices, EncodingKey, EncodingOption, encodingOptions, labelsIn, lineEdit, ModifierChoices, ModifierField,
+  modifierOptions, replaceSpan,
+} from '../assembler/operand-edit';
 import { OperandPicker } from './operand-picker';
 import { ModifierPicker } from './modifier-picker';
 
@@ -363,6 +366,33 @@ function encodingName(d: DecodedInstruction, info: OpcodeInfo): string {
   return d.encoding;
 }
 
+/**
+ * The buttons that rewrite a VOP1, VOP2 or VOPC instruction in another encoding. Each one's tip says what the
+ * encoding offers, and what the line would become and lose, or why the instruction cannot be encoded so.
+ */
+function encodingSwitchHtml(options: EncodingOption[], bytes: number): string {
+  let html = `<div class="instr-info-encodings" role="group" aria-label="Encoding">` +
+    `<span class="instr-info-encodings__label" aria-hidden="true">Encoding</span><div class="instr-info-encodings__buttons">`;
+  for (const o of options) {
+    const available = !o.current && o.line !== undefined;
+    let head = `${o.label} · not available: ${o.error}`;
+    if (o.current) head = `${o.label} · ${bytes} bytes · in use`;
+    else if (o.line !== undefined && o.bytes !== undefined) {
+      const change = o.bytes - bytes;
+      head = `${o.label} · ${o.bytes} bytes${change ? ` (${change > 0 ? '+' : '−'}${Math.abs(change)})` : ''}`;
+    }
+    const tip = [head, o.detail];
+    if (available) {
+      tip.push(`Click to rewrite the line as:\n${o.line!.trim()}`);
+      if (o.dropped.length) tip.push(`This leaves out ${o.dropped.join(', ')}`);
+    }
+    const state = o.current ? ' instr-info-encoding--current' : available ? '' : ' instr-info-encoding--unavailable';
+    html += `<button type="button" class="instr-info-encoding${state}" data-encoding="${o.key}" aria-pressed="${o.current}"` +
+      `${o.current || available ? '' : ' aria-disabled="true"'} title="${escapeHtml(tip.join('\n\n'))}">${escapeHtml(o.label)}</button>`;
+  }
+  return `${html}</div></div>`;
+}
+
 // ── Operand text and the math formula ──
 
 function constantText(op: Operand): string {
@@ -502,6 +532,9 @@ export class InstructionInfo {
   /** Options of the modifier fields of `modLine`, which every refresh of the panel would otherwise recompute. */
   private modLine = '';
   private modOptions = new Map<string, ModifierChoices | null>();
+  /** The encodings of the instruction on `encLine`, likewise. */
+  private encLine = '';
+  private encOptions: EncodingOption[] | null = null;
   private editHandler: ((edit: OperandEdit) => void) | null = null;
 
   constructor(container: HTMLElement) {
@@ -530,7 +563,13 @@ export class InstructionInfo {
     this.bodyEl.className = 'instr-info-body';
     this.bodyEl.innerHTML = PLACEHOLDER;
     this.bodyEl.addEventListener('click', e => {
-      const cell = (e.target as HTMLElement).closest<HTMLElement>('.instr-info-bit--editable');
+      const target = e.target as HTMLElement;
+      const encoding = target.closest<HTMLElement>('.instr-info-encoding');
+      if (encoding) {
+        this.switchEncoding(encoding.dataset.encoding as EncodingKey);
+        return;
+      }
+      const cell = target.closest<HTMLElement>('.instr-info-bit--editable');
       if (cell) this.openField(cell);
     });
     this.bodyEl.addEventListener('keydown', e => {
@@ -596,6 +635,27 @@ export class InstructionInfo {
     const key = `${mod}:${lane}`;
     if (!this.modOptions.has(key)) this.modOptions.set(key, modifierOptions(lineText, mod, lane));
     return this.modOptions.get(key)!;
+  }
+
+  /** The encodings the instruction on `lineText` can switch between, remembered for the line on show. */
+  private encodingChoices(lineText: string): EncodingOption[] | null {
+    if (lineText !== this.encLine) {
+      this.encLine = lineText;
+      this.encOptions = encodingOptions(lineText);
+    }
+    return this.encOptions;
+  }
+
+  /** Rewrite the instruction on show in encoding `key`, if it can be encoded so. */
+  private switchEncoding(key: EncodingKey): void {
+    const shown = this.shown;
+    const handler = this.editHandler;
+    if (!shown || !handler) return;
+    const option = this.encodingChoices(shown.lineText)?.find(o => o.key === key);
+    if (!option || option.current || option.line === undefined) return;
+    const { span, text } = lineEdit(shown.lineText, option.line);
+    this.closePickers();
+    handler({ line: shown.line, span, text, lineText: shown.lineText });
   }
 
   /** Open the picker on an editable field (or close it if it is already open there). */
@@ -751,10 +811,14 @@ export class InstructionInfo {
     if (encodeError) html += `<div class="instr-info-desc" style="color:#f85149">Cannot encode: ${escapeHtml(encodeError)}</div>`;
 
     let anyEditable = false;
+    const encodings = editable ? this.encodingChoices(lineText) : null;
     layout.forEach((dword, i) => {
       const word = words[i] >>> 0;
       html += `<div class="instr-info-diagram">`;
-      html += `<span class="instr-info-diagram-label">${layout.length > 1 ? `DWORD ${i} · ` : ''}${escapeHtml(dword.label)}</span>`;
+      const label = `<span class="instr-info-diagram-label">${layout.length > 1 ? `DWORD ${i} · ` : ''}${escapeHtml(dword.label)}</span>`;
+      // The encoding switch sits beside the label of the first dword, which it changes
+      html += i === 0 && encodings
+        ? `<div class="instr-info-diagram-head">${label}${encodingSwitchHtml(encodings, words.length * 4)}</div>` : label;
       html += `<div class="instr-info-bitfield"><div class="instr-info-ruler">`;
       for (const f of dword.fields) {
         const width = f.hi - f.lo + 1;
@@ -806,7 +870,10 @@ export class InstructionInfo {
     if (words.length) {
       const hexStr = words.map(w => (w >>> 0).toString(16).padStart(8, '0')).join(' ');
       html += `<div class="instr-info-hex">Binary: <span>${hexStr}</span>`;
-      if (anyEditable) html += `<em class="instr-info-edit-hint">Click a field marked ▾ to change it</em>`;
+      if (anyEditable || encodings) {
+        const hint = encodings ? 'Click a field marked ▾ or another encoding to change it' : 'Click a field marked ▾ to change it';
+        html += `<em class="instr-info-edit-hint">${hint}</em>`;
+      }
       html += `</div>`;
     }
 

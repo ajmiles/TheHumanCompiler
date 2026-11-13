@@ -12,7 +12,9 @@ import { Puzzle, PuzzleResult } from '../src/puzzle/types';
 import { InstructionFormat, OperandSlot, OperandType } from '../src/isa/types';
 import { TTMP_MAX, TTMP_MIN } from '../src/isa/constants';
 import { twoOverPiTable } from '../src/isa/float64';
-import { checkLine, EditChoice, editChoices, labelsIn, lineEdit, ModifierField, modifierOptions, replaceSpan } from '../src/assembler/operand-edit';
+import {
+  checkLine, EditChoice, editChoices, EncodingOption, encodingOptions, labelsIn, lineEdit, ModifierField, modifierOptions, replaceSpan,
+} from '../src/assembler/operand-edit';
 import { highestNamedRegister, loadInvocationInputs, runPuzzle as runPuzzleBinary, vgprsUsed } from '../src/puzzle/runner';
 import { hardwareProblems } from '../src/hardware/checks';
 import { globalLoad, globalStore, INPUT_OFFSET, inputWords, jobPrograms, pickScratch, resultBytes, setupSource, sLoadDword, sMemtime, VGPR_BLOCK_DWORDS, vgprWord } from '../src/hardware/harness';
@@ -6891,6 +6893,72 @@ group('Instruction Info editing: DPP and SDWA fields');
   }
   assert(checkedOptions > 600 && wrong.length === 0,
     `each of ${checkedOptions} DPP and SDWA options changes only its own field${wrong.length ? `; e.g. ${wrong[0]} (${wrong.length} wrong)` : ''}`);
+}
+
+group('Instruction Info editing: switching encodings');
+{
+  const byKey = (line: string): Record<string, EncodingOption> => Object.fromEntries((encodingOptions(line) ?? []).map(o => [o.key, o]));
+  const plain = 'v_add_f32 v0, v1, v2';
+  const vop2 = byKey(plain);
+  assert(encodingOptions(plain)!.map(o => `${o.label}${o.current ? '*' : ''}:${o.bytes}`).join() === 'VOP2*:4,VOP3A:8,DPP16:8,DPP8:8,SDWA:8' &&
+    vop2.vop3.line === 'v_add_f32_e64 v0, v1, v2' && vop2.dpp16.line === 'v_add_f32 v0, v1, v2 quad_perm:[0,1,2,3]' &&
+    vop2.dpp8.line === 'v_add_f32 v0, v1, v2 dpp8:[0,1,2,3,4,5,6,7]' &&
+    vop2.sdwa.line === 'v_add_f32 v0, v1, v2 dst_sel:DWORD dst_unused:UNUSED_PRESERVE src0_sel:DWORD src1_sel:DWORD',
+    'VOP2: rewritten as VOP3A (_e64), and as DPP16, DPP8 and SDWA from a lane control or selectors');
+  assert(byKey('v_mov_b32 v1, v0').sdwa.line === 'v_mov_b32 v1, v0 dst_sel:DWORD dst_unused:UNUSED_PRESERVE src0_sel:DWORD' &&
+    byKey('v_cmp_eq_f32 vcc_lo, v1, v2').sdwa.line === 'v_cmp_eq_f32 vcc_lo, v1, v2 src0_sel:DWORD src1_sel:DWORD' &&
+    byKey('v_add_co_ci_u32 v0, vcc_lo, v1, v2, vcc_lo').vop3.label === 'VOP3B', 'SDWA: the selectors of VOP1 and VOPC; carry ops become VOP3B');
+  assert(['vop3', 'dpp16', 'dpp8', 'sdwa'].every(k => byKey(vop2[k].line!)[k].current && byKey(vop2[k].line!).e32.line === plain),
+    'switching back to VOP2 gives the line it started from');
+
+  // The lane control and selectors written for DPP16, DPP8 and SDWA leave every result as it was
+  const results = (line: string) => {
+    const emu = run1(line, e => {
+      for (let lane = 0; lane < 32; lane++) {
+        e.state.writeVGPR(1, lane, lane * 1.25 - 7);
+        e.state.writeVGPR(2, lane, 3.5 - lane);
+        e.state.writeVGPR_u32(0, lane, 0xDEADBEEF);
+      }
+    });
+    return `${Array.from({ length: 32 }, (_, lane) => emu.state.readVGPR_u32(0, lane)).join()} vcc ${emu.state.readSGPR(106)}`;
+  };
+  for (const line of [plain, 'v_sub_nc_u32 v0, v1, v2', 'v_cvt_i32_f32 v0, v1', 'v_cmp_gt_f32 vcc_lo, v1, v2']) {
+    const changed = encodingOptions(line)!.filter(o => o.line !== undefined && results(o.line) !== results(line)).map(o => o.label);
+    assert(changed.length === 0, `${line}: every encoding gives the same results${changed.length ? ` (not ${changed.join(', ')})` : ''}`);
+  }
+
+  // Each encoding keeps the modifiers it has room for and lists those it leaves out
+  const vop3 = byKey('v_add_f32_e64 v0, -v1, |v2| clamp mul:2 ; keep me');
+  assert(vop3.vop3.current && vop3.e32.line === 'v_add_f32 v0, v1, v2 ; keep me' && vop3.e32.dropped.join(' ') === '-v1 |v2| clamp mul:2' &&
+    vop3.dpp16.line === 'v_add_f32 v0, -v1, |v2| quad_perm:[0,1,2,3] ; keep me' && vop3.dpp16.dropped.join(' ') === 'clamp mul:2' &&
+    vop3.dpp8.dropped.join(' ') === '-v1 |v2| clamp mul:2' && vop3.sdwa.dropped.length === 0 &&
+    vop3.sdwa.line === 'v_add_f32 v0, -v1, |v2| clamp mul:2 dst_sel:DWORD dst_unused:UNUSED_PRESERVE src0_sel:DWORD src1_sel:DWORD ; keep me',
+    'from VOP3: NEG, ABS, CLAMP and OMOD are kept where the encoding has them, else listed as left out');
+  const dpp = byKey('loop: v_add_f32_dpp v0, v1, v2 row_shr:1 bound_ctrl:1');
+  assert(dpp.e32.line === 'loop: v_add_f32 v0, v1, v2' && dpp.vop3.line === 'loop: v_add_f32_e64 v0, v1, v2' &&
+    dpp.e32.dropped.join(' ') === 'row_shr:1 bound_ctrl:1' && byKey(dpp.dpp8.line!).dpp16.dropped.length === 0,
+    'from DPP16: the _dpp suffix and the DPP modifiers go, the label stays');
+  const sdwa = byKey('v_add_nc_u32 v2, sext(v0), v1 src0_sel:BYTE_0 src1_sel:DWORD');
+  assert(sdwa.e32.line === 'v_add_nc_u32 v2, v0, v1' && sdwa.e32.dropped.join(' ') === 'sext(v0) src0_sel:BYTE_0' &&
+    byKey('v_mov_b32_sdwa v1, v0').e32.line === 'v_mov_b32 v1, v0' && byKey('v_mov_b32_sdwa v1, v0').e32.dropped.length === 0,
+    'from SDWA: selectors and SEXT are listed as left out only when they change something');
+
+  // Encodings the instruction cannot use say why
+  const cmp = byKey('v_cmp_eq_f32_e64 s4, v1, v2');
+  assert(cmp.e32.error === 'The 32-bit VOPC encoding always writes the result to VCC_LO, not s4' &&
+    /VOPC instructions cannot use DPP/.test(cmp.dpp16.error ?? '') && cmp.dpp16.line === undefined &&
+    cmp.sdwa.line === 'v_cmp_eq_f32 s4, v1, v2 src0_sel:DWORD src1_sel:DWORD', 'VOPC: no DPP, and VOPC itself only writes VCC_LO');
+  const sgpr = byKey('v_add_f32_e64 v0, v1, s2');
+  assert(sgpr.e32.error === 'SRC1 is s2, but the 32-bit VOP2 encoding only has room for a VGPR there' &&
+    /vsrc1 to be a VGPR/.test(sgpr.dpp16.error ?? '') && sgpr.sdwa.line !== undefined &&
+    /cannot use literal constants/.test(byKey('v_add_f32 v0, 0x40490fdb, v2').sdwa.error ?? '') &&
+    /cannot use SDWA/.test(byKey('v_fmac_f32 v0, v1, v2').sdwa.error ?? ''), 'unavailable encodings carry the reason');
+  assert(['v_add_f64 v[0:1], v[2:3], v[4:5]', 'v_pk_add_f16 v0, v1, v2', 's_add_u32 s0, s1, s2', 'v_add_f32_e64 v0, v1, s2 row_shr:1',
+    'v_nop', 'v_madmk_f32 v0, v1, 0x40490fdb, v2', 'v_cndmask_b32_e64 v0, v1, v2, s4'].every(line => encodingOptions(line) === null),
+    'no switch for VOP3-only, VOP3P or scalar instructions, lines that do not assemble, or instructions with no other encoding');
+  assert(/NEG and ABS on sources/.test(vop2.vop3.detail) && !/NEG/.test(byKey('v_add_nc_u32 v0, v1, v2').vop3.detail) &&
+    /SEXT/.test(byKey('v_add_nc_u32 v0, v1, v2').sdwa.detail) && /adds nothing v_mov_b32 can use/.test(byKey('v_mov_b32 v0, v1').vop3.detail),
+    'details: the modifiers each encoding offers the instruction');
 }
 
 group('16-bit integer VOP3, dot products and pack conversions');

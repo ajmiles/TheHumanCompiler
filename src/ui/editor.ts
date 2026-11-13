@@ -8,6 +8,7 @@ import 'monaco-editor/esm/vs/editor/edcore.main.js';
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js';
 import { getAllMnemonics, getAllOpcodes, lookupByMnemonic } from '../isa/opcodes';
 import { InstructionFormat } from '../isa/types';
+import { checkLine, encodingOptions } from '../assembler/operand-edit';
 import { registerAt } from './register-hover';
 
 // Only the base editor worker is needed (no language-service workers).
@@ -246,16 +247,26 @@ function registerLanguage(): void {
 
       const info = lookupByMnemonic(word.word) ?? lookupByMnemonic(word.word.replace(/_(e32|e64|dpp|sdwa)$/, ''));
       if (info) {
+        const contents: monaco.IMarkdownString[] = [
+          { value: `**${info.mnemonic}** — ${info.format} (opcode 0x${info.opcode.toString(16).padStart(2, '0')})` },
+          { value: '```\n' + info.syntax + '\n```' },
+          { value: info.description },
+        ];
+        // On the mnemonic of a VOP1, VOP2 or VOPC instruction: the other encodings it can switch to
+        const lineText = model.getLineContent(position.lineNumber);
+        if (checkLine(lineText).instr?.spans?.mnemonic?.start === word.startColumn) {
+          const others = (encodingOptions(lineText) ?? []).filter(o => !o.current && o.line !== undefined).map(o => o.label);
+          if (others.length) {
+            const list = others.length > 1 ? `${others.slice(0, -1).join(', ')} or ${others[others.length - 1]}` : others[0];
+            contents.push({ value: `Can also be encoded as ${list}: switch with the Encoding buttons in Instruction Info.` });
+          }
+        }
         return {
           range: new monaco.Range(
             position.lineNumber, word.startColumn,
             position.lineNumber, word.endColumn,
           ),
-          contents: [
-            { value: `**${info.mnemonic}** — ${info.format} (opcode 0x${info.opcode.toString(16).padStart(2, '0')})` },
-            { value: '```\n' + info.syntax + '\n```' },
-            { value: info.description },
-          ],
+          contents,
         };
       }
 
