@@ -4,8 +4,8 @@
 import { LeaderboardEntryWithOwner, LeaderboardCategory, HardwareBoard, boardRows, clearLeaderboard } from '../puzzle/leaderboard';
 import { fetchOnlineBoards, fetchHardwareBoard, isOnlineEnabled, deleteMyOnlineScores } from '../firebase/online-leaderboard';
 import { Puzzle } from '../puzzle/types';
-import { hardwareTableHtml } from './hardware-board';
-import { confirmDeleteScores } from './confirm-dialog';
+import { hardwareTableHtml, listenForHardwareHelp } from './hardware-board';
+import { confirmDeleteScores } from './dialog';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
   { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
@@ -35,6 +35,7 @@ export class LeaderboardBrowser {
     this.content.className = 'puzzle-select-content';
     this.overlay.appendChild(this.content);
     container.appendChild(this.overlay);
+    listenForHardwareHelp(this.content);
   }
 
   show(allPuzzles: Puzzle[], completedIds: Set<string>): void {

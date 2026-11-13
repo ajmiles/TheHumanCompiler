@@ -29,8 +29,11 @@ import {
   SubmittedSolution,
 } from '../firebase/online-leaderboard';
 import { getLeaderboardPref } from './settings';
-import { confirmDeleteScores } from './confirm-dialog';
-import { DevkitRun, devkitOnline, devkitRunStat, hardwareTableHtml, submissionStatusText } from './hardware-board';
+import { confirmDeleteScores } from './dialog';
+import {
+  DevkitRun, devkitOnline, devkitRunStat, HARDWARE_HELP_BUTTON, hardwareTableHtml, listenForHardwareHelp,
+  submissionStatusText,
+} from './hardware-board';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
   { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
@@ -99,6 +102,7 @@ export class LeaderboardOverlay {
     this.content.className = 'leaderboard-modal';
     this.overlay.appendChild(this.content);
     container.appendChild(this.overlay);
+    listenForHardwareHelp(this.content);
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !this.overlay.classList.contains('puzzle-overlay--hidden')) {
@@ -348,7 +352,7 @@ export class LeaderboardOverlay {
         <div class="leaderboard-stat" id="lb-hw-stat">
           <span class="leaderboard-stat__icon">⏱️</span>
           <span class="leaderboard-stat__value${/^\d+$/.test(run.value) ? '' : ' leaderboard-stat__value--text'}" id="lb-hw-stat-value">${this.escapeHtml(run.value)}</span>
-          <span class="leaderboard-stat__label">hardware cycles</span>
+          <span class="leaderboard-stat__label">hardware cycles${HARDWARE_HELP_BUTTON}</span>
         </div>` : ''}
       </div>
     `;

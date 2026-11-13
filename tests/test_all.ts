@@ -22,7 +22,7 @@ import { HW_HARNESS, HwJobRuns } from '../src/hardware/protocol';
 import { codeHash, hash64, puzzleHash } from '../src/hardware/hash';
 import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
-import { devkitOnline, devkitRunStat, hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
+import { devkitOnline, devkitRunStat, HARDWARE_HELP_BUTTON, hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
 import { addLeaderboardEntry, bestPerName, boardRows, improvedText, mergeBests, nameKeyOf, PLAYER_NAME_KEY } from '../src/puzzle/leaderboard';
 import { isShareId, newShareId, shareLink, shareParam, withoutShare, withSharedRevision } from '../src/puzzle/share';
 import { GPUState } from '../src/emulator/state';
@@ -7919,7 +7919,8 @@ group('Hardware runs: the Hardware cycles board');
   const entries = Array.from({ length: 12 }, (_, i) => ({ id: `e${i}`, name: i === 1 ? '<b>Ann</b>' : `P${i}`, cycles: 100 + i, isMine: i >= 10 }));
   const html = hardwareTableHtml(entries, status(1, 2), 'e11', now);
   assert(html.includes('leaderboard-table-section--wide') && html.includes('Devkit online, 2 waiting') &&
-    html.includes('<td>&#60;b&#62;Ann&#60;/b&#62;</td>') && !html.includes('<b>'), 'hardware table: full width, with the devkit status and escaped names');
+    html.includes('<td>&#60;b&#62;Ann&#60;/b&#62;</td>') && !html.includes('<b>') && html.includes(`devkit)${HARDWARE_HELP_BUTTON}`),
+    'hardware table: full width, with the devkit status, escaped names and the help button in its title');
   assert(html.includes('<tr class="leaderboard-row--highlight leaderboard-row--mine"><td>12</td><td>P11</td><td>111</td></tr>') &&
     html.includes('<tr class="leaderboard-row--mine"><td>11</td><td>P10</td><td>110</td></tr>') &&
     html.includes('<td>🥇</td><td>P0</td><td>100</td>') && html.includes('<tr><td>8</td><td>P7</td><td>107</td></tr>') &&

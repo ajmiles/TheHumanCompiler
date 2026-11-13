@@ -21,6 +21,7 @@
   --accent-cyan: #39c5cf;
   --accent-orange: #db6d28;
   --accent-purple: #bc8cff;
+  --accent-blue: #1f6feb;
 
   /* Borders */
   --border-default: #30363d;
@@ -533,21 +534,21 @@ html, body {
   display: none;
 }
 
-/* ── Confirmation Dialog ── */
+/* ── Dialogs ── */
 
-.confirm-dialog {
+.dialog {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1100; /* in front of the overlays (1000) that ask */
+  z-index: 1100; /* in front of the overlays (1000) that open them */
 }
 
-.confirm-dialog__box {
+.dialog__box {
   background: var(--bg-secondary);
-  border: 1px solid var(--accent-red);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   padding: 24px;
   max-width: 420px;
@@ -555,29 +556,108 @@ html, body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
-.confirm-dialog__title {
-  color: var(--accent-red);
+.dialog__title {
   font-size: 16px;
   margin-bottom: 12px;
 }
 
-.confirm-dialog__message {
+.dialog__message {
   color: var(--text-primary);
   margin-bottom: 20px;
 }
 
-.confirm-dialog__message p + p {
-  margin-top: 8px;
-  color: var(--text-secondary);
-}
-
-.confirm-dialog__buttons {
+.dialog__buttons {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.confirm-dialog__buttons .controls-bar__btn:focus-visible {
+.dialog__buttons .controls-bar__btn:focus-visible {
+  outline: 1px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
+/* A question before something that can't be undone */
+.dialog__box--danger {
+  border-color: var(--accent-red);
+}
+
+.dialog__box--danger .dialog__title {
+  color: var(--accent-red);
+}
+
+.dialog__box--danger .dialog__message p + p {
+  margin-top: 8px;
+  color: var(--text-secondary);
+}
+
+/* An explanation */
+.dialog__box--info {
+  border-color: var(--accent-blue);
+  max-width: 720px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.dialog__box--info .dialog__title {
+  color: var(--text-accent);
+}
+
+.dialog__box--info .dialog__message {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dialog__box--info .dialog__message h4 {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  color: var(--text-accent);
+}
+
+.dialog__box--info .dialog__message p + p {
+  margin-top: 6px;
+}
+
+.dialog__box--info .dialog__message ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.dialog__box--info .dialog__message li + li {
+  margin-top: 4px;
+}
+
+.dialog__box--info .dialog__message code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-cyan);
+}
+
+/* A help button: a small blue circle with a white "?" */
+.hw-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  color: #fff;
+  font: 700 10px/1 var(--font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+  vertical-align: 1px;
+  cursor: pointer;
+}
+
+.hw-help:hover {
+  box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.45);
+}
+
+.hw-help:focus-visible {
   outline: 1px solid var(--accent-cyan);
   outline-offset: 2px;
 }
