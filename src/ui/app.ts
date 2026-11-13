@@ -13,6 +13,7 @@ import { LeaderboardBrowser } from './leaderboard-browser';
 import { Encyclopedia } from './encyclopedia';
 import { SettingsOverlay, getLeaderboardPref } from './settings';
 import { MusicPlayer } from './music';
+import { archSelect } from './arch-select';
 import { ShareBar } from './share-bar';
 import { registerValueHover } from './register-hover';
 
@@ -245,7 +246,7 @@ export class App {
 
     const info = document.createElement('div');
     info.className = 'header__info';
-    info.innerHTML = '<span class="header__badge">RDNA2</span>';
+    info.appendChild(archSelect());
 
     header.append(title, puzzleBtn, lbBrowseBtn, spacer, encyBtn, importBtn, feedbackBtn, settingsBtn, this.music.element, info);
 
