@@ -5345,6 +5345,18 @@ group('SDWA Sub-Dword Addressing');
   assert(emu.state.readVGPR_u32(1, 0) === 0xFFFF00AB, 'SDWA: dst_unused:UNUSED_PRESERVE keeps upper bits');
 }
 
+// DST_UNUSED unwritten: what the field's 0 means, UNUSED_PAD (LLVM would assume UNUSED_PRESERVE)
+{
+  const bare = assemble('v_mov_b32 v1, v0 dst_sel:BYTE_1\ns_endpgm').binary;
+  const pad = assemble('v_mov_b32 v1, v0 dst_sel:BYTE_1 dst_unused:UNUSED_PAD\ns_endpgm').binary;
+  const emu = setup('v_mov_b32 v1, v0 dst_sel:BYTE_1\ns_endpgm');
+  emu.state.writeVGPR_u32(0, 0, 0x000000AB);
+  emu.state.writeVGPR_u32(1, 0, 0xFFFFFFFF);
+  emu.run();
+  assert(bare.length === pad.length && bare.every((w, i) => w === pad[i]) && ((bare[1] >>> 11) & 3) === 0 &&
+    emu.state.readVGPR_u32(1, 0) === 0x0000AB00, 'SDWA: an unwritten dst_unused leaves DST_UNUSED 0, UNUSED_PAD');
+}
+
 // VOP2 with both src0_sel and src1_sel
 {
   const emu = setup('v_add_nc_u32 v2, v0, v1 src0_sel:BYTE_0 src1_sel:BYTE_0\ns_endpgm');
@@ -6933,10 +6945,10 @@ group('Instruction Info editing: switching encodings');
   assert(encodingOptions(plain)!.map(o => `${o.label}${o.current ? '*' : ''}:${o.bytes}`).join() === 'VOP2*:4,VOP3A:8,DPP16:8,DPP8:8,SDWA:8' &&
     vop2.vop3.line === plain && vop2.vop3.preview?.join('; ') === 'an SGPR or constant as SRC1; NEG and ABS on sources; CLAMP; output modifiers (mul:2, mul:4, div:2)' &&
     vop2.dpp16.line === 'v_add_f32 v0, v1, v2 quad_perm:[0,1,2,3]' && vop2.dpp8.line === 'v_add_f32 v0, v1, v2 dpp8:[0,1,2,3,4,5,6,7]' &&
-    vop2.sdwa.line === 'v_add_f32 v0, v1, v2 dst_sel:DWORD dst_unused:UNUSED_PRESERVE src0_sel:DWORD src1_sel:DWORD' &&
+    vop2.sdwa.line === 'v_add_f32 v0, v1, v2 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:DWORD' &&
     !vop2.dpp16.preview && !vop2.sdwa.preview,
     'VOP2: VOP3A is a preview of what would make the line use it; DPP16, DPP8 and SDWA start from a lane control or selectors');
-  assert(byKey('v_mov_b32 v1, v0').sdwa.line === 'v_mov_b32 v1, v0 dst_sel:DWORD dst_unused:UNUSED_PRESERVE src0_sel:DWORD' &&
+  assert(byKey('v_mov_b32 v1, v0').sdwa.line === 'v_mov_b32 v1, v0 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD' &&
     byKey('v_cmp_eq_f32 vcc_lo, v1, v2').sdwa.line === 'v_cmp_eq_f32 vcc_lo, v1, v2 src0_sel:DWORD src1_sel:DWORD' &&
     byKey('v_add_co_ci_u32 v0, vcc_lo, v1, v2, vcc_lo').vop3.label === 'VOP3B', 'SDWA: the selectors of VOP1 and VOPC; carry ops become VOP3B');
   assert(['dpp16', 'dpp8', 'sdwa'].every(k => byKey(vop2[k].line!)[k].current && byKey(vop2[k].line!).e32.line === plain) &&
@@ -6982,7 +6994,7 @@ group('Instruction Info editing: switching encodings');
   assert(vop3.vop3.current && vop3.e32.line === 'v_add_f32 v0, v1, v2 ; keep me' && vop3.e32.dropped.join(' ') === '-v1 |v2| clamp mul:2' &&
     vop3.dpp16.line === 'v_add_f32 v0, -v1, |v2| quad_perm:[0,1,2,3] ; keep me' && vop3.dpp16.dropped.join(' ') === 'clamp mul:2' &&
     vop3.dpp8.dropped.join(' ') === '-v1 |v2| clamp mul:2' && vop3.sdwa.dropped.length === 0 &&
-    vop3.sdwa.line === 'v_add_f32 v0, -v1, |v2| clamp mul:2 dst_sel:DWORD dst_unused:UNUSED_PRESERVE src0_sel:DWORD src1_sel:DWORD ; keep me',
+    vop3.sdwa.line === 'v_add_f32 v0, -v1, |v2| clamp mul:2 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:DWORD src1_sel:DWORD ; keep me',
     'from VOP3: NEG, ABS, CLAMP and OMOD are kept where the encoding has them, else listed as left out');
   const dpp = byKey('loop: v_add_f32_dpp v0, v1, v2 row_shr:1 bound_ctrl:1');
   assert(dpp.e32.line === 'loop: v_add_f32 v0, v1, v2' && dpp.vop3.line === 'loop: v_add_f32 v0, v1, v2' && !!dpp.vop3.preview &&

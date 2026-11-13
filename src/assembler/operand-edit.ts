@@ -689,7 +689,7 @@ function rewriteEncoding(lineText: string, instr: ParsedInstruction, info: Opcod
   if (key === 'dpp16') add('quad_perm:[0,1,2,3]');
   if (key === 'dpp8') add('dpp8:[0,1,2,3,4,5,6,7]');
   if (key === 'sdwa') {
-    if (info.format !== InstructionFormat.VOPC) ['dst_sel:DWORD', 'dst_unused:UNUSED_PRESERVE'].forEach(add);
+    if (info.format !== InstructionFormat.VOPC) ['dst_sel:DWORD', 'dst_unused:UNUSED_PAD'].forEach(add);
     add('src0_sel:DWORD');
     if (info.format !== InstructionFormat.VOP1) add('src1_sel:DWORD');
   }
