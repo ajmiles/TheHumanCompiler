@@ -5,6 +5,7 @@ import { LeaderboardEntryWithOwner, LeaderboardCategory, HardwareBoard, boardRow
 import { fetchOnlineBoards, fetchHardwareBoard, isOnlineEnabled, deleteMyOnlineScores } from '../firebase/online-leaderboard';
 import { Puzzle } from '../puzzle/types';
 import { hardwareTableHtml } from './hardware-board';
+import { confirmDeleteScores } from './confirm-dialog';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
   { key: 'codeSize', label: 'Code Size', unit: 'bytes', icon: '📦' },
@@ -151,11 +152,19 @@ export class LeaderboardBrowser {
 
     const deleteBtn = container.querySelector('#lb-browse-delete-btn') as HTMLButtonElement;
     deleteBtn?.addEventListener('click', async () => {
+      if (!(await confirmDeleteScores(title, isOnlineEnabled()))) return;
       clearLeaderboard(puzzleId);
       if (isOnlineEnabled()) {
-        deleteBtn.textContent = 'Deleting...';
-        deleteBtn.disabled = true;
+        // Drop boards still on their way (they'd redraw the button), and mark the button showing now: the boards may
+        // have been redrawn while the player was asked
+        const generation = ++this.generation;
+        const button = container.querySelector<HTMLButtonElement>('#lb-browse-delete-btn');
+        if (button) {
+          button.textContent = 'Deleting...';
+          button.disabled = true;
+        }
         await deleteMyOnlineScores(puzzleId);
+        if (generation !== this.generation) return; // another puzzle's boards are showing now
       }
       this.showPuzzleLeaderboard(puzzleId, title);
     });

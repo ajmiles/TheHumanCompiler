@@ -29,6 +29,7 @@ import {
   SubmittedSolution,
 } from '../firebase/online-leaderboard';
 import { getLeaderboardPref } from './settings';
+import { confirmDeleteScores } from './confirm-dialog';
 import { DevkitRun, devkitOnline, devkitRunStat, hardwareTableHtml, submissionStatusText } from './hardware-board';
 
 const CATEGORIES: { key: LeaderboardCategory; label: string; unit: string; icon: string }[] = [
@@ -78,6 +79,8 @@ export class LeaderboardOverlay {
   private nameEdited = false;
   /** The score is on its way online: the form waits. */
   private submitting = false;
+  /** The player's scores are being deleted online: the Delete button says so. */
+  private deleting = false;
   /** Why the last try at submitting didn't go through (shown under the form), and whether it was the name. */
   private submitError: { text: string; nameTaken: boolean } | null = null;
   /** The categories the submitted score bettered: null until it's submitted. */
@@ -124,6 +127,7 @@ export class LeaderboardOverlay {
     this.player = null;
     this.nameEdited = false;
     this.submitting = false;
+    this.deleting = false;
     this.submitError = null;
     this.improved = null;
     this.signInNote = null;
@@ -445,7 +449,7 @@ export class LeaderboardOverlay {
 
     html += `</div>`;
     html += `<div class="leaderboard-footer">`;
-    html += `<button class="controls-bar__btn controls-bar__btn--danger" id="lb-delete-mine-btn"${this.submitting ? ' disabled' : ''}>Delete My Scores</button>`;
+    html += `<button class="controls-bar__btn controls-bar__btn--danger" id="lb-delete-mine-btn"${this.submitting || this.deleting ? ' disabled' : ''}>${this.deleting ? 'Deleting...' : 'Delete My Scores'}</button>`;
     html += `<button class="controls-bar__btn leaderboard-close-btn" id="lb-close-btn">Close</button>`;
     html += `</div>`;
     html += `<div class="leaderboard-local-notice">${
@@ -464,18 +468,23 @@ export class LeaderboardOverlay {
 
     const deleteBtn = this.content.querySelector('#lb-delete-mine-btn') as HTMLButtonElement;
     deleteBtn?.addEventListener('click', async () => {
+      const asked = this.generation;
+      if (!(await confirmDeleteScores(puzzleTitle, isOnlineEnabled())) || asked !== this.generation) return;
       // Clear local scores
       clearLeaderboard(this.puzzleId);
       // Delete the player's online entry (and the solutions sent with it); their name stays theirs
       if (isOnlineEnabled()) {
-        deleteBtn.textContent = 'Deleting...';
-        deleteBtn.disabled = true;
         this.stopWatching();
-        this.generation++;
+        const generation = ++this.generation;
+        this.deleting = true;
         this.solutionSent = false;
         this.submittedId = null;
         this.improved = null;
+        // Drawn afresh: the boards may have been redrawn while the player was asked, and the button with them
+        this._renderInner(puzzleTitle, this._cachedOnlineResults);
         await deleteMyOnlineScores(this.puzzleId);
+        if (generation !== this.generation) return; // the screen has closed or moved on
+        this.deleting = false;
       }
       this._cachedOnlineResults = null;
       this.render(puzzleTitle);

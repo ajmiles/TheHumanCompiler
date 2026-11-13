@@ -441,6 +441,55 @@ html, body {
   display: none;
 }
 
+/* ── Confirmation Dialog ── */
+
+.confirm-dialog {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100; /* in front of the overlays (1000) that ask */
+}
+
+.confirm-dialog__box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent-red);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.confirm-dialog__title {
+  color: var(--accent-red);
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
+.confirm-dialog__message {
+  color: var(--text-primary);
+  margin-bottom: 20px;
+}
+
+.confirm-dialog__message p + p {
+  margin-top: 8px;
+  color: var(--text-secondary);
+}
+
+.confirm-dialog__buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-dialog__buttons .controls-bar__btn:focus-visible {
+  outline: 1px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
 .puzzle-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
