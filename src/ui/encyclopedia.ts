@@ -317,6 +317,60 @@ const SRC0_ENCODING_TABLE = [
   { range: '256–511', meaning: 'VGPR0–VGPR255', color: '#58a6ff' },
 ];
 
+/** The encodings that have modifiers: the columns of the Modifiers tab's table. */
+const MODIFIER_ENCODINGS = ['VOP3A', 'VOP3B', 'VOP3P', 'DPP16', 'DPP8', 'SDWA'] as const;
+type ModifierEncoding = typeof MODIFIER_ENCODINGS[number];
+
+interface ModifierRow {
+  name: string;
+  /** HTML: how it's written. */
+  syntax: string;
+  /** Where it's available: ✓, or which sources or instructions take it there. Absent: not available. */
+  in: Partial<Record<ModifierEncoding, string>>;
+}
+
+const code = (s: string) => `<code>${s}</code>`;
+/** Alternative spellings: `a`, `a or b`, `a, b or c`. */
+const either = (...forms: string[]) => {
+  const c = forms.map(code);
+  return c.length < 2 ? c.join('') : `${c.slice(0, -1).join(', ')} or ${c[c.length - 1]}`;
+};
+
+const INPUT_MODIFIERS: ModifierRow[] = [
+  { name: 'neg', syntax: either('-v1', 'neg(v1)'),
+    in: { VOP3A: 'src0–2', VOP3B: 'src0–2', VOP3P: 'src0–2, both halves', DPP16: 'src0, src1', SDWA: 'src0, src1' } },
+  { name: 'abs', syntax: either('|v1|', 'abs(v1)'),
+    in: { VOP3A: 'src0–2', VOP3P: 'v_fma_mix*, v_dot2_f32_f16 src2', DPP16: 'src0, src1', SDWA: 'src0, src1' } },
+  { name: 'neg_lo, neg_hi', syntax: code('neg_lo:[0,1]'), in: { VOP3P: '✓' } },
+  { name: 'op_sel', syntax: code('op_sel:[1,0,0,1]'), in: { VOP3A: '16-bit instructions', VOP3P: '✓' } },
+  { name: 'op_sel_hi', syntax: code('op_sel_hi:[0,1]'), in: { VOP3P: '✓' } },
+  { name: 'src0_sel, src1_sel', syntax: code('src0_sel:BYTE_1'), in: { SDWA: '✓' } },
+  { name: 'sext', syntax: code('sext(v1)'), in: { SDWA: 'src0, src1' } },
+];
+
+const OUTPUT_MODIFIERS: ModifierRow[] = [
+  { name: 'clamp', syntax: code('clamp'), in: { VOP3A: '✓', VOP3B: '✓', VOP3P: '✓', SDWA: 'not VOPC' } },
+  { name: 'mul, div', syntax: either('mul:2', 'mul:4', 'div:2'), in: { VOP3A: '✓', VOP3B: '✓', SDWA: 'not VOPC' } },
+  { name: 'dst_sel, dst_unused', syntax: code('dst_sel:WORD_1'), in: { SDWA: 'not VOPC' } },
+];
+
+/** The Modifiers tab's examples: each line assembles in its `encoding` (tested). */
+export const MODIFIER_EXAMPLES: { line: string; encoding: string; result: string }[] = [
+  { line: 'v_add_f32 v0, -v1, |v2|', encoding: 'VOP3A', result: 'v0 = −v1 + |v2|' },
+  { line: 'v_mul_f32 v0, v1, v2 mul:2 clamp', encoding: 'VOP3A', result: 'v0 = v1 × v2 × 2, clamped to [0.0, 1.0]' },
+  { line: 'v_sub_f32 v0, v1, v2 div:2', encoding: 'VOP3A', result: 'v0 = (v1 − v2) ÷ 2' },
+  { line: 'v_fma_f16 v0, v1, v2, v3 op_sel:[1,0,0,1]', encoding: 'VOP3A', result: 'hi(v0) = hi(v1) × lo(v2) + lo(v3), keeping lo(v0)' },
+  { line: 'v_add_co_u32 v0, s0, v1, v2 clamp', encoding: 'VOP3B', result: 'v0 = v1 + v2, saturating at 0xFFFFFFFF; s0 gets the carries' },
+  { line: 'v_pk_add_f16 v0, v1, v2 op_sel:[1,0] op_sel_hi:[0,1]', encoding: 'VOP3P', result: 'lo(v0) = hi(v1) + lo(v2), hi(v0) = lo(v1) + hi(v2)' },
+  { line: 'v_pk_mul_f16 v0, v1, v2 neg_hi:[0,1]', encoding: 'VOP3P', result: 'lo(v0) = lo(v1) × lo(v2), hi(v0) = hi(v1) × −hi(v2)' },
+  { line: 'v_fma_mix_f32 v0, |v1|, v2, v3 op_sel_hi:[1,0,0]', encoding: 'VOP3P', result: 'v0 = |lo(v1)| × v2 + v3, where lo(v1) is an f16' },
+  { line: 'v_add_f32 v0, -v1, v2 quad_perm:[1,0,3,2]', encoding: 'DPP16', result: 'v0 = −v1 + v2, with v1 read from the lane\'s partner (0↔1, 2↔3, …)' },
+  { line: 'v_add_nc_u32 v0, sext(v1), v2 src0_sel:BYTE_1', encoding: 'SDWA', result: 'v0 = byte 1 of v1, sign-extended, + v2' },
+  { line: 'v_cvt_f32_f16 v0, -v1 src0_sel:WORD_1', encoding: 'SDWA', result: 'v0 = −hi(v1), converted to f32' },
+  { line: 'v_add_f16 v0, v1, v2 src0_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE', encoding: 'SDWA', result: 'hi(v0) = hi(v1) + lo(v2), keeping lo(v0)' },
+  { line: 'v_mov_b32 v0, v1 dst_sel:BYTE_2 dst_unused:UNUSED_PRESERVE src0_sel:BYTE_0', encoding: 'SDWA', result: 'byte 2 of v0 = byte 0 of v1, keeping the rest of v0' },
+];
+
 export class Encyclopedia {
   private overlay: HTMLElement;
   private content: HTMLElement;
@@ -369,6 +423,7 @@ export class Encyclopedia {
       html += `<button class="ency-tab${active}" data-tab="${i}">${f.name}</button>`;
     }
     html += `<button class="ency-tab" data-tab="src0">SRC0 Encoding</button>`;
+    html += `<button class="ency-tab" data-tab="modifiers">Modifiers</button>`;
     html += `</div>`;
 
     // Tab content
@@ -383,6 +438,10 @@ export class Encyclopedia {
     // SRC0 encoding tab
     html += `<div class="ency-tab-content" data-content="src0" style="display:none">`;
     html += this.renderSrc0Table();
+    html += `</div>`;
+
+    html += `<div class="ency-tab-content" data-content="modifiers" style="display:none">`;
+    html += this.renderModifiers(allOpcodes);
     html += `</div>`;
 
     html += `</div>`;
@@ -512,6 +571,68 @@ export class Encyclopedia {
     ];
     for (const [code, val] of floats) {
       html += `<tr><td>${code}</td><td>${val}</td></tr>`;
+    }
+    html += `</tbody></table></div>`;
+
+    html += `</div>`;
+    return html;
+  }
+
+  /** Every input and output modifier, the encodings that have each, what they do, and examples. */
+  private renderModifiers(allOpcodes: OpcodeInfo[]): string {
+    const opSel16 = allOpcodes.filter(o => o.opSel && o.format === InstructionFormat.VOP3).map(o => o.mnemonic);
+    let html = `<div class="ency-format-section ency-mods">`;
+    html += `<h3 class="ency-format-title">Modifiers <span class="ency-format-subtitle">— Input and Output Modifiers</span></h3>`;
+    html += `<p class="ency-format-desc">Input modifiers change a source before the instruction reads it; output modifiers change the result before it's written. The 32-bit VOP1, VOP2 and VOPC encodings have no room for them, so a modifier makes one of those instructions 4 bytes bigger, in one of the 64-bit encodings below. The assembler picks the encoding from what the line uses: DPP16 or DPP8 when it has a lane control such as quad_perm, SDWA when it has a byte or word selector or sext(), and VOP3 otherwise. In Instruction Info, the Encoding buttons switch an instruction between the encodings it can use.</p>`;
+
+    const rows = (title: string, list: ModifierRow[]) => {
+      let out = `<tr class="ency-mod-group"><td colspan="${2 + MODIFIER_ENCODINGS.length}">${title}</td></tr>`;
+      for (const row of list) {
+        out += `<tr><td class="ency-mod-name">${row.name}</td><td>${row.syntax}</td>`;
+        for (const enc of MODIFIER_ENCODINGS) {
+          const where = row.in[enc];
+          out += where ? `<td class="ency-mod-yes">${where}</td>` : `<td class="ency-mod-no">—</td>`;
+        }
+        out += `</tr>`;
+      }
+      return out;
+    };
+    html += `<table class="ency-mod-table"><thead><tr><th>Modifier</th><th>Syntax</th>`;
+    for (const enc of MODIFIER_ENCODINGS) html += `<th>${enc}</th>`;
+    html += `</tr></thead><tbody>`;
+    html += rows('Input modifiers — applied to a source before the operation', INPUT_MODIFIERS);
+    html += rows('Output modifiers — applied to the result before it is written', OUTPUT_MODIFIERS);
+    html += `</tbody></table>`;
+    html += `<p class="ency-note">Scalar (SOP*) and DS instructions take no modifiers, and neither do VOP1, VOP2 and VOPC in their 32-bit form.</p>`;
+
+    const list = (title: string, items: string[]) => `<div class="ency-rules"><h4>${title}</h4><ul>${items.map(i => `<li>${i}</li>`).join('')}</ul></div>`;
+    html += list('Input Modifiers', [
+      `<b>neg</b> flips the sign of a floating-point source, and <b>abs</b> clears it. With both, ${code('-|v1|')}, abs comes first, so the source is never positive. Only floating-point sources take them (and the two sources of v_cndmask_b32): an integer source can't`,
+      'VOP3B has no ABS field: its scalar destination (the carry-out or flag) takes its place. DPP16 and SDWA take neg and abs on src0 and src1; DPP8 takes no modifiers at all',
+      `In VOP3P, ${code('-v1')} negates both halves of a packed f16 source, and ${code('neg_lo:[…]')} and ${code('neg_hi:[…]')} negate just the low or high halves, one bit per source. In v_fma_mix* and the f32 src2 of v_dot2_f32_f16, NEG_HI is abs instead: write ${code('|v1|')}. Packed integer instructions take neither`,
+      `<b>op_sel</b> in VOP3A, for 16-bit instructions: one bit per source reads its high half instead of its low half, and a last bit writes the result to the high half of vdst instead of the low half; the other half keeps its value. The VOP3A instructions with op_sel: ${opSel16.join(', ')}. (v_permlane16_b32 and v_permlanex16_b32 use ${code('op_sel:[fi,bound_ctrl]')} for their own two flags.)`,
+      'VOP1 and VOP2 16-bit instructions such as v_add_f16 have no op_sel on RDNA2: SDWA\'s WORD_1 selectors read and write their high halves instead',
+      '<b>op_sel</b> and <b>op_sel_hi</b> in VOP3P: a packed instruction makes a low and a high result. op_sel picks the half of each source that the low result reads (default: the low halves), and op_sel_hi the half that the high result reads (default: the high halves). In v_fma_mix*, op_sel_hi marks a source as f16 and op_sel picks its half; 0 means f32. v_dot4* and v_dot8* take neither',
+      `<b>src0_sel</b> and <b>src1_sel</b> (SDWA): the instruction reads only BYTE_0–BYTE_3, WORD_0 or WORD_1 of the source (default DWORD: all of it), moved down to bit 0 and zero-extended. <b>sext</b>, as in ${code('sext(v1)')}, sign-extends it instead: it's for integer sources, as abs and neg are for floats. sext() alone also makes the instruction SDWA`,
+    ]);
+    html += list('Output Modifiers', [
+      '<b>clamp</b>: a floating-point result is clamped to [0.0, 1.0], and NaN becomes 0. An integer result that overflows saturates at the limits of its type instead of wrapping (v_add_nc_u32, v_add_co_u32, v_mul_lo_u32, v_mad_u32_u24, the packed and dot instructions, …), and each half of a packed result is clamped on its own. Bitwise, shift, move and lane instructions (v_and_b32, v_lshlrev_b32, v_mov_b32, v_readlane_b32, …) have no clamp, and compares take it only when they compare floats (not v_cmp_class), where it leaves the mask unchanged',
+      `<b>mul:2</b>, <b>mul:4</b> and <b>div:2</b> (OMOD) multiply a floating-point result (f16, f32 or f64) by 2, 4 or 0.5, before any clamp: ${code('mul:2 clamp')} doubles, then clamps. One per instruction, and only on instructions with a floating-point result`,
+      '<b>dst_sel</b> (SDWA): writes the result to BYTE_0–BYTE_3, WORD_0 or WORD_1 of vdst (default DWORD: all of it). <b>dst_unused</b> sets the rest of vdst: UNUSED_PAD zeros it (the default), UNUSED_SEXT sign-extends the result into the bits above it and zeros those below, and UNUSED_PRESERVE keeps them',
+      'SDWA compares write a lane mask, so they take no clamp, mul:/div:, dst_sel or dst_unused',
+    ]);
+    html += list('Which Instructions Each Encoding Covers', [
+      '<b>VOP3A</b>: the VOP3-only instructions, and the VOP1, VOP2 and VOPC instructions, except the carry instructions (VOP3B) and the few with no VOP3 form: v_nop, v_swap_b32, v_pk_fmac_f16, v_dot4c_i32_i8, v_dot8c_i32_i4 and the K-constant forms (v_fmamk_f32, v_fmaak_f32, v_madmk_f32, …)',
+      '<b>VOP3B</b>: instructions with a second, scalar destination: v_add_co_u32 and the other carry instructions, v_div_scale_f64, v_mad_u64_u32 and v_mad_i64_i32',
+      '<b>VOP3P</b>: the packed and mixed-precision instructions: v_pk_*, v_fma_mix* and v_dot*',
+      '<b>DPP16</b> and <b>DPP8</b>: VOP1 and VOP2 instructions without 64-bit operands, whose src0 and vsrc1 are VGPRs. Not compares, v_readfirstlane_b32, v_swap_b32 or the K-constant forms',
+      '<b>SDWA</b>: VOP1, VOP2 and VOPC instructions without 64-bit operands, except v_readfirstlane_b32, v_swap_b32, the K-constant forms and the accumulating instructions (v_fmac_f32, v_mac_f32, …). Its sources can be VGPRs, SGPRs or inline constants, but not literals',
+    ]);
+
+    html += `<div class="ency-instr-table"><h4>Examples</h4>`;
+    html += `<table><thead><tr><th>Instruction</th><th>Encoding</th><th>Result</th></tr></thead><tbody>`;
+    for (const ex of MODIFIER_EXAMPLES) {
+      html += `<tr><td class="ency-syntax">${ex.line}</td><td class="ency-opcode">${ex.encoding}</td><td>${ex.result}</td></tr>`;
     }
     html += `</tbody></table></div>`;
 

@@ -2,7 +2,7 @@
 
 import { assemble } from '../src/assembler/assembler';
 import { Emulator } from '../src/emulator/emulator';
-import { decodeBinary, describeDppCtrl, disassemble, dppCtrlMeaning } from '../src/isa/encoding';
+import { decodeBinary, describeDppCtrl, disassemble, dppCtrlMeaning, planEncoding } from '../src/isa/encoding';
 import { getAllOpcodes, lookupByOpcode, lookupByMnemonic } from '../src/isa/opcodes';
 import { f16ToF32, f32ToF16 } from '../src/isa/float16';
 import { getPuzzleById, ALL_PUZZLES } from '../src/puzzle/puzzles';
@@ -23,6 +23,7 @@ import { codeHash, hash64, puzzleHash } from '../src/hardware/hash';
 import { score, verify, verifySandbox } from '../src/hardware/verify';
 import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
 import { devkitOnline, devkitRunStat, HARDWARE_HELP_BUTTON, hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
+import { MODIFIER_EXAMPLES } from '../src/ui/encyclopedia';
 import { addLeaderboardEntry, bestPerName, boardRows, improvedText, mergeBests, nameKeyOf, PLAYER_NAME_KEY } from '../src/puzzle/leaderboard';
 import { isShareId, newShareId, shareLink, shareParam, withoutShare, withSharedRevision } from '../src/puzzle/share';
 import { GPUState } from '../src/emulator/state';
@@ -6910,6 +6911,18 @@ group('Instruction Info editing: DPP and SDWA fields');
   }
   assert(checkedOptions > 600 && wrong.length === 0,
     `each of ${checkedOptions} DPP and SDWA options changes only its own field${wrong.length ? `; e.g. ${wrong[0]} (${wrong.length} wrong)` : ''}`);
+}
+
+group('Encyclopedia: the Modifiers tab');
+{
+  const wrong = MODIFIER_EXAMPLES.filter(ex => {
+    const r = assemble(`${ex.line}\ns_endpgm`);
+    if (r.errors.length > 0) return true;
+    const plan = planEncoding(r.instructions[0]);
+    return (plan.extra ?? plan.kind) !== ex.encoding;
+  });
+  assert(wrong.length === 0,
+    `each example assembles, in the encoding the tab gives it${wrong.length ? `; not ${wrong.map(w => w.line).join('; ')}` : ''}`);
 }
 
 group('Instruction Info editing: switching encodings');
