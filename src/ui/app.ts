@@ -27,7 +27,7 @@ import { isShareId, shareLink, shareParam, withoutShare, withSharedRevision } fr
 import { isOnlineEnabled } from '../firebase/online-leaderboard';
 import { fetchShare } from '../firebase/shares';
 
-// Build the level order: T1, P1, P2, [T2], remaining puzzles, remaining tutorials
+// Build the level order: T1, P1, P2, T2, remaining puzzles, remaining tutorials
 function buildLevelOrder(): LevelItem[] {
   const levels: LevelItem[] = [];
   const usedPuzzleIds = new Set<string>();
@@ -43,7 +43,7 @@ function buildLevelOrder(): LevelItem[] {
     if (p) { levels.push({ kind: 'puzzle', data: p }); usedPuzzleIds.add(id); }
   }
 
-  // T2: Input/Output Modifiers (if it exists)
+  // T2: Instruction Modifiers, which Absolute Value (the next puzzle) needs
   const t2 = getTutorialById('tut-modifiers');
   if (t2) { levels.push({ kind: 'tutorial', data: t2 }); usedTutorialIds.add(t2.id); }
 

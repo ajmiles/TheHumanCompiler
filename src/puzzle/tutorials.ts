@@ -89,6 +89,70 @@ const WELCOME_TO_GPU: Tutorial = {
   ],
 };
 
+// ── Tutorial 02: Instruction Modifiers ──
+
+const MODIFIERS: Tutorial = {
+  id: 'tut-modifiers',
+  title: 'Instruction Modifiers',
+  description: 'Negate or take the absolute value of inputs, and clamp or scale results.',
+  steps: [
+    {
+      title: 'Modifiers',
+      text:
+        'So far each instruction has done one thing: <code>v_mul_f32</code> multiplies and <code>v_add_f32</code> adds. But most vector ALU instructions can also change their inputs on the way in, and their result on the way out. These extras are called <strong>modifiers</strong>.\n\n' +
+        '• <strong>Input modifiers</strong> change a source before the instruction reads it: <code>-v0</code> negates it, and <code>|v0|</code> takes its absolute value.\n' +
+        '• <strong>Output modifiers</strong> change the result before it\'s written: <code>clamp</code> keeps it between 0.0 and 1.0, and <code>mul:2</code>, <code>mul:4</code> or <code>div:2</code> scale it.\n\n' +
+        'A modifier isn\'t an extra instruction: the instruction does the extra work as it runs.',
+    },
+    {
+      title: 'Negate and absolute value',
+      text:
+        'Write <code>-</code> before a source to negate it, or put bars around it, <code>|v0|</code>, to take its absolute value: a negative value loses its sign, and a positive one stays as it is. <code style="white-space:nowrap">-|v0|</code> does both, the absolute value first, so it\'s never positive. (<code>neg(v0)</code> and <code>abs(v0)</code> mean the same.)\n\n' +
+        'Each source has its own modifiers, and they only change what the instruction reads: v0 still holds -2.0 afterwards. Step through and watch v2, v3 and v4.',
+      code: '; v0 = -2.0, v1 = 0.5\nv_mov_b32 v0, -2.0\nv_mov_b32 v1, 0.5\n;\n; Negate a source: v2 = -v0 + v1 = 2.0 + 0.5 = 2.5\nv_add_f32 v2, -v0, v1\n;\n; Absolute value of a source: v3 = |v0| * v1 = 2.0 * 0.5 = 1.0\nv_mul_f32 v3, |v0|, v1\n;\n; Both, so never positive: v4 = -|v0| + v1 = -2.0 + 0.5 = -1.5\nv_add_f32 v4, -|v0|, v1\ns_endpgm',
+    },
+    {
+      title: 'Floating-point operands only',
+      text:
+        'abs and neg work on the sign of a floating-point number, so only instructions that read their operands as floats take them: <code>v_add_f32</code>, <code>v_mul_f32</code>, <code>v_max_f32</code>, <code>v_fma_f32</code> and many more.\n\n' +
+        'An instruction that reads integers or plain bits, such as <code>v_add_nc_u32</code> or <code>v_and_b32</code>, has no input modifiers. Neither does <code>v_mov_b32</code>: it copies 32 bits without knowing what they mean. Write <code>v_mov_b32 v1, -v0</code> and the assembler tells you so.\n\n' +
+        'A negative constant such as the <code>-2.0</code> in <code>v_mov_b32 v0, -2.0</code> isn\'t a modifier, though: it\'s a constant in its own right, so any instruction can use it.',
+    },
+    {
+      title: 'Clamping the result',
+      text:
+        '<code>clamp</code>, written after the operands, keeps the result between 0.0 and 1.0: anything above 1.0 becomes 1.0, anything below 0.0 becomes 0.0, and values in between are left alone. Shaders use it all the time for colours and weights that must stay in that range: it\'s what <code>saturate()</code> does in HLSL.\n\n' +
+        'On integer arithmetic such as <code>v_add_nc_u32</code>, clamp has another job: a result too big or too small for the register stops at the largest or smallest value instead of wrapping around.\n\n' +
+        'Step through and compare v2, v3 and v4 with the sums in the comments.',
+      code: '; v0 = 0.5, v1 = 1.0\nv_mov_b32 v0, 0.5\nv_mov_b32 v1, 1.0\n;\n; 0.5 + 1.0 = 1.5, clamped to 1.0\nv_add_f32 v2, v0, v1 clamp\n;\n; 0.5 - 1.0 = -0.5, clamped to 0.0\nv_sub_f32 v3, v0, v1 clamp\n;\n; 0.5 * 1.0 = 0.5 is already in range: unchanged\nv_mul_f32 v4, v0, v1 clamp\ns_endpgm',
+    },
+    {
+      title: 'Scaling the result',
+      text:
+        '<code>mul:2</code>, <code>mul:4</code> and <code>div:2</code> multiply the result by 2, 4 or 0.5 before it\'s written, so <code>v_add_f32 v4, v0, v1 div:2</code> averages two values in one instruction.\n\n' +
+        'There are a few catches. Only one can be used at a time, and they only scale a 32-bit float (f32) result. They don\'t mix with clamp either: on the devkit\'s GPU, clamp turns them off, and the editor warns you if you write both.',
+      code: '; v0 = 1.0, v1 = 2.0\nv_mov_b32 v0, 1.0\nv_mov_b32 v1, 2.0\n;\n; (1.0 + 2.0) * 2 = 6.0\nv_add_f32 v2, v0, v1 mul:2\n;\n; (1.0 + 2.0) * 4 = 12.0\nv_add_f32 v3, v0, v1 mul:4\n;\n; (1.0 + 2.0) / 2 = 1.5, the average of v0 and v1\nv_add_f32 v4, v0, v1 div:2\ns_endpgm',
+    },
+    {
+      title: 'Modifiers cost bytes',
+      text:
+        'An instruction such as <code>v_add_f32</code> normally uses a 4-byte encoding, <strong>VOP2</strong>, which has no room for modifiers. Give it one and the assembler uses the 8-byte <strong>VOP3</strong> encoding instead. It\'s still one instruction, but <strong>Code Size</strong> is one of the leaderboards: a modifier pays off when it saves an instruction, but not when a plain instruction does the same job. Here v2 and v3 end up the same, but the second instruction is half the size.\n\n' +
+        'To see an instruction\'s encoding and size, put the cursor on it and expand <strong>Instruction Info</strong> under the editor (it\'s collapsed during tutorials). For a VOP2 instruction, the <strong>VOP3A</strong> button there shows the modifier fields VOP3 adds (ABS, NEG, CLAMP and OMOD), each with a ▾ menu to set it. The <strong>📖 ISA Reference</strong> has a <strong>Modifiers</strong> tab that lists every modifier and where it can be used.',
+      code: '; v0 = -2.0, v1 = 0.5\nv_mov_b32 v0, -2.0\nv_mov_b32 v1, 0.5\n;\n; 8 bytes: the modifier needs VOP3\nv_add_f32 v2, -v0, v1\n;\n; 4 bytes: v1 - v0 is the same number, in VOP2\nv_sub_f32 v3, v1, v0\ns_endpgm',
+    },
+    {
+      title: 'Key takeaways',
+      text:
+        'Modifiers in summary:\n\n' +
+        '• <code>-v0</code> negates a source and <code>|v0|</code> takes its absolute value, on instructions that read floats.\n\n' +
+        '• <code>clamp</code> keeps a float result between 0.0 and 1.0, and stops integer arithmetic from wrapping around.\n\n' +
+        '• <code>mul:2</code>, <code>mul:4</code> and <code>div:2</code> scale an f32 result, but not together with clamp.\n\n' +
+        '• A modifier costs no extra instruction, but it makes a 4-byte instruction 8 bytes.\n\n' +
+        'Next up is the <strong>Absolute Value</strong> puzzle. RDNA2 has no <code>v_abs_f32</code> instruction, but now you know that any instruction that reads floats can take the absolute value of what it reads.',
+    },
+  ],
+};
+
 // ── Tutorial 03: Branching ──
 
 const BRANCHING: Tutorial = {
@@ -428,6 +492,7 @@ const PACKED_FP16: Tutorial = {
 
 export const ALL_TUTORIALS: Tutorial[] = [
   WELCOME_TO_GPU,
+  MODIFIERS,
   BRANCHING,
   INTRA_WAVE,
   SDWA_TUTORIAL,

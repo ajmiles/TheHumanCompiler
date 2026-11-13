@@ -6394,6 +6394,20 @@ group('Regression: every program must finish by executing s_endpgm');
     });
   }
 }
+{
+  // The Instruction Modifiers tutorial: after each of its programs, v2, v3 and v4 hold what its comments say
+  const t = ALL_TUTORIALS.find(x => x.id === 'tut-modifiers')!;
+  const after = (code: string) => {
+    const emu = new Emulator();
+    emu.load(assemble(code).binary);
+    emu.run();
+    return [2, 3, 4].map(r => emu.state.readVGPR(r, 0)).join(', ');
+  };
+  const shown = t.steps.flatMap(s => (s.code ? [after(s.code)] : [])).join(' | ');
+  assert(shown === '2.5, 1, -1.5 | 1, 0, 0.5 | 6, 12, 1.5 | 2.5, 2.5, 0', `tut-modifiers: the values its comments give (${shown})`);
+  assert(/only valid on floating-point operands/.test(assemble('v_mov_b32 v1, -v0\ns_endpgm').errors[0]?.message ?? ''),
+    'tut-modifiers: v_mov_b32 v1, -v0 is refused, as it says');
+}
 
 group('DPP and SDWA coverage');
 {
