@@ -368,29 +368,43 @@ function encodingName(d: DecodedInstruction, info: OpcodeInfo): string {
 
 /**
  * The buttons that rewrite a VOP1, VOP2 or VOPC instruction in another encoding. Each one's tip says what the
- * encoding offers, and what the line would become and lose, or why the instruction cannot be encoded so.
+ * encoding offers, and what the line would become and lose, or why the instruction cannot be encoded so. While
+ * `previewing`, VOP3's fields are on show although the line still assembles to its 32-bit encoding.
  */
-function encodingSwitchHtml(options: EncodingOption[], bytes: number): string {
+function encodingSwitchHtml(options: EncodingOption[], bytes: number, previewing: boolean): string {
+  const lineNow = options.find(o => o.current)?.line;
+  const size = (n: number) => `${n} bytes${n !== bytes ? ` (${n > bytes ? '+' : '−'}${Math.abs(n - bytes)})` : ''}`;
   let html = `<div class="instr-info-encodings" role="group" aria-label="Encoding">` +
     `<span class="instr-info-encodings__label" aria-hidden="true">Encoding</span><div class="instr-info-encodings__buttons">`;
   for (const o of options) {
+    const shown = previewing ? o.key === 'vop3' : o.current;
     const available = !o.current && o.line !== undefined;
     let head = `${o.label} · not available: ${o.error}`;
     if (o.current) head = `${o.label} · ${bytes} bytes · in use`;
-    else if (o.line !== undefined && o.bytes !== undefined) {
-      const change = o.bytes - bytes;
-      head = `${o.label} · ${o.bytes} bytes${change ? ` (${change > 0 ? '+' : '−'}${Math.abs(change)})` : ''}`;
-    }
+    else if (o.bytes !== undefined) head = `${o.label} · ${size(o.bytes)}${o.preview ? ' once the line uses it' : ''}`;
     const tip = [head, o.detail];
-    if (available) {
-      tip.push(`Click to rewrite the line as:\n${o.line!.trim()}`);
+    if (o.current && previewing) tip.push(`The panel is showing ${options.find(v => v.key === 'vop3')?.label}'s fields: click to show ${o.label}'s again`);
+    if (available && !shown) {
+      if (o.line !== lineNow) tip.push(`Click to rewrite the line as:\n${o.line!.trim()}`);
+      if (o.preview) {
+        tip.push(`${o.line === lineNow ? 'Click to see' : 'The panel then shows'} its fields. The line uses ${o.label} once one of them ` +
+          `holds something only ${o.label} can; until then it is ${options.find(v => v.key === 'e32')?.label}.`);
+      }
       if (o.dropped.length) tip.push(`This leaves out ${o.dropped.join(', ')}`);
     }
-    const state = o.current ? ' instr-info-encoding--current' : available ? '' : ' instr-info-encoding--unavailable';
-    html += `<button type="button" class="instr-info-encoding${state}" data-encoding="${o.key}" aria-pressed="${o.current}"` +
-      `${o.current || available ? '' : ' aria-disabled="true"'} title="${escapeHtml(tip.join('\n\n'))}">${escapeHtml(o.label)}</button>`;
+    const state = shown ? (previewing ? ' instr-info-encoding--preview' : ' instr-info-encoding--current')
+      : available || o.current ? '' : ' instr-info-encoding--unavailable';
+    html += `<button type="button" class="instr-info-encoding${state}" data-encoding="${o.key}" aria-pressed="${shown}"` +
+      `${available || o.current ? '' : ' aria-disabled="true"'} title="${escapeHtml(tip.join('\n\n'))}">${escapeHtml(o.label)}</button>`;
   }
   return `${html}</div></div>`;
+}
+
+/** "a", "a or b", "a, b or c"; with a comma before the "or" when an item has an "and" of its own. */
+function orList(items: string[]): string {
+  if (items.length < 2) return items.join('');
+  const comma = items.some(item => item.includes(' and ')) ? ',' : '';
+  return `${items.slice(0, -1).join(', ')}${comma} or ${items[items.length - 1]}`;
 }
 
 // ── Operand text and the math formula ──
@@ -535,6 +549,11 @@ export class InstructionInfo {
   /** The encodings of the instruction on `encLine`, likewise. */
   private encLine = '';
   private encOptions: EncodingOption[] | null = null;
+  /** The line whose VOP3 fields are shown although nothing on it needs VOP3 yet, so it assembles to 32 bits. */
+  private previewLine: number | null = null;
+  /** What the panel was last asked to show, to show it again. */
+  private lastResult: AssemblyResult | null = null;
+  private lastCursor = 0;
   private editHandler: ((edit: OperandEdit) => void) | null = null;
 
   constructor(container: HTMLElement) {
@@ -566,7 +585,7 @@ export class InstructionInfo {
       const target = e.target as HTMLElement;
       const encoding = target.closest<HTMLElement>('.instr-info-encoding');
       if (encoding) {
-        this.switchEncoding(encoding.dataset.encoding as EncodingKey);
+        this.switchEncoding(encoding.dataset.encoding as EncodingKey, encoding);
         return;
       }
       const cell = target.closest<HTMLElement>('.instr-info-bit--editable');
@@ -646,13 +665,27 @@ export class InstructionInfo {
     return this.encOptions;
   }
 
-  /** Rewrite the instruction on show in encoding `key`, if it can be encoded so. */
-  private switchEncoding(key: EncodingKey): void {
+  /**
+   * Rewrite the instruction on show in encoding `key`, if it can be encoded so. While nothing on the line needs VOP3,
+   * choosing it shows its fields (and choosing the encoding in use shows that one's again).
+   */
+  private switchEncoding(key: EncodingKey, button: HTMLElement): void {
     const shown = this.shown;
     const handler = this.editHandler;
     if (!shown || !handler) return;
     const option = this.encodingChoices(shown.lineText)?.find(o => o.key === key);
-    if (!option || option.current || option.line === undefined) return;
+    if (!option || option.line === undefined) return;
+    const preview = option.preview ? shown.line : null;
+    if (option.line === shown.lineText) {
+      if (preview === this.previewLine) return;
+      this.previewLine = preview;
+      const focused = document.activeElement === button;
+      this.closePickers();
+      this.update(this.lastResult, this.lastCursor);
+      if (focused) this.bodyEl.querySelector<HTMLElement>(`.instr-info-encoding[data-encoding="${key}"]`)?.focus();
+      return;
+    }
+    this.previewLine = preview;
     const { span, text } = lineEdit(shown.lineText, option.line);
     this.closePickers();
     handler({ line: shown.line, span, text, lineText: shown.lineText });
@@ -753,6 +786,10 @@ export class InstructionInfo {
 
   update(assemblyResult: AssemblyResult | null, cursorLine: number): void {
     this.shown = null;
+    this.lastResult = assemblyResult;
+    this.lastCursor = cursorLine;
+    // A preview of VOP3's fields lasts while the cursor stays on its line
+    if (this.previewLine !== cursorLine) this.previewLine = null;
     if (!assemblyResult) {
       this.setBody(PLACEHOLDER);
       return;
@@ -795,30 +832,43 @@ export class InstructionInfo {
     } catch (e) {
       encodeError = (e as Error).message;
     }
-    const decoded = words.length ? decodeBinary(Uint32Array.from(words))[0] : undefined;
-    const layout = decoded ? layoutFor({ info, instr, decoded }, words) : [];
     // Fields are editable while the line still holds the instruction as assembled
     const editable = !!this.editHandler && words.length > 0 && checkLine(lineText).words !== undefined;
     if (editable) this.shown = { line, lineText, instr, bytes: words.length * 4 };
+    const encodings = editable ? this.encodingChoices(lineText) : null;
+
+    // A preview shows the VOP3 encoding the line takes once one of its fields holds something the 32-bit one cannot
+    const vop3 = encodings?.find(o => o.key === 'vop3');
+    let shownWords = words;
+    if (this.previewLine === line && vop3?.preview && vop3.line === lineText) {
+      try {
+        shownWords = encodeInstruction({ ...instr, forceVop3: true });
+      } catch {
+        shownWords = words;
+      }
+    }
+    const previewing = shownWords !== words;
+    const decoded = shownWords.length ? decodeBinary(Uint32Array.from(shownWords))[0] : undefined;
+    const layout = decoded ? layoutFor({ info, instr, decoded }, shownWords) : [];
 
     let opcodeText = `opcode: ${hexVal(info.opcode)}`;
     if (decoded && (decoded.encoding === 'VOP3A' || decoded.encoding === 'VOP3B') && info.format !== InstructionFormat.VOP3) {
-      opcodeText += ` (VOP3: ${hexVal((words[0] >>> 16) & 0x3FF, 3)})`;
+      opcodeText += ` (VOP3: ${hexVal((shownWords[0] >>> 16) & 0x3FF, 3)})`;
     }
 
-    let html = this.metaHtml(decoded ? encodingName(decoded, info) : info.format, opcodeText, info);
+    const format = !decoded ? info.format : previewing ? `${decoded.encoding} preview (the line is ${info.format})` : encodingName(decoded, info);
+    let html = this.metaHtml(format, opcodeText, info);
     html += this.descriptionHtml(info, buildFormula(info, instr));
     if (encodeError) html += `<div class="instr-info-desc" style="color:#f85149">Cannot encode: ${escapeHtml(encodeError)}</div>`;
 
     let anyEditable = false;
-    const encodings = editable ? this.encodingChoices(lineText) : null;
     layout.forEach((dword, i) => {
-      const word = words[i] >>> 0;
+      const word = shownWords[i] >>> 0;
       html += `<div class="instr-info-diagram">`;
       const label = `<span class="instr-info-diagram-label">${layout.length > 1 ? `DWORD ${i} · ` : ''}${escapeHtml(dword.label)}</span>`;
       // The encoding switch sits beside the label of the first dword, which it changes
       html += i === 0 && encodings
-        ? `<div class="instr-info-diagram-head">${label}${encodingSwitchHtml(encodings, words.length * 4)}</div>` : label;
+        ? `<div class="instr-info-diagram-head">${label}${encodingSwitchHtml(encodings, words.length * 4, previewing)}</div>` : label;
       html += `<div class="instr-info-bitfield"><div class="instr-info-ruler">`;
       for (const f of dword.fields) {
         const width = f.hi - f.lo + 1;
@@ -828,7 +878,7 @@ export class InstructionInfo {
       for (const f of dword.fields) {
         const width = f.hi - f.lo + 1;
         const value = width === 32 ? word : (word >>> f.lo) & ((1 << width) - 1);
-        const text = f.show(value, words);
+        const text = f.show(value, shownWords);
         let canEdit = editable && !!f.slot && !!instr.spans?.[f.slot];
         let why = '';
         if (editable && f.mod) {
@@ -866,10 +916,15 @@ export class InstructionInfo {
       html += `<div class="instr-info-dpp"><span class="instr-info-field-name" style="color:#ff9800">${escapeHtml(kind)}</span> `;
       html += `<span>${escapeHtml(rest.join(' '))}</span></div>`;
     }
+    if (previewing && vop3?.preview) {
+      html += `<div class="instr-info-preview-note">Preview: the line stays ${escapeHtml(info.format)} until it uses something only ` +
+        `${escapeHtml(vop3.label)} holds: ${escapeHtml(orList(vop3.preview))}. Set one with the fields marked ▾.</div>`;
+    }
 
     if (words.length) {
-      const hexStr = words.map(w => (w >>> 0).toString(16).padStart(8, '0')).join(' ');
-      html += `<div class="instr-info-hex">Binary: <span>${hexStr}</span>`;
+      const hex = (ws: number[]) => ws.map(w => (w >>> 0).toString(16).padStart(8, '0')).join(' ');
+      html += `<div class="instr-info-hex">Binary: <span>${hex(words)}</span>`;
+      if (previewing) html += ` · as ${escapeHtml(vop3?.label ?? 'VOP3')}: <span>${hex(shownWords)}</span>`;
       if (anyEditable || encodings) {
         const hint = encodings ? 'Click a field marked ▾ or another encoding to change it' : 'Click a field marked ▾ to change it';
         html += `<em class="instr-info-edit-hint">${hint}</em>`;

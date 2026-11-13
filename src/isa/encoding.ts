@@ -362,7 +362,7 @@ function encodeVOP3(info: OpcodeInfo, instr: ParsedInstruction): number[] {
 
   if (info.kLiteral) fail(`${m} has no VOP3 form: it does not support modifiers, op_sel or non-VGPR vsrc1`);
   if (NO_VOP3.has(m)) {
-    fail(`${m} has no VOP3 (_e64) form on RDNA2, so it cannot use abs/neg, clamp, output modifiers or a non-VGPR vsrc1`);
+    fail(`${m} has no VOP3 encoding on RDNA2, so it cannot use abs/neg, clamp, output modifiers or a non-VGPR vsrc1`);
   }
   checkClamp(info, instr);
   checkSourceModifiers(info, instr);
@@ -576,7 +576,7 @@ function encodeVALU(info: OpcodeInfo, instr: ParsedInstruction): number[] {
   checkDppSdwaAllowed(info, instr);
   if (info.mnemonic === 'v_nop' && (plan.kind === 'VOP3A' || plan.kind === 'VOP3B')) {
     // decodeAt reads a VOP3 v_nop as carrying a data dword (Xbox shader binaries)
-    fail('v_nop takes no operands or modifiers, and its VOP3 (_e64) encoding is reserved for Xbox binaries, which follow it with a data dword');
+    fail('v_nop takes no operands or modifiers, and its VOP3 encoding is reserved for Xbox binaries, which follow it with a data dword');
   }
   if (plan.extra === 'DPP8' || plan.extra === 'DPP16') return encodeDPP(info, instr);
   if (plan.extra === 'SDWA') return encodeSDWA(info, instr);
@@ -1307,6 +1307,19 @@ function bitList(bits: number, count: number): string {
   return `[${parts.join(',')}]`;
 }
 
+/**
+ * Whether a VOP3-encoded VOP1, VOP2 or VOPC instruction holds something its 32-bit encoding cannot (as needsVop3
+ * decides for a parsed one), so that its text assembles to VOP3 again without an _e64 suffix.
+ */
+function vop3Implied(d: DecodedInstruction, info: OpcodeInfo): boolean {
+  const nsrc = valuSourceCount(info);
+  const sourceMods = [d.src0Abs || d.src0Neg, d.src1Abs || d.src1Neg, d.src2Abs || d.src2Neg].slice(0, nsrc);
+  if (d.clamp || d.omod || d.opSel || sourceMods.some(Boolean)) return true;
+  if (info.format !== InstructionFormat.VOP1 && nsrc >= 2 && (d.src1 ?? VGPR_SRC_MIN) < VGPR_SRC_MIN) return true;
+  if ((info.format === InstructionFormat.VOPC || info.carry) && d.sdst !== undefined && d.sdst !== defaultSdst(info)) return true;
+  return hasImplicitVccSource(info) && d.src2 !== VCC_LO;
+}
+
 function disassembleVALU(d: DecodedInstruction, info: OpcodeInfo): string {
   const m = info.mnemonic;
   if (m === 'v_nop') {
@@ -1319,8 +1332,8 @@ function disassembleVALU(d: DecodedInstruction, info: OpcodeInfo): string {
     return [`v_nop ; ${form} v_nop (${d.size} dwords${extra}), shown as ${d.size} × v_nop`,
       ...Array<string>(d.size - 1).fill('v_nop')].join('\n');
   }
-  // VOP3-encoded VOP1/VOP2/VOPC instructions carry the _e64 suffix, as LLVM prints them
-  const name = d.vop3 && info.format !== InstructionFormat.VOP3 ? `${m}_e64` : m;
+  // A VOP3-encoded VOP1, VOP2 or VOPC instruction needs the _e64 suffix only when nothing else on it asks for VOP3
+  const name = d.vop3 && info.format !== InstructionFormat.VOP3 && !vop3Implied(d, info) ? `${m}_e64` : m;
   const nsrc = valuSourceCount(info);
   const isVOP3P = info.format === InstructionFormat.VOP3P;
   const isMix = m.startsWith('v_fma_mix');

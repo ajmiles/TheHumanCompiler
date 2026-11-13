@@ -565,7 +565,7 @@ function packedOptions(
 
 // ── Switching encodings ──
 
-/** The encodings of a VOP1, VOP2 or VOPC instruction: its 32-bit one, VOP3 (written _e64), DPP16, DPP8 and SDWA. */
+/** The encodings of a VOP1, VOP2 or VOPC instruction: its 32-bit one, VOP3, DPP16, DPP8 and SDWA. */
 export type EncodingKey = 'e32' | 'vop3' | 'dpp16' | 'dpp8' | 'sdwa';
 
 /** One encoding of the instruction on a line. */
@@ -580,6 +580,11 @@ export interface EncodingOption {
   /** The line rewritten in this encoding, when that assembles, and the size of its instruction in bytes. */
   line?: string;
   bytes?: number;
+  /**
+   * For VOP3 when nothing on `line` needs it: what VOP3 holds that would. Encodings are only chosen by what the line
+   * holds, so `line` still assembles to the 32-bit encoding, and the panel shows VOP3's fields until one is set.
+   */
+  preview?: string[];
   /** Modifiers written on the line that this encoding has no room for: the rewritten line leaves them out. */
   dropped: string[];
   /** Why the instruction cannot be encoded this way. */
@@ -646,10 +651,9 @@ function rewriteEncoding(lineText: string, instr: ParsedInstruction, info: Opcod
   const edits: Array<SourceSpan & { text: string }> = [];
   const dropped: string[] = [];
 
-  // The mnemonic: _e64 asks for VOP3, while the modifiers choose the others, so any other suffix goes
+  // The mnemonic: what the line holds chooses the encoding, so an _e32, _e64, _dpp or _sdwa suffix goes
   const base = lineText.slice(name.start - 1, name.end - 1);
-  const e64 = base === base.toUpperCase() ? '_E64' : '_e64';
-  edits.push({ start: mnemonic.column, end: mnemonic.end, text: key === 'vop3' ? base + e64 : base });
+  edits.push({ start: mnemonic.column, end: mnemonic.end, text: base });
 
   // ABS and NEG on the sources (VOP3, DPP16 and SDWA have them), and SEXT (SDWA)
   const absNeg = key === 'vop3' || key === 'dpp16' || key === 'sdwa';
@@ -720,6 +724,37 @@ function listText(items: string[]): string {
   return `${items.slice(0, -1).join(', ')}${comma} and ${items[items.length - 1]}`;
 }
 
+/** The source modifiers (NEG, ABS, SEXT) and output modifiers the instruction on `line` takes in encoding `key`. */
+function modifiersTaken(key: EncodingKey, line: string): string[] {
+  const instr = checkLine(line).instr;
+  if (!instr) return [];
+  const assembles = (changed: string | { error: string }) => typeof changed === 'string' && !!checkLine(changed).words;
+  const takes: string[] = [];
+  if (key === 'sdwa' && assembles(withSourceModifiers(line, instr, 'src0', { sext: true }))) takes.push('SEXT on sources');
+  const neg = !!instr.src0.neg || assembles(withSourceModifiers(line, instr, 'src0', { neg: true }));
+  const abs = !!instr.src0.abs || assembles(withSourceModifiers(line, instr, 'src0', { abs: true }));
+  if (neg || abs) takes.push(`${neg && abs ? 'NEG and ABS' : neg ? 'NEG' : 'ABS'} on sources`);
+  if (key === 'dpp16') return takes;
+  if (instr.clamp || assembles(setModifier(line, ['clamp'], 'clamp'))) takes.push('CLAMP');
+  if (instr.omod || assembles(setModifier(line, ['mul', 'div'], 'mul:2'))) takes.push('output modifiers (mul:2, mul:4, div:2)');
+  return takes;
+}
+
+/**
+ * What the VOP3 encoding holds that the 32-bit one cannot, for the instruction on `line` (each modifier is tried on
+ * it), or for any instruction like it when `line` is not given.
+ */
+function vop3Additions(info: OpcodeInfo, line?: string): string[] {
+  const items: string[] = [];
+  if (info.format !== InstructionFormat.VOP1) items.push('an SGPR or constant as SRC1');
+  if (info.format === InstructionFormat.VOPC && !info.mnemonic.startsWith('v_cmpx_')) items.push('any SGPR for the result');
+  if (info.carry) items.push('any SGPRs for the carry');
+  if (info.mnemonic === 'v_cndmask_b32') items.push('any SGPR for the condition');
+  if (line !== undefined) items.push(...modifiersTaken('vop3', line));
+  if (info.opSel && !info.carry) items.push('OP_SEL (the high halves of 16-bit operands)');
+  return items;
+}
+
 /**
  * What encoding `key` offers the instruction. `line` is the instruction in that encoding, when it can be encoded
  * so: the modifiers it takes there are found by trying each of them on it.
@@ -729,20 +764,7 @@ function encodingDetail(key: EncodingKey, info: OpcodeInfo, line?: string): stri
   const vop1 = f === InstructionFormat.VOP1;
   const vopc = f === InstructionFormat.VOPC;
   const cmpx = vopc && info.mnemonic.startsWith('v_cmpx_');
-  const instr = line === undefined ? undefined : checkLine(line).instr;
-  const assembles = (changed: string | { error: string }) => typeof changed === 'string' && !!checkLine(changed).words;
-  const modifiers = (): string[] => {
-    if (line === undefined || !instr) return [];
-    const takes: string[] = [];
-    if (key === 'sdwa' && assembles(withSourceModifiers(line, instr, 'src0', { sext: true }))) takes.push('SEXT on sources');
-    const neg = !!instr.src0.neg || assembles(withSourceModifiers(line, instr, 'src0', { neg: true }));
-    const abs = !!instr.src0.abs || assembles(withSourceModifiers(line, instr, 'src0', { abs: true }));
-    if (neg || abs) takes.push(`${neg && abs ? 'NEG and ABS' : neg ? 'NEG' : 'ABS'} on sources`);
-    if (key === 'dpp16') return takes;
-    if (instr.clamp || assembles(setModifier(line, ['clamp'], 'clamp'))) takes.push('CLAMP');
-    if (instr.omod || assembles(setModifier(line, ['mul', 'div'], 'mul:2'))) takes.push('output modifiers (mul:2, mul:4, div:2)');
-    return takes;
-  };
+  const modifiers = () => (line === undefined ? [] : modifiersTaken(key, line));
   const vgprs = vop1 ? 'SRC0 must be a VGPR' : 'Both sources must be VGPRs';
   const also = (items: string[]) => (items.length ? `; it also takes ${listText(items)}` : '');
   switch (key) {
@@ -753,13 +775,7 @@ function encodingDetail(key: EncodingKey, info: OpcodeInfo, line?: string): stri
       return `The 32-bit encoding: SRC0 can be any register or constant${vop1 ? '' : ', SRC1 must be a VGPR'}${fixed}. No modifiers.`;
     }
     case 'vop3': {
-      const items: string[] = [];
-      if (!vop1) items.push('an SGPR or constant as SRC1');
-      if (vopc && !cmpx) items.push('any SGPR for the result');
-      if (info.carry) items.push('any SGPRs for the carry');
-      if (info.mnemonic === 'v_cndmask_b32') items.push('any SGPR for the condition');
-      items.push(...modifiers());
-      if (info.opSel && !info.carry) items.push('OP_SEL (the high halves of 16-bit operands)');
+      const items = vop3Additions(info, line);
       return items.length ? `The 64-bit encoding, which adds ${listText(items)}.` : `The 64-bit encoding, which adds nothing ${info.mnemonic} can use.`;
     }
     case 'dpp16':
@@ -777,11 +793,11 @@ function encodingDetail(key: EncodingKey, info: OpcodeInfo, line?: string): stri
 }
 
 /**
- * The encodings the VOP1, VOP2 or VOPC instruction on `lineText` can be switched between: its 32-bit one, VOP3
- * (written _e64), DPP16, DPP8 and SDWA, each other one with the line rewritten in it when that assembles, or why
- * not. DPP16, DPP8 and SDWA start from quad_perm:[0,1,2,3], dpp8:[0,1,2,3,4,5,6,7] and DWORD selectors, which
- * leave the result unchanged. Null when the line does not assemble, holds another kind of instruction, or has no
- * other encoding.
+ * The encodings the VOP1, VOP2 or VOPC instruction on `lineText` can be switched between: its 32-bit one, VOP3,
+ * DPP16, DPP8 and SDWA, each other one with the line rewritten in it when that assembles, or why not. No encoding
+ * suffix is written: DPP16, DPP8 and SDWA start from quad_perm:[0,1,2,3], dpp8:[0,1,2,3,4,5,6,7] and DWORD
+ * selectors, which leave the result unchanged, and VOP3 is a preview of its fields while nothing on the line needs
+ * it. Null when the line does not assemble, holds another kind of instruction, or has no other encoding.
  */
 export function encodingOptions(lineText: string): EncodingOption[] | null {
   const now = checkLine(lineText);
@@ -800,13 +816,23 @@ export function encodingOptions(lineText: string): EncodingOption[] | null {
     if ('error' in rewritten) return unavailable(rewritten.error);
     const result = checkLine(rewritten.line);
     if (!result.instr || !result.words) return unavailable(result.error ?? 'It does not assemble');
-    if (encodingKey(planEncoding(result.instr, info)) !== key) {
+    const option = { key, label, detail: encodingDetail(key, info, rewritten.line), current: false, line: rewritten.line, dropped: rewritten.dropped };
+    const resultKey = encodingKey(planEncoding(result.instr, info));
+    if (resultKey === key) return { ...option, bytes: result.words.length * 4 };
+    if (key !== 'vop3' || resultKey !== 'e32') {
       return unavailable(key === 'e32' ? e32Obstacle(rewritten.line, result.instr, info) : `${info.mnemonic} cannot be encoded as ${label} here`);
     }
-    return {
-      key, label, detail: encodingDetail(key, info, rewritten.line), current: false,
-      line: rewritten.line, bytes: result.words.length * 4, dropped: rewritten.dropped,
-    };
+    // Nothing on the line needs VOP3, so it stays in its 32-bit encoding until one of VOP3's fields is set
+    let vop3: number[];
+    try {
+      vop3 = encodeInstruction({ ...result.instr, forceVop3: true });
+    } catch (e) {
+      if (e instanceof EncodingError) return unavailable(e.message);
+      throw e;
+    }
+    const preview = vop3Additions(info, rewritten.line);
+    if (!preview.length) return unavailable(`${label} adds nothing ${info.mnemonic} can use, so the assembler always picks ${f} for it`);
+    return { ...option, bytes: vop3.length * 4, preview };
   });
   return options.some(o => !o.current && o.line !== undefined) ? options : null;
 }

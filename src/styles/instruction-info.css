@@ -157,6 +157,26 @@
   cursor: not-allowed;
 }
 
+/* VOP3 previewed: its fields are on show, but the line still assembles to the 32-bit encoding */
+.instr-info-encoding--preview,
+.instr-info-encoding--preview:hover {
+  background: rgba(57, 197, 207, 0.14);
+  color: var(--accent-cyan);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px var(--accent-cyan);
+  cursor: default;
+}
+
+.instr-info-preview-note {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 4px 0 2px;
+  padding: 2px 8px;
+  border-left: 2px solid var(--accent-cyan);
+  background: rgba(57, 197, 207, 0.06);
+}
+
 .instr-info-encoding:focus {
   outline: none;
 }

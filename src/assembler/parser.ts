@@ -754,7 +754,7 @@ function parseVALU(
   } else if (force === 'e32') {
     const plan = planEncoding(instr, info);
     if (plan.kind === 'VOP3A' || plan.kind === 'VOP3B' || plan.kind === 'VOP3P' || plan.extra) {
-      errorAt(`${m}_e32 cannot encode these operands or modifiers; use the VOP3 (_e64) form`, mnemonicToken);
+      errorAt(`${m}_e32 cannot encode these operands or modifiers: remove the _e32 suffix`, mnemonicToken);
     }
   } else if (force === 'dpp' && instr.dppCtrl === undefined && !instr.dpp8) {
     errorAt(`${m}_dpp needs a DPP lane control such as row_shr:1, quad_perm:[…] or dpp8:[…]`, mnemonicToken);

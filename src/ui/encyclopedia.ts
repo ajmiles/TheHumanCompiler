@@ -175,7 +175,7 @@ const FORMATS: FormatSpec[] = [
         { name: 'SRC0', bits: 9, color: '#bc8cff', description: 'First source — full 9-bit encoding' },
       ],
     ],
-    description: 'The 64-bit extended form. VOP1, VOP2 and VOPC instructions are promoted to VOP3 when they need source modifiers (abs, neg), output modifiers (clamp, mul:/div:), a non-VGPR second source, or an SGPR destination for a compare. All three sources use the full 9-bit encoding. Write an _e64 suffix to force this encoding.',
+    description: 'The 64-bit extended form. VOP1, VOP2 and VOPC instructions are promoted to VOP3 when they need source modifiers (abs, neg), output modifiers (clamp, mul:/div:), a non-VGPR second source, or an SGPR destination for a compare. All three sources use the full 9-bit encoding.',
     operandRules: [
       'All SRC fields are 9-bit: any SGPR, VGPR, inline constant, or literal',
       'At most one literal (it may be used by several sources) and at most two different scalar values (SGPRs, VCC, M0, EXEC or the literal) per instruction',
@@ -225,7 +225,7 @@ const FORMATS: FormatSpec[] = [
       { name: 'VSRC1', bits: 8, color: '#d29922', description: 'Second comparison source — must be VGPR' },
       { name: 'SRC0', bits: 9, color: '#bc8cff', description: 'First comparison source — 9-bit encoded' },
     ]],
-    description: 'Per-lane comparisons that produce a lane mask: bit N is the result for lane N, and inactive lanes get 0. In this 32-bit form v_cmp_* writes VCC and v_cmpx_* writes EXEC. The VOP3 (_e64) and SDWA forms of v_cmp_* can write any SGPR instead. Use v_cndmask_b32 or s_and_saveexec_b32 to act on the result.',
+    description: 'Per-lane comparisons that produce a lane mask: bit N is the result for lane N, and inactive lanes get 0. In this 32-bit form v_cmp_* writes VCC and v_cmpx_* writes EXEC. The VOP3 and SDWA forms of v_cmp_* can write any SGPR instead. Use v_cndmask_b32 or s_and_saveexec_b32 to act on the result.',
     operandRules: [
       'Destination: VCC (v_cmp_*) or EXEC (v_cmpx_*) here; any SGPR in the VOP3 or SDWA form',
       'SRC0 (9-bit): SGPR, VGPR, inline constant, or literal',
@@ -485,7 +485,7 @@ export class Encyclopedia {
 
     if (spec.name === 'VOP3') {
       html += `<div class="ency-instr-table"><h4>Promotable Instructions</h4>`;
-      html += `<p class="ency-note">Any VOP1, VOP2 or VOPC instruction can also be encoded as VOP3 — automatically when it uses modifiers or operands the 32-bit form cannot hold, or explicitly with an _e64 suffix. The VOP3 opcode is the VOPC opcode + 0x000, the VOP2 opcode + 0x100, or the VOP1 opcode + 0x180.</p>`;
+      html += `<p class="ency-note">Any VOP1, VOP2 or VOPC instruction can also be encoded as VOP3, which the assembler picks when it uses modifiers or operands the 32-bit form cannot hold. The VOP3 opcode is the VOPC opcode + 0x000, the VOP2 opcode + 0x100, or the VOP1 opcode + 0x180.</p>`;
       html += `</div>`;
     }
 
