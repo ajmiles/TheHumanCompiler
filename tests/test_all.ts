@@ -6320,6 +6320,22 @@ group('Regression: every program must finish by executing s_endpgm');
   }
 }
 {
+  // Puzzle data: integer inputs are random in every bit (as seededValues' low bits aren't), so they test what they say
+  const fib = getPuzzleById('fibonacci')!.inputs[0].values;
+  assert([...Array(20).keys()].every(n => fib.includes(n + 1)), 'Fibonacci: N takes every value from 1 to 20');
+  const weak = ALL_PUZZLES.flatMap(p => p.inputs
+    .filter(i => i.isInteger && !i.isSGPR && Math.max(...i.values) > 0xFFFFFF)
+    .filter(i => [0, 8, 16, 24].some(shift => new Set(i.values.map(v => (v >>> shift) & 0xFF)).size < 32))
+    .map(i => `${p.id} ${i.name}`));
+  assert(weak.length === 0, `32-bit integer inputs: every byte takes many values${weak.length ? `; not ${weak.join(', ')}` : ''}`);
+  const channelMax = getPuzzleById('channel-max')!;
+  const maxOf = (first: string) => runPuzzle(channelMax, [`v_max_u32 v2, v0, v0 ${first}`,
+    'v_max_u32 v2, v2, v0 src0_sel:DWORD src1_sel:BYTE_2', 'v_max_u32 v2, v2, v0 src0_sel:DWORD src1_sel:BYTE_3',
+    'v_mul_lo_u32 v1, v2, 0x01010101', 's_endpgm'].join('\n')).pass;
+  assert(maxOf('src0_sel:BYTE_0 src1_sel:BYTE_1') && !maxOf('src0_sel:BYTE_1 src1_sel:BYTE_1'),
+    'Channel Max: the max of all 4 bytes passes, and leaving R out fails');
+}
+{
   // Every tutorial snippet finishes with s_endpgm
   for (const t of ALL_TUTORIALS) {
     t.steps.forEach((s, i) => {

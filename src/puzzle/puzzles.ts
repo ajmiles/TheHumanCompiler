@@ -11,7 +11,8 @@ function generateStream(count: number, fn: (i: number) => number): number[] {
   return result;
 }
 
-// Seed-based pseudo-random for repeatable puzzle data
+// Seed-based pseudo-random floats for repeatable puzzle data. Its multiply goes past 2^53, where doubles round off the
+// low bits of s, so only the high bits are random: enough for these floats, but integer data comes from seededU32s
 function seededValues(seed: number, count: number, min: number, max: number): number[] {
   let s = seed;
   const next = () => {
@@ -19,6 +20,17 @@ function seededValues(seed: number, count: number, min: number, max: number): nu
     return min + (s / 0x7FFFFFFF) * (max - min);
   };
   return generateStream(count, () => Math.round(next() * 100) / 100);
+}
+
+// Seed-based pseudo-random u32s (mulberry32), every bit of them random: for integer and byte data
+function seededU32s(seed: number, count: number): number[] {
+  let s = seed >>> 0;
+  return generateStream(count, () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), s | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return (t ^ (t >>> 14)) >>> 0;
+  });
 }
 
 // ── Puzzle 1: Signal Boost ──
@@ -384,7 +396,7 @@ const DOT_PRODUCT_3D: Puzzle = {
 // Output: reordered to BGRA (B in byte 0, G in byte 1, R in byte 2, A in byte 3)
 // This is a real GPU task — converting texture formats!
 
-const rgbaInput = seededValues(2001, 64, 0, 0xFFFFFFFF).map(v => Math.abs(Math.round(v)) >>> 0);
+const rgbaInput = seededU32s(2001, 64);
 const bgraExpected = rgbaInput.map(rgba => {
   const r = rgba & 0xFF;
   const g = (rgba >>> 8) & 0xFF;
@@ -526,15 +538,8 @@ function xorshift32(x: number): number {
   return x >>> 0;
 }
 
-// Seeds: distinct non-zero u32 values per lane
-const rngSeeds: number[] = [];
-{
-  let s = 0x12345678;
-  for (let i = 0; i < 64; i++) {
-    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    rngSeeds.push((s | 1) >>> 0); // ensure non-zero
-  }
-}
+// Seeds: distinct non-zero u32 values per lane (xorshift32 would keep a 0 at 0)
+const rngSeeds = seededU32s(0x12345678, 64).map(u => u || 1);
 
 // Iteration counts: 3 for first invocation, 7 for second
 const rngIterations = [3, 7];
@@ -592,14 +597,8 @@ function fib(n: number): number {
   return b >>> 0;
 }
 
-const fibInput: number[] = [];
-{
-  let s = 0xABCD;
-  for (let i = 0; i < 64; i++) {
-    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    fibInput.push((s % 20) + 1); // N in range 1–20
-  }
-}
+// N in range 1–20: a seed for which every N comes up, and each invocation has 1s and 20s
+const fibInput = seededU32s(0xABD0, 64).map(u => (u % 20) + 1);
 const fibExpected = fibInput.map(n => fib(n));
 
 const FIBONACCI: Puzzle = {
@@ -632,20 +631,7 @@ const FIBONACCI: Puzzle = {
 //
 // Find the maximum byte across 4 RGBA channels and replicate it to all 4 bytes.
 
-const chanMaxInput: number[] = [];
-{
-  let s = 0x1337BEEF;
-  for (let i = 0; i < 64; i++) {
-    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    // Generate 4 random bytes packed into a u32
-    const b0 = (s & 0xFF);
-    const b1 = ((s >>> 8) & 0xFF);
-    const b2 = ((s >>> 16) & 0xFF);
-    const b3 = ((s >>> 23) & 0xFF);
-    chanMaxInput.push(((b3 << 24) | (b2 << 16) | (b1 << 8) | b0) >>> 0);
-    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-  }
-}
+const chanMaxInput = seededU32s(0x1337BEEF, 64); // 4 random bytes packed into a u32
 const chanMaxExpected = chanMaxInput.map(v => {
   const b0 = v & 0xFF;
   const b1 = (v >>> 8) & 0xFF;
@@ -684,19 +670,7 @@ const CHANNEL_MAX: Puzzle = {
 //
 // Sort 4 packed bytes from highest (MSB) to lowest (LSB).
 
-const byteSortInput: number[] = [];
-{
-  let s = 0xDEADCAFE;
-  for (let i = 0; i < 64; i++) {
-    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    const b0 = s & 0xFF;
-    const b1 = (s >>> 8) & 0xFF;
-    const b2 = (s >>> 16) & 0xFF;
-    const b3 = (s >>> 23) & 0xFF;
-    byteSortInput.push(((b3 << 24) | (b2 << 16) | (b1 << 8) | b0) >>> 0);
-    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-  }
-}
+const byteSortInput = seededU32s(0xDEADCAFE, 64);
 const byteSortExpected = byteSortInput.map(v => {
   const bytes = [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
   bytes.sort((a, b) => b - a); // descending
