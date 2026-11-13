@@ -56,29 +56,46 @@ export function registerValueHover(state: GPUState, name: string, lane: number):
   return `${title}\n\n${valueBlock(names, regs.map(r => state.readSGPR(r)))}`;
 }
 
-/** A value in every form it is read as: one register (32 bits), a pair (64), or each register of a longer range. */
+/**
+ * What registers hold, read as each type: one register as a list, more as a table with a row for each register,
+ * after the 64-bit value of a pair.
+ */
 function valueBlock(names: string[], words: number[]): string {
-  if (words.length === 1) {
-    const w = words[0];
-    return codeBlock([
-      `hex ${hex(w)}`,
-      `u32 ${w >>> 0}`,
-      `i32 ${w | 0}`,
-      `f32 ${shortestFloat(f32Of(w), Math.fround, 9)}`,
-      `f16 lo ${f16Text(w & 0xFFFF)}, hi ${f16Text(w >>> 16)}`,
-    ]);
-  }
+  if (words.length === 1) return codeBlock(columns(wordViews(words[0])));
+  const lines: string[] = [];
   if (words.length === 2) {
     const bits = (BigInt(words[1] >>> 0) << 32n) | BigInt(words[0] >>> 0);
-    return codeBlock([
-      `hex 0x${bits.toString(16).padStart(16, '0')}`,
-      `u64 ${bits}`,
-      `i64 ${BigInt.asIntN(64, bits)}`,
-      `f64 ${shortestFloat(f64Of(words[0], words[1]), x => x, 17)}`,
-    ]);
+    lines.push(...columns([
+      ['hex', `0x${bits.toString(16).padStart(16, '0')}`],
+      ['u64', `${bits}`],
+      ['i64', `${BigInt.asIntN(64, bits)}`],
+      ['f64', shortestFloat(f64Of(words[0], words[1]), x => x, 17)],
+    ]), '');
   }
-  const width = Math.max(...names.map(n => n.length));
-  return codeBlock(words.map((w, i) => `${names[i].padEnd(width)} ${hex(w)} ${shortestFloat(f32Of(w), Math.fround, 9)}`));
+  const views = words.map(wordViews);
+  lines.push(...columns([
+    ['', ...views[0].map(([label]) => label)],
+    ...views.map((view, i) => [names[i], ...view.map(([, text]) => text)]),
+  ]));
+  return codeBlock(lines);
+}
+
+/** A 32-bit word read as each type. */
+function wordViews(word: number): [string, string][] {
+  return [
+    ['hex', hex(word)],
+    ['u32', `${word >>> 0}`],
+    ['i32', `${word | 0}`],
+    ['f32', shortestFloat(f32Of(word), Math.fround, 9)],
+    ['f16 lo', f16Text(word & 0xFFFF)],
+    ['f16 hi', f16Text(word >>> 16)],
+  ];
+}
+
+/** Rows of cells as lines, each column as wide as its widest cell. */
+function columns(rows: string[][]): string[] {
+  const widths = rows[0].map((_, c) => Math.max(...rows.map(row => row[c].length)));
+  return rows.map(row => row.map((cell, c) => cell.padEnd(widths[c])).join('  ').trimEnd());
 }
 
 function codeBlock(lines: string[]): string {

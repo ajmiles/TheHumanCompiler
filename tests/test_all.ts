@@ -7917,22 +7917,31 @@ group('Register hovers');
   state.writeVGPR_u32(1, 5, 0x40004000);
   state.writeVGPR_u32(1, 6, 0x3DCCCCCD);
   state.writeVGPR_u32(1, 7, 0x80000000);
-  assert(registerValueHover(state, 'v1', 5) === '**v1** · lane 5\n\n```\nhex 0x40004000\nu32 1073758208\ni32 1073758208\nf32 2.0039063\nf16 lo 2.0, hi 2.0\n```',
+  assert(registerValueHover(state, 'v1', 5) === '**v1** · lane 5\n\n```\nhex     0x40004000\nu32     1073758208\ni32     1073758208\nf32     2.0039063\nf16 lo  2.0\nf16 hi  2.0\n```',
     'registerValueHover: a VGPR in the lane picked, read as each type (floats in their shortest exact form)');
-  assert(registerValueHover(state, 'v1', 6)!.includes('\nf32 0.1\n') && registerValueHover(state, 'v1', 7)!.includes('\ni32 -2147483648\nf32 -0.0\nf16 lo 0.0, hi -0.0\n'),
+  assert(registerValueHover(state, 'v1', 6)!.includes('\nf32     0.1\n') &&
+    registerValueHover(state, 'v1', 7)!.includes('\ni32     -2147483648\nf32     -0.0\nf16 lo  0.0\nf16 hi  -0.0\n'),
     'registerValueHover: 0.1 as 0.1, and -0.0 kept negative');
   state.exec = ~(1 << 5);
   assert(registerValueHover(state, 'v1', 5)!.startsWith('**v1** · lane 5 · inactive in EXEC\n') && !registerValueHover(state, 'v1', 6)!.includes('inactive'),
     'registerValueHover: says when the lane is off in EXEC');
 
   state.writeVGPR_u32(3, 0, 0xBFF00000);
-  assert(registerValueHover(state, 'v[2:3]', 0)!.endsWith('\nhex 0xbff0000000000000\nu64 13830554455654793216\ni64 -4616189618054758400\nf64 -1.0\n```'),
-    'registerValueHover: a register pair as one 64-bit value');
+  assert(registerValueHover(state, 'v[2:3]', 0) === '**v[2:3]** · lane 0\n\n```\n' +
+    'hex  0xbff0000000000000\nu64  13830554455654793216\ni64  -4616189618054758400\nf64  -1.0\n\n' +
+    '    hex         u32         i32          f32     f16 lo  f16 hi\n' +
+    'v2  0x00000000  0           0            0.0     0.0     0.0\n' +
+    'v3  0xbff00000  3220176896  -1074790400  -1.875  0.0     -1.984\n```',
+    'registerValueHover: a register pair as one 64-bit value, then each register on its own row');
   state.writeSGPR(8, 0x3F800000);
   state.writeSGPR(10, 0xFFFFFFFF);
-  assert(registerValueHover(state, 's[8:10]', 0) === '**s[8:10]**\n\n```\ns8  0x3f800000 1.0\ns9  0x00000000 0.0\ns10 0xffffffff NaN\n```',
-    'registerValueHover: each register of a longer range, lined up');
-  assert(registerValueHover(state, 's10', 0)!.includes('\nu32 4294967295\ni32 -1\nf32 NaN\n') && registerValueHover(state, 'ttmp2', 0)!.startsWith('**ttmp2**\n'),
+  assert(registerValueHover(state, 's[8:10]', 0) === '**s[8:10]**\n\n```\n' +
+    '     hex         u32         i32         f32  f16 lo  f16 hi\n' +
+    's8   0x3f800000  1065353216  1065353216  1.0  0.0     1.875\n' +
+    's9   0x00000000  0           0           0.0  0.0     0.0\n' +
+    's10  0xffffffff  4294967295  -1          NaN  NaN     NaN\n```',
+    'registerValueHover: each register of a longer range on its own row, lined up');
+  assert(registerValueHover(state, 's10', 0)!.includes('\nu32     4294967295\ni32     -1\nf32     NaN\n') && registerValueHover(state, 'ttmp2', 0)!.startsWith('**ttmp2**\n'),
     'registerValueHover: SGPRs and trap temporaries');
 
   state.vcc = 0x0000FFFF;
