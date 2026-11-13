@@ -115,6 +115,8 @@ const ABSOLUTE_VALUE: Puzzle = {
     'RDNA2 has no v_abs instruction.',
     'Can you negate a value by subtracting from zero?',
     'v_max_f32 picks the larger of two values...',
+    'The Instruction Info panel below the editor can switch the instruction at the cursor to another encoding, ' +
+      'and some encodings have extra modifiers that might help.',
   ],
   optimalInstructions: 2,
 };
