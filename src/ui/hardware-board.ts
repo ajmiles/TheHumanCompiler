@@ -106,7 +106,7 @@ function rowsOf(entries: HardwareEntry[], highlightId: string | undefined): Row[
 export function hardwareTableHtml(entries: HardwareEntry[], status: RunnerStatus, highlightId?: string, now = Date.now()): string {
   const rows = rowsOf(entries, highlightId);
   let html = '<div class="leaderboard-table-section leaderboard-table-section--wide">';
-  html += '<div class="leaderboard-table-title">⏱️ Hardware cycles (timed on an RDNA2 GPU)';
+  html += '<div class="leaderboard-table-title">⏱️ Hardware cycles (timed on an Xbox Series X|S devkit)';
   html += `<span class="leaderboard-table-status">${escapeHtml(runnerStatusText(status, now))}</span></div>`;
   html += '<table class="leaderboard-table"><thead><tr><th>#</th><th>Name</th><th>cycles</th></tr></thead><tbody>';
   if (rows.length === 0) html += '<tr><td colspan="3" class="leaderboard-empty">No solutions timed yet</td></tr>';
