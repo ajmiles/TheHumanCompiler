@@ -22,6 +22,8 @@ function seededValues(seed: number, count: number, min: number, max: number): nu
 }
 
 // ── Puzzle 1: Signal Boost ──
+// Amplify the incoming signal.
+// Read each value from the input stream and multiply it by 2.0, then write the result to the output.
 
 const signalBoostInput = seededValues(42, 64, 0, 10);
 const signalBoostExpected = signalBoostInput.map(v => v * 2);
@@ -46,6 +48,8 @@ const SIGNAL_BOOST: Puzzle = {
 };
 
 // ── Puzzle 2: Merge Streams ──
+// Two data streams arrive simultaneously.
+// Add them together element-wise and write the combined result to the output.
 
 const mergeInputA = seededValues(101, 64, -5, 5);
 const mergeInputB = seededValues(202, 64, -5, 5);
@@ -76,6 +80,9 @@ const MERGE_STREAMS: Puzzle = {
 };
 
 // ── Puzzle 3: Absolute Value ──
+// Compute the absolute value of each input.
+// Negative values become positive; positive values stay the same.
+// Think creatively with the instructions available!
 
 const absInput = seededValues(303, 64, -10, 10);
 const absExpected = absInput.map(v => Math.abs(v));
@@ -101,6 +108,9 @@ const ABSOLUTE_VALUE: Puzzle = {
 };
 
 // ── Puzzle 4: Euclidean Distance ──
+// Compute the 2D Euclidean distance between two points (x1,y1) and (x2,y2).
+// The formula is: √((x1-x2)² + (y1-y2)²).
+// You have four input streams.
 
 const distInputX1 = seededValues(404, 64, -5, 5);
 const distInputY1 = seededValues(505, 64, -5, 5);
@@ -145,7 +155,11 @@ const EUCLIDEAN_DISTANCE: Puzzle = {
   optimalInstructions: 6,
 };
 
-// ── Puzzle 5: Quadratic Polynomial ──
+// ── Puzzle 5: Smooth Clamp ──
+// Implement the smoothstep function — a classic GPU interpolation curve.
+// Given edge0, edge1, and x: compute t = clamp((x-edge0)/(edge1-edge0), 0, 1), then return t²·(3 - 2t).
+// This produces a smooth S-curve between 0 and 1.
+//
 // Evaluate ax² + bx + c using Horner's method or direct expansion
 // Direct: mul x*x, mul a*x², mul b*x, add a*x²+b*x, add +c → 5 instrs with Horner: (a*x+b)*x+c
 // But with 3 coefficients in separate regs it's trickier. Let's do full expansion = 8 instrs.
@@ -220,6 +234,10 @@ const SMOOTH_CLAMP: Puzzle = {
 };
 
 // ── Puzzle 6: Reflect Vector ──
+// Compute the reflection of a 2D velocity vector V off a surface with normal N.
+// The reflection formula is: R = V - 2(V·N)N, where V·N is the dot product of V and N.
+// Output both the reflected X and Y components.
+//
 // Reflect 2D vector V off surface with normal N: R = V - 2(V·N)N
 // Inputs: Vx(v0), Vy(v1), Nx(v2), Ny(v3)
 // dot = Vx*Nx + Vy*Ny          (2 muls + 1 add = 3)
@@ -306,6 +324,9 @@ const REFLECT_VECTOR: Puzzle = {
 };
 
 // ── Puzzle 7: Dot Product 3D ──
+// Compute the 3D dot product of two vectors A and B: result = Ax·Bx + Ay·By + Az·Bz.
+// This is one of the most fundamental operations in computer graphics — used for lighting, projections, and more.
+//
 // Compute dot(A, B) = Ax*Bx + Ay*By + Az*Bz
 // With v_fma_f32: mul, fma, fma = 3 instructions optimal
 // Without: mul, mul, mul, add, add = 5 instructions
@@ -354,6 +375,11 @@ const DOT_PRODUCT_3D: Puzzle = {
 };
 
 // ── Puzzle 8: Byte Shuffle (RGBA → BGRA) ──
+// Convert a packed 32-bit RGBA color to BGRA format.
+// Swap the R and B bytes while keeping G and A in place.
+// Input: [R₇₋₀, G₁₅₋₈, B₂₃₋₁₆, A₃₁₋₂₄] → Output: [B₇₋₀, G₁₅₋₈, R₂₃₋₁₆, A₃₁₋₂₄].
+// This is a real GPU task for converting texture formats!
+//
 // Input: packed 32-bit RGBA color (R in byte 0, G in byte 1, B in byte 2, A in byte 3)
 // Output: reordered to BGRA (B in byte 0, G in byte 1, R in byte 2, A in byte 3)
 // This is a real GPU task — converting texture formats!
@@ -392,6 +418,9 @@ const BYTE_SHUFFLE: Puzzle = {
 };
 
 // ── Puzzle 9: Quad Average ──
+// For each group of 4 lanes (0–3, 4–7, 8–11, …), compute the average of the four input values and write it to every
+// lane in that group.
+// This is a common subgroup operation used in image filtering and AA resolve.
 
 const quadAvgInput = seededValues(99, 64, 0, 100);
 // Expected: for each group of 4 lanes, output the average of those 4 values
@@ -435,6 +464,8 @@ const QUAD_AVERAGE: Puzzle = {
 };
 
 // ── Puzzle 10: Wave Average ──
+// Compute the average of all 32 lanes in the wavefront and write it to every lane.
+// This is a full-wave parallel reduction — the holy grail of GPU subgroup operations.
 
 const waveAvgInput = seededValues(77, 64, 0, 100);
 // Expected: every lane outputs the average of all 32 lanes in its invocation
@@ -481,6 +512,11 @@ const WAVE_AVERAGE: Puzzle = {
 };
 
 // ── Puzzle 11: RNG Iterate ──
+// Apply a xorshift32 random number generator N times to each lane's seed.
+// The seed is in v0 (varies per lane), the iteration count N is pre-loaded in s0 (scalar).
+// Xorshift32: x ^= x << 13; x ^= x >> 17; x ^= x << 5.
+// Output the final state in v1.
+//
 // Apply a simple xorshift32 RNG N times. Seed in v0, iteration count in s0.
 
 function xorshift32(x: number): number {
@@ -536,6 +572,12 @@ const RNG_ITERATE: Puzzle = {
 };
 
 // ── Puzzle 12: Fibonacci ──
+// Compute the Nth Fibonacci number for each lane.
+// N is an integer in v0 (1–20, varies per lane).
+// Output fib(N) in v1.
+// fib(1)=1, fib(2)=1, fib(3)=2, fib(4)=3, fib(5)=5, …
+// Each lane has a different N, so you'll need a loop that runs until all lanes are done.
+//
 // Compute fib(N) for each lane. N is in v0 (integer, varies per lane).
 
 function fib(n: number): number {
@@ -585,6 +627,9 @@ const FIBONACCI: Puzzle = {
 };
 
 // ── Puzzle 13: Channel Max ──
+// Each lane has a packed RGBA color in v0 (4 bytes: R=[7:0], G=[15:8], B=[23:16], A=[31:24]).
+// Find the maximum of the 4 bytes and output a dword with that max value replicated in all 4 byte positions.
+//
 // Find the maximum byte across 4 RGBA channels and replicate it to all 4 bytes.
 
 const chanMaxInput: number[] = [];
@@ -633,6 +678,10 @@ const CHANNEL_MAX: Puzzle = {
 };
 
 // ── Puzzle 14: Byte Sort ──
+// Each lane has 4 packed bytes in v0 (R=[7:0], G=[15:8], B=[23:16], A=[31:24]).
+// Sort the 4 bytes from highest to lowest.
+// Output the sorted dword in v1 with the largest byte in bits [31:24] and the smallest in bits [7:0].
+//
 // Sort 4 packed bytes from highest (MSB) to lowest (LSB).
 
 const byteSortInput: number[] = [];
