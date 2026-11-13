@@ -220,7 +220,7 @@ const SMOOTH_CLAMP: Puzzle = {
 };
 
 // ── Puzzle 6: Reflect Vector ──
-// Reflect 2D vector V off surface with normal N: R = V - 2·(V·N)·N
+// Reflect 2D vector V off surface with normal N: R = V - 2(V·N)N
 // Inputs: Vx(v0), Vy(v1), Nx(v2), Ny(v3)
 // dot = Vx*Nx + Vy*Ny          (2 muls + 1 add = 3)
 // scale = 2 * dot               (1 mul = 4)
@@ -283,7 +283,7 @@ const REFLECT_VECTOR: Puzzle = {
   title: 'Reflect Vector',
   description:
     'Compute the reflection of a 2D velocity vector V off a surface with normal N. ' +
-    'The reflection formula is: R = V - 2·(V·N)·N. ' +
+    'The reflection formula is: R = V - 2(V·N)N, where V·N is the dot product of V and N. ' +
     'Output both the reflected X and Y components.',
   inputs: [
     { name: 'Vx', register: 0, values: refVx },
@@ -296,9 +296,9 @@ const REFLECT_VECTOR: Puzzle = {
     { name: 'Ry', register: 5, values: refExpectedY },
   ],
   hints: [
-    'First compute the dot product: dot = Vx·Nx + Vy·Ny.',
+    'First compute the dot product: dot = Vx*Nx + Vy*Ny.',
     'Multiply dot by 2.0 (inline constant available).',
-    'Then: Rx = Vx - (2·dot)·Nx and Ry = Vy - (2·dot)·Ny.',
+    'Then: Rx = Vx - (2*dot)*Nx and Ry = Vy - (2*dot)*Ny.',
     'v_sub_f32 computes dst = src0 - vsrc1.',
     'The dot product result is scalar-like but still per-lane in a VGPR.',
   ],
