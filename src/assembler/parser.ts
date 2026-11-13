@@ -193,7 +193,7 @@ function splitOperands(rest: Token[]): { groups: OperandGroup[]; mods: Token[] }
 
 // ── Registers and constants ──
 
-interface RegisterRef {
+export interface RegisterRef {
   kind: 'v' | 's';     // VGPR, or scalar operand encoding (SGPR, VCC, EXEC, M0, …)
   index: number;       // VGPR index or scalar encoding of the first register
   count: number;       // Number of registers named
@@ -238,6 +238,16 @@ function parseRegister(token: Token): RegisterRef & { sourceOnly?: boolean } {
   }
   if (last > 15) errorAt(`Invalid register '${token.value}': trap temporaries are ttmp0–ttmp15`, token);
   return { kind: 's', index: TTMP_MIN + first, count };
+}
+
+/** The register(s) a register token's text (such as 'v3', 's[0:1]' or 'exec') names, or null if it names none. */
+export function registerOf(name: string): (RegisterRef & { sourceOnly?: boolean }) | null {
+  try {
+    return parseRegister({ type: TokenType.REGISTER, value: name, line: 1, column: 1, end: 1 });
+  } catch (e) {
+    if (e instanceof ParseError) return null;
+    throw e;
+  }
 }
 
 function parseNumberText(token: Token): { value: number; isFloat: boolean } {

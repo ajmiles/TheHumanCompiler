@@ -23,6 +23,8 @@ import { puzzleHashOf, scoreJson, verifyJson } from '../src/hardware/verifier';
 import { devkitOnline, devkitRunStat, hardwareTableHtml, runnerStatusText, submissionStatusText } from '../src/ui/hardware-board';
 import { addLeaderboardEntry, bestPerName, boardRows, improvedText, mergeBests, nameKeyOf, PLAYER_NAME_KEY } from '../src/puzzle/leaderboard';
 import { isShareId, newShareId, shareLink, shareParam, withoutShare, withSharedRevision } from '../src/puzzle/share';
+import { GPUState } from '../src/emulator/state';
+import { registerAt, registerValueHover } from '../src/ui/register-hover';
 
 /** Write an f16 value into the low half of a VGPR lane (the high half is cleared). */
 function writeF16(emu: Emulator, reg: number, lane: number, value: number): void {
@@ -7898,6 +7900,50 @@ group('Share links');
   const revisions = ['mine'];
   withSharedRevision(revisions, template, shared);
   assert(revisions.length === 1, "withSharedRevision: the player's revisions are left as they were");
+}
+
+group('Register hovers');
+{
+  const line = 'v_fma_mix_f32 v0, V1, v[2 : 3], exec op_sel:[1,1,1] // v9';
+  const at = (text: string, offset = 0) => registerAt(line, line.indexOf(text) + 1 + offset);
+  const v1 = line.indexOf('V1') + 1;
+  assert(JSON.stringify(at('V1')) === JSON.stringify({ name: 'v1', start: v1, end: v1 + 2 }) && at('V1', 1)?.name === 'v1' && at('V1', 2) === null,
+    'registerAt: the register under a column, by its token text, spanning its columns (not the one after)');
+  assert(at('v[2', 4)?.name === 'v[2:3]' && at('exec', 3)?.name === 'exec',
+    'registerAt: a range from any of its columns, and named registers');
+  assert(at('v_fma') === null && at('op_sel', 8) === null && at('v9') === null, 'registerAt: not mnemonics, modifiers or comments');
+
+  const state = new GPUState();
+  state.writeVGPR_u32(1, 5, 0x40004000);
+  state.writeVGPR_u32(1, 6, 0x3DCCCCCD);
+  state.writeVGPR_u32(1, 7, 0x80000000);
+  assert(registerValueHover(state, 'v1', 5) === '**v1** · lane 5\n\n```\nhex 0x40004000\nu32 1073758208\ni32 1073758208\nf32 2.0039063\nf16 lo 2.0, hi 2.0\n```',
+    'registerValueHover: a VGPR in the lane picked, read as each type (floats in their shortest exact form)');
+  assert(registerValueHover(state, 'v1', 6)!.includes('\nf32 0.1\n') && registerValueHover(state, 'v1', 7)!.includes('\ni32 -2147483648\nf32 -0.0\nf16 lo 0.0, hi -0.0\n'),
+    'registerValueHover: 0.1 as 0.1, and -0.0 kept negative');
+  state.exec = ~(1 << 5);
+  assert(registerValueHover(state, 'v1', 5)!.startsWith('**v1** · lane 5 · inactive in EXEC\n') && !registerValueHover(state, 'v1', 6)!.includes('inactive'),
+    'registerValueHover: says when the lane is off in EXEC');
+
+  state.writeVGPR_u32(3, 0, 0xBFF00000);
+  assert(registerValueHover(state, 'v[2:3]', 0)!.endsWith('\nhex 0xbff0000000000000\nu64 13830554455654793216\ni64 -4616189618054758400\nf64 -1.0\n```'),
+    'registerValueHover: a register pair as one 64-bit value');
+  state.writeSGPR(8, 0x3F800000);
+  state.writeSGPR(10, 0xFFFFFFFF);
+  assert(registerValueHover(state, 's[8:10]', 0) === '**s[8:10]**\n\n```\ns8  0x3f800000 1.0\ns9  0x00000000 0.0\ns10 0xffffffff NaN\n```',
+    'registerValueHover: each register of a longer range, lined up');
+  assert(registerValueHover(state, 's10', 0)!.includes('\nu32 4294967295\ni32 -1\nf32 NaN\n') && registerValueHover(state, 'ttmp2', 0)!.startsWith('**ttmp2**\n'),
+    'registerValueHover: SGPRs and trap temporaries');
+
+  state.vcc = 0x0000FFFF;
+  assert(registerValueHover(state, 'vcc', 5) === '**vcc** · lane 5: 1\n\n```\nvcc_lo 0x0000ffff\nvcc_hi 0x00000000\n16 of 32 lanes set\n```' &&
+    registerValueHover(state, 'exec_lo', 5) === '**exec_lo** · lane 5: 0\n\n```\nexec_lo 0xffffffdf\n31 of 32 lanes active\n```',
+    "registerValueHover: a lane mask, with the lane's bit");
+  state.scc = 1;
+  assert(registerValueHover(state, 'scc', 0) === '**scc** = 1' && registerValueHover(state, 'vccz', 0) === '**vccz** = 0',
+    'registerValueHover: SCC and VCCZ');
+  assert(registerValueHover(state, 'null', 0) === null && registerValueHover(state, 'v256', 0) === null,
+    'registerValueHover: nothing for null, or what is not a register');
 }
 
 // ════════════════════════════════════════════

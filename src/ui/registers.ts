@@ -56,6 +56,8 @@ export class RegisterDisplay {
   private lastState: GPUState | null = null;
   private fullPrecisionLanes = new Set<number>();
   private transposed = true; // default: rows=lanes, cols=registers
+  private selectedLane = 0;
+  private laneInput!: HTMLInputElement;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -69,6 +71,18 @@ export class RegisterDisplay {
 
   setUsedSGPRs(maxIndex: number): void {
     this.maxSgpr = maxIndex;
+  }
+
+  /** The lane whose values show when a register in the editor is hovered. */
+  get lane(): number {
+    return this.selectedLane;
+  }
+
+  private selectLane(lane: number): void {
+    this.laneInput.value = String(lane);
+    if (lane === this.selectedLane) return;
+    this.selectedLane = lane;
+    this.rerender();
   }
 
   /** Set the VGPR display mode programmatically (e.g. when loading a puzzle). */
@@ -88,7 +102,25 @@ export class RegisterDisplay {
     const vgprLabel = document.createElement('span');
     vgprLabel.textContent = 'VGPRs';
 
-    vgprHeader.appendChild(vgprLabel);
+    // The lane that hovering a register in the editor shows (clicking a lane in the table picks it too)
+    const lanePicker = document.createElement('label');
+    lanePicker.className = 'lane-picker';
+    lanePicker.title = 'The lane to show when you hover a register in the editor while debugging (or click a lane in the table)';
+    this.laneInput = document.createElement('input');
+    this.laneInput.type = 'number';
+    this.laneInput.className = 'lane-picker__input';
+    this.laneInput.min = '0';
+    this.laneInput.max = String(WAVE_WIDTH - 1);
+    this.laneInput.value = String(this.selectedLane);
+    this.laneInput.addEventListener('input', () => {
+      const lane = Number(this.laneInput.value);
+      if (this.laneInput.value !== '' && Number.isInteger(lane) && lane >= 0 && lane < WAVE_WIDTH) this.selectLane(lane);
+    });
+    // Leaving it holding something else puts back the lane picked
+    this.laneInput.addEventListener('change', () => { this.laneInput.value = String(this.selectedLane); });
+    lanePicker.append('Lane', this.laneInput);
+
+    vgprHeader.append(vgprLabel, lanePicker);
     vgprSection.appendChild(vgprHeader);
 
     // VGPR format toggle — 4x2 grid with transpose button
@@ -156,6 +188,10 @@ export class RegisterDisplay {
 
     this.vgprScrollWrapper = document.createElement('div');
     this.vgprScrollWrapper.className = 'vgpr-scroll-wrapper';
+    this.vgprScrollWrapper.addEventListener('click', (e) => {
+      const cell = (e.target as Element).closest<HTMLElement>('td[data-lane]');
+      if (cell) this.selectLane(Number(cell.dataset.lane));
+    });
     vgprSection.appendChild(this.vgprScrollWrapper);
 
     // SGPR section
@@ -273,6 +309,7 @@ export class RegisterDisplay {
       if (this.fullPrecisionLanes.has(l)) {
         th.classList.add('vgpr-table__th--full');
       }
+      if (l === this.selectedLane) th.classList.add('vgpr-table__lane');
       const lane = l;
       th.onclick = () => {
         if (this.fullPrecisionLanes.has(lane)) {
@@ -304,6 +341,7 @@ export class RegisterDisplay {
             const bits = half === 'lo' ? (raw & 0xFFFF) : (raw >>> 16);
             td.textContent = this.format16(bits);
             if (isModified) td.classList.add('modified');
+            this.laneCell(td, l);
             row.appendChild(td);
           }
           tbody.appendChild(row);
@@ -320,6 +358,7 @@ export class RegisterDisplay {
           const td = document.createElement('td');
           td.textContent = this.format32(state, r, l);
           if (isModified) td.classList.add('modified');
+          this.laneCell(td, l);
           row.appendChild(td);
         }
         tbody.appendChild(row);
@@ -369,6 +408,8 @@ export class RegisterDisplay {
       const row = document.createElement('tr');
       const laneCell = document.createElement('td');
       laneCell.textContent = `L${l}`;
+      laneCell.title = `Lane ${l}: click to show this lane when you hover a register in the editor`;
+      this.laneCell(laneCell, l);
       row.appendChild(laneCell);
 
       for (let r = 0; r < regCount; r++) {
@@ -379,12 +420,14 @@ export class RegisterDisplay {
             const bits = half === 'lo' ? (raw & 0xFFFF) : (raw >>> 16);
             td.textContent = this.format16(bits);
             if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
+            this.laneCell(td, l);
             row.appendChild(td);
           }
         } else {
           const td = document.createElement('td');
           td.textContent = this.format32(state, r, l);
           if (state.modifiedRegs.has(`v${r}`)) td.classList.add('modified');
+          this.laneCell(td, l);
           row.appendChild(td);
         }
       }
@@ -392,6 +435,12 @@ export class RegisterDisplay {
     }
     table.appendChild(tbody);
     this.vgprScrollWrapper.replaceChildren(table);
+  }
+
+  /** Let a click on a lane's cell pick that lane, and mark the cells of the lane picked. */
+  private laneCell(td: HTMLElement, lane: number): void {
+    td.dataset.lane = String(lane);
+    if (lane === this.selectedLane) td.classList.add('vgpr-table__lane');
   }
 
   /** Format a 32-bit VGPR value based on current mode. */

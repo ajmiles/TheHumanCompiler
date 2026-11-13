@@ -38,6 +38,32 @@
   color: var(--text-secondary);
 }
 
+/* Lane picker: the lane that hovering a register in the editor shows */
+.lane-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.lane-picker__input {
+  width: 4em;
+  padding: 1px 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  color: var(--accent-yellow);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.lane-picker__input:focus {
+  outline: none;
+  border-color: var(--accent-yellow);
+}
+
 /* ── VGPR Matrix ── */
 
 .vgpr-table {
@@ -108,6 +134,24 @@
   left: 0;
   background: var(--bg-panel);
   z-index: 1;
+}
+
+/* The lane picked for hovers (before .modified, which wins over it) */
+.vgpr-table td.vgpr-table__lane {
+  background: rgba(210, 153, 34, 0.14);
+}
+
+.vgpr-table td.vgpr-table__lane:first-child {
+  background: color-mix(in srgb, var(--accent-yellow) 14%, var(--bg-panel));
+  color: var(--accent-yellow);
+}
+
+.vgpr-table td[data-lane]:first-child {
+  cursor: pointer;
+}
+
+.vgpr-table th.vgpr-table__lane {
+  color: var(--accent-yellow);
 }
 
 .vgpr-table td.modified {

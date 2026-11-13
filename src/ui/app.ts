@@ -14,6 +14,7 @@ import { Encyclopedia } from './encyclopedia';
 import { SettingsOverlay, getLeaderboardPref } from './settings';
 import { MusicPlayer } from './music';
 import { ShareBar } from './share-bar';
+import { registerValueHover } from './register-hover';
 
 import { assemble } from '../assembler/assembler';
 import { Emulator } from '../emulator/emulator';
@@ -385,6 +386,11 @@ export class App {
       }
     });
 
+    // Paused while debugging, hovering a register shows what it holds (VGPRs in the lane picked in the register panel)
+    this.editor.setRegisterValues((register) => this.primed && this.runTimer === null
+      ? registerValueHover(this.emulator.state, register, this.registers.lane)
+      : null);
+
     // Fields of the instruction info panel rewrite the instruction's source text
     this.instructionInfo.onEdit(({ line, span, text, lineText }) => {
       // If the line has changed since it was last assembled, the edit is dropped and the panel catches up
@@ -625,6 +631,7 @@ export class App {
 
   private updateAllDisplays(): void {
     this.registers.update(this.emulator.state, this.emulator.getPCBytes());
+    this.editor.hideRegisterValues();
 
     if (this.assemblyResult && this.assemblyResult.binary.length > 0) {
       this.binaryView.update(this.assemblyResult.binary, this.emulator.state.pc);

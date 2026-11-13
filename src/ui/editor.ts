@@ -8,6 +8,7 @@ import 'monaco-editor/esm/vs/editor/edcore.main.js';
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js';
 import { getAllMnemonics, getAllOpcodes, lookupByMnemonic } from '../isa/opcodes';
 import { InstructionFormat } from '../isa/types';
+import { registerAt } from './register-hover';
 
 // Only the base editor worker is needed (no language-service workers).
 self.MonacoEnvironment = {
@@ -21,6 +22,13 @@ self.MonacoEnvironment = {
 
 const LANG_ID = 'amdasm';
 let registered = false;
+
+/** Where a model's hovers get register values from, and whether the hover last shown was of one. */
+interface RegisterValues {
+  describe: (register: string) => string | null;
+  shown: boolean;
+}
+const registerValues = new WeakMap<monaco.editor.ITextModel, RegisterValues>();
 
 function registerLanguage(): void {
   if (registered) return;
@@ -218,6 +226,21 @@ function registerLanguage(): void {
   // Hover tooltips for instructions
   monaco.languages.registerHoverProvider(LANG_ID, {
     provideHover(model, position) {
+      // While debugging, a register shows what it holds
+      const values = registerValues.get(model);
+      if (values) {
+        values.shown = false;
+        const register = registerAt(model.getLineContent(position.lineNumber), position.column);
+        const value = register && values.describe(register.name);
+        if (register && value) {
+          values.shown = true;
+          return {
+            range: new monaco.Range(position.lineNumber, register.start, position.lineNumber, register.end),
+            contents: [{ value }],
+          };
+        }
+      }
+
       const word = model.getWordAtPosition(position);
       if (!word) return null;
 
@@ -314,6 +337,21 @@ export class AsmEditor {
 
   setSource(source: string): void {
     this.editor.setValue(source);
+  }
+
+  /** Hovering a register shows `describe`'s markdown for it, whenever that isn't null. */
+  setRegisterValues(describe: (register: string) => string | null): void {
+    const model = this.editor.getModel();
+    if (model) registerValues.set(model, { describe, shown: false });
+  }
+
+  /** Close a hover showing register values, which the registers have changed since. */
+  hideRegisterValues(): void {
+    const model = this.editor.getModel();
+    const values = model && registerValues.get(model);
+    if (!values?.shown) return;
+    values.shown = false;
+    this.editor.trigger('registers', 'editor.action.hideHover', null);
   }
 
   /**
