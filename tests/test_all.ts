@@ -6381,6 +6381,16 @@ group('Regression: every program must finish by executing s_endpgm');
     'Channel Max: the max of all 4 bytes passes, and leaving R out fails');
 }
 {
+  // Linear Mix: A + T·(B - A) in 3 instructions, or 2 with v_fma_f32; an input passed through unblended fails
+  const mix = getPuzzleById('linear-mix')!;
+  const solves = (lines: string[]) => runPuzzle(mix, [...lines, 's_endpgm'].join('\n')).pass;
+  assert(solves(['v_sub_f32 v3, v1, v0', 'v_mul_f32 v3, v2, v3', 'v_add_f32 v3, v0, v3']),
+    'Linear Mix: v_sub_f32, v_mul_f32 and v_add_f32 pass');
+  assert(solves(['v_sub_f32 v3, v1, v0', 'v_fma_f32 v3, v2, v3, v0']), 'Linear Mix: v_sub_f32 and v_fma_f32 pass');
+  assert(!solves(['v_mov_b32 v3, v0']) && !solves(['v_mov_b32 v3, v1']), 'Linear Mix: A or B unblended fails');
+  assert(!solves(['v_sub_f32 v3, v0, v1', 'v_fma_f32 v3, v2, v3, v0']), 'Linear Mix: A - B in place of B - A fails');
+}
+{
   // Every tutorial snippet finishes with s_endpgm
   for (const t of ALL_TUTORIALS) {
     t.steps.forEach((s, i) => {

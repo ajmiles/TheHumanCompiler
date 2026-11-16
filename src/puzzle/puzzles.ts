@@ -121,7 +121,49 @@ const ABSOLUTE_VALUE: Puzzle = {
   optimalInstructions: 2,
 };
 
-// ── Puzzle 4: Euclidean Distance ──
+// ── Puzzle 4: Linear Mix ──
+// Blend between two values.
+// Given a start value A, an end value B and a blend factor T between 0 and 1, compute A + T·(B - A) for each lane.
+// T = 0 gives A, T = 1 gives B, and T = 0.5 gives the value halfway between them.
+// This is linear interpolation (lerp() in HLSL, mix() in GLSL), which shaders use to blend colors, positions and more.
+//
+// v_sub_f32, v_mul_f32 and v_add_f32 solve it in 3 instructions; v_fma_f32 does the multiply and the add in one, for 2.
+
+const mixInputA = seededValues(311, 64, -5, 5);
+const mixInputB = seededValues(312, 64, -5, 5);
+const mixInputT = seededValues(313, 64, 0, 1);
+// Match f32 precision: the registers hold f32 values, and each step rounds to f32
+const mixExpected = mixInputA.map((a, i) => {
+  const f = Math.fround;
+  const diff = f(f(mixInputB[i]) - f(a));
+  return f(f(a) + f(f(mixInputT[i]) * diff));
+});
+
+const LINEAR_MIX: Puzzle = {
+  id: 'linear-mix',
+  title: 'Linear Mix',
+  description:
+    'Blend between two values. Given a start value A, an end value B and a blend factor T between 0 and 1, ' +
+    'compute A + T·(B - A) for each lane. T = 0 gives A, T = 1 gives B, and T = 0.5 gives the value halfway between them. ' +
+    'This is linear interpolation (lerp() in HLSL, mix() in GLSL), which shaders use to blend colors, positions and more.',
+  inputs: [
+    { name: 'A', register: 0, values: mixInputA },
+    { name: 'B', register: 1, values: mixInputB },
+    { name: 'T', register: 2, values: mixInputT },
+  ],
+  outputs: [
+    { name: 'Mix', register: 3, values: mixExpected },
+  ],
+  hints: [
+    'Start with the difference B - A: v_sub_f32 computes vdst = src0 - vsrc1, so B goes first.',
+    'Scale the difference by T with v_mul_f32, then add A with v_add_f32. That solves it in 3 instructions.',
+    'v_fma_f32 vdst, src0, src1, src2 computes src0 × src1 + src2: a multiply and an add in one instruction.',
+    'Fuse the multiply and the add into one v_fma_f32 to solve it in 2 instructions (plus s_endpgm)!',
+  ],
+  optimalInstructions: 2,
+};
+
+// ── Puzzle 5: Euclidean Distance ──
 // Compute the 2D Euclidean distance between two points (x1,y1) and (x2,y2).
 // The formula is: √((x1-x2)² + (y1-y2)²).
 // You have four input streams.
@@ -169,7 +211,7 @@ const EUCLIDEAN_DISTANCE: Puzzle = {
   optimalInstructions: 6,
 };
 
-// ── Puzzle 5: Smooth Clamp ──
+// ── Puzzle 6: Smooth Clamp ──
 // Implement the smoothstep function — a classic GPU interpolation curve.
 // Given edge0, edge1, and x: compute t = clamp((x-edge0)/(edge1-edge0), 0, 1), then return t²·(3 - 2t).
 // This produces a smooth S-curve between 0 and 1.
@@ -247,7 +289,7 @@ const SMOOTH_CLAMP: Puzzle = {
   optimalInstructions: 10,
 };
 
-// ── Puzzle 6: Reflect Vector ──
+// ── Puzzle 7: Reflect Vector ──
 // Compute the reflection of a 2D velocity vector V off a surface with normal N.
 // The reflection formula is: R = V - 2(V·N)N, where V·N is the dot product of V and N.
 // Output both the reflected X and Y components.
@@ -337,7 +379,7 @@ const REFLECT_VECTOR: Puzzle = {
   optimalInstructions: 8,
 };
 
-// ── Puzzle 7: Dot Product 3D ──
+// ── Puzzle 8: Dot Product 3D ──
 // Compute the 3D dot product of two vectors A and B: result = Ax·Bx + Ay·By + Az·Bz.
 // This is one of the most fundamental operations in computer graphics — used for lighting, projections, and more.
 //
@@ -388,7 +430,7 @@ const DOT_PRODUCT_3D: Puzzle = {
   optimalInstructions: 3,
 };
 
-// ── Puzzle 8: Byte Shuffle (RGBA → BGRA) ──
+// ── Puzzle 9: Byte Shuffle (RGBA → BGRA) ──
 // Convert a packed 32-bit RGBA color to BGRA format.
 // Swap the R and B bytes while keeping G and A in place.
 // Input: [R₇₋₀, G₁₅₋₈, B₂₃₋₁₆, A₃₁₋₂₄] → Output: [B₇₋₀, G₁₅₋₈, R₂₃₋₁₆, A₃₁₋₂₄].
@@ -431,7 +473,7 @@ const BYTE_SHUFFLE: Puzzle = {
   optimalInstructions: 7,
 };
 
-// ── Puzzle 9: Quad Average ──
+// ── Puzzle 10: Quad Average ──
 // For each group of 4 lanes (0–3, 4–7, 8–11, …), compute the average of the four input values and write it to every
 // lane in that group.
 // This is a common subgroup operation used in image filtering and AA resolve.
@@ -477,7 +519,7 @@ const QUAD_AVERAGE: Puzzle = {
   optimalInstructions: 4,
 };
 
-// ── Puzzle 10: Wave Average ──
+// ── Puzzle 11: Wave Average ──
 // Compute the average of all 32 lanes in the wavefront and write it to every lane.
 // This is a full-wave parallel reduction — the holy grail of GPU subgroup operations.
 
@@ -525,7 +567,7 @@ const WAVE_AVERAGE: Puzzle = {
   optimalInstructions: 7,
 };
 
-// ── Puzzle 11: RNG Iterate ──
+// ── Puzzle 12: RNG Iterate ──
 // Apply a xorshift32 random number generator N times to each lane's seed.
 // The seed is in v0 (varies per lane), the iteration count N is pre-loaded in s0 (scalar).
 // Xorshift32: x ^= x << 13; x ^= x >> 17; x ^= x << 5.
@@ -578,7 +620,7 @@ const RNG_ITERATE: Puzzle = {
   optimalInstructions: 10,
 };
 
-// ── Puzzle 12: Fibonacci ──
+// ── Puzzle 13: Fibonacci ──
 // Compute the Nth Fibonacci number for each lane.
 // N is an integer in v0 (1–20, varies per lane).
 // Output fib(N) in v1.
@@ -627,7 +669,7 @@ const FIBONACCI: Puzzle = {
   optimalInstructions: 11,
 };
 
-// ── Puzzle 13: Channel Max ──
+// ── Puzzle 14: Channel Max ──
 // Each lane has a packed RGBA color in v0 (4 bytes: R=[7:0], G=[15:8], B=[23:16], A=[31:24]).
 // Find the maximum of the 4 bytes and output a dword with that max value replicated in all 4 byte positions.
 //
@@ -665,7 +707,7 @@ const CHANNEL_MAX: Puzzle = {
   optimalInstructions: 5,
 };
 
-// ── Puzzle 14: Byte Sort ──
+// ── Puzzle 15: Byte Sort ──
 // Each lane has 4 packed bytes in v0 (R=[7:0], G=[15:8], B=[23:16], A=[31:24]).
 // Sort the 4 bytes from highest to lowest.
 // Output the sorted dword in v1 with the largest byte in bits [31:24] and the smallest in bits [7:0].
@@ -708,6 +750,7 @@ export const ALL_PUZZLES: Puzzle[] = [
   SIGNAL_BOOST,
   MERGE_STREAMS,
   ABSOLUTE_VALUE,
+  LINEAR_MIX,
   EUCLIDEAN_DISTANCE,
   SMOOTH_CLAMP,
   REFLECT_VECTOR,
